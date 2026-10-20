@@ -336,6 +336,14 @@ variable "den_no_transport_summon" {
   default = "on"
 }
 
+# gacha_pool_v2 swaps Magic Pop's six weapon prizes for the Lv76 Star
+# steps and adds a Hwan waste row (port-only, not native; owner decision
+# 2026-10-20). "off" restores the retail gachaitemset.txt pool.
+variable "gacha_pool_v2" {
+  type    = string
+  default = "on"
+}
+
 # trader_cargo_drop keeps a loaded transport's goods in the world when its
 # trader dies riding it or logs out outside a town (port-only, not native;
 # owner decision 2026-10-14). "off" is native.
@@ -661,10 +669,36 @@ variable "beta_seal_rates" {
 }
 
 # sun_event_only keeps degree-9 Seal of Sun gear out of non-unique monster
-# drops and NPC shops; unique monsters may still drop it, and gear players own
-# is kept (port-only, not native; owner decision 2026-10-14, narrowed to
-# non-unique kills 2026-10-18). "off" is native.
+# drops; unique monsters may still drop it, and gear players own is kept
+# (port-only, not native; owner decision 2026-10-14, narrowed to non-unique
+# kills 2026-10-18, gate default flipped off 2026-10-20 when drops became
+# the Sun source at sun_drop_rate). NPC shops never sell it either way:
+# that withholding is permanent and does not read this.
 variable "sun_event_only" {
+  type    = string
+  default = "off"
+}
+
+# sun_drop_rate widens the degree-9 Sun class of the rare drop table by
+# 30 times this rate on levels 76-90 (port-only, not native; owner
+# decision 2026-10-20). "0" is native.
+variable "sun_drop_rate" {
+  type    = string
+  default = "2"
+}
+
+# unique_gap_exempt lets a unique's drops ignore the native level-gap
+# admission (4C1840), so a capped hunter still loots low-level uniques
+# (port-only, not native; owner decision 2026-10-20). "off" is native.
+variable "unique_gap_exempt" {
+  type    = string
+  default = "on"
+}
+
+# unique_pop_ticket leaves exactly one Magic Pop ticket per unique kill:
+# the native assigned cards are retired into the one guaranteed card
+# (port-only, not native; owner decision 2026-10-20). "off" is native.
+variable "unique_pop_ticket" {
   type    = string
   default = "on"
 }
@@ -863,6 +897,7 @@ job "sro-gameworld-__SHARD_ID__" {
         SRO_JOB_SUIT_HIDES_ARMOR                = var.job_suit_hides_armor
         SRO_MOONLIT_THIEF_SUIT                  = var.moonlit_thief_suit
         SRO_DEN_NO_TRANSPORT_SUMMON             = var.den_no_transport_summon
+        SRO_GACHA_POOL_V2                       = var.gacha_pool_v2
         SRO_TRADER_CARGO_DROP                   = var.trader_cargo_drop
         SRO_MALL_TRANSPORT_SPEED                = var.mall_transport_speed
         SRO_MALL_RIDE_SPEED                     = var.mall_ride_speed
@@ -899,6 +934,9 @@ job "sro-gameworld-__SHARD_ID__" {
         SRO_BETA_RARE_RATE                      = var.beta_rare_rate
         SRO_BETA_SEAL_RATES                     = var.beta_seal_rates
         SRO_SUN_EVENT_ONLY                      = var.sun_event_only
+        SRO_SUN_DROP_RATE                       = var.sun_drop_rate
+        SRO_UNIQUE_GAP_EXEMPT                   = var.unique_gap_exempt
+        SRO_UNIQUE_POP_TICKET                   = var.unique_pop_ticket
         SRO_BETA_UNIQUE_RESPAWN                 = var.beta_unique_respawn
         SRO_BETA_DROP_CAP                       = var.beta_drop_cap
         SRO_BETA_DROP_MIX                       = var.beta_drop_mix

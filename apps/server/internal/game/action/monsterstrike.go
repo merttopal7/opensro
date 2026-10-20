@@ -195,7 +195,7 @@ func (rt *Runtime) monsterStrikeCOS(in monsterStrikeInput, owner *enterworld.Cha
 	divisionID, instance, skill, nowMs := in.division, in.instance, in.skill, in.now
 	out := monsterStrikeOutcome{alive: true}
 	ownerBlock := rt.newCosAbnormalOwnerForPet(divisionID, owner, pet, nowMs)
-	defender, err := cosCombatStats(ref, pet, ownerBlock.block)
+	defender, err := cosCombatStats(ref, pet, ownerBlock.block, rt.cosDebuffWords(divisionID, owner.Name, pet.GID, nowMs))
 	if err != nil {
 		return out
 	}
@@ -331,6 +331,22 @@ func (rt *Runtime) applyCOSHitInDoor(divisionID string, hit *cosHit, nowMs int64
 	block.commit()
 	hit.strike = strike
 	return true
+}
+
+/*
+================
+cosDamageResults
+
+A committed COS hit's records in the drain owners' form (the life-steal
+recovery sums damage, skilllifesteal.go).
+================
+*/
+func cosDamageResults(hit *cosHit) []simulation.MonsterDamageResult {
+	records := make([]simulation.MonsterDamageResult, 0, len(hit.strike.impacts))
+	for _, impact := range hit.strike.impacts {
+		records = append(records, simulation.MonsterDamageResult{Damage: impact.Damage, Fatal: impact.Fatal})
+	}
+	return records
 }
 
 /*

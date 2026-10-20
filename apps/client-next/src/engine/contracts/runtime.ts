@@ -253,6 +253,11 @@ export interface Renderer extends Disposable {
 	// Port-only, not native: whether holding V also hides other players'
 	// companions (Experimental, off by default).
 	vHidesCompanions?(): boolean;
+	// Port-only, not native: whether a character in dungeon room `block` is
+	// hidden because the room the local player stands in (`activeBlock`, the
+	// same frame's navigation block) does not draw it (Experimental
+	// "Dungeon character PVS", on by default; off is the native frame).
+	dungeonBlockHides?( block: number, activeBlock?: number ): boolean;
 	setSelectionDecal(
 		value: { readonly pose: import("./gameplay").Pose; readonly slot: 0 | 1 | 2 | 3; } | null
 	): void;
@@ -416,6 +421,7 @@ The frame owner supplies time through one visible runtime clock.
 export interface Clock extends Disposable {
 	sample(): ClockSample;
 	start(): void;
+	reanchor?(): number;
 }
 
 /*

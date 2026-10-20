@@ -48,7 +48,6 @@ apps/client-next/src/engine/foundation/animation/preview-idle.ts
 apps/client-next/src/engine/foundation/animation/projectile-curve.ts
 apps/client-next/src/engine/foundation/animation/random-idle.ts
 apps/client-next/src/engine/foundation/animation/scenery-emission.ts
-apps/client-next/src/engine/foundation/animation/skill-motion-resolve.ts
 apps/client-next/src/engine/foundation/animation/skill-motion.ts
 apps/client-next/src/engine/foundation/animation/status-presentation.ts
 apps/client-next/src/engine/foundation/assets/asset-budget.ts
@@ -68,7 +67,6 @@ apps/client-next/src/engine/foundation/gameplay/cos-timer.ts
 apps/client-next/src/engine/foundation/gameplay/equipment-drop.ts
 apps/client-next/src/engine/foundation/gameplay/event-environment.ts
 apps/client-next/src/engine/foundation/gameplay/feedback-levels.ts
-apps/client-next/src/engine/foundation/gameplay/gacha-catalog.ts
 apps/client-next/src/engine/foundation/gameplay/game-options.ts
 apps/client-next/src/engine/foundation/gameplay/ground-item.ts
 apps/client-next/src/engine/foundation/gameplay/guide.ts
@@ -383,7 +381,6 @@ scripts/build/data/buildQuestDataAsset.mjs
 scripts/build/data/buildSiegeFortressDataAsset.mjs
 scripts/build/data/buildSkillMasteryDataAsset.mjs
 scripts/build/server/serverGameDataArchive.mjs
-scripts/build/world/assets/buildDungeonResources.mjs
 scripts/build/world/assets/dungeonWater.mjs
 scripts/build/world/assets/environment/environmentTracks.mjs
 scripts/build/world/assets/environment/readEnvironmentIfo.mjs

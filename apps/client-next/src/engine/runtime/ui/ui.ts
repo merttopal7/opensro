@@ -188,7 +188,9 @@ import {
 	uniqueBannerPaths,
 	createNoticeBanner,
 	noticeTiming,
-	notificationBannerPaths
+	notificationBannerPaths,
+	SUN_DROP_BANNER_COLOR,
+	SUN_DROP_BANNER_TEXT_RGB
 } from "./hud/unique-banner";
 import { createQuestBanner, questBannerPaths } from "./hud/quest-banner";
 import { createQuestTimers } from "./hud/quest-timers";
@@ -8808,13 +8810,16 @@ export function createUi(
 					// Fit within this window before caching/publication; text behind a modal
 					// must not become a neighboring column of that modal.
 					if ( compact ) {
-						fitUiGroup( quads, controls, mark[0], mark[1], full, full, {
+						const windowBounds = owner === "item-mall" || owner === "compact-guild" || compact.top < 200 ?
+							full :
+							compact.bounds;
+						fitUiGroup( quads, controls, mark[0], mark[1], windowBounds, full, {
 							blocks,
 							firstBlock: mark[2],
 							disableDrag: compactWindowDrag
 						} );
 						for ( let i = mark[1]; i < controls.length; i++ ) {
-							controls[i] = compactCloseControl( controls[i]!, full );
+							controls[i] = compactCloseControl( controls[i]!, windowBounds );
 						}
 					}
 					const painted = resolveTextOverlaps( quads.slice( mark[0] ) );
@@ -9232,7 +9237,8 @@ export function createUi(
 						alpha: notificationBanner.alpha(),
 						paths: notificationBannerPaths,
 						y: 100,
-						color: [ 128, 45, 67 ] as const
+						color: notificationBanner.sunDrop() ? SUN_DROP_BANNER_COLOR : ([ 128, 45, 67 ] as const),
+						textRgb: notificationBanner.sunDrop() ? SUN_DROP_BANNER_TEXT_RGB : ([ 1, 1, 1 ] as const)
 					},
 					{
 						value: questBanner.value(),
@@ -9269,12 +9275,13 @@ export function createUi(
 							row.color
 						)
 					);
+					const textRgb = "textRgb" in row && row.textRgb ? row.textRgb : ([ 1, 1, 1 ] as const);
 					lines.forEach( ( value, index ) =>
 						quads.push(
 							...text.quads( value, [ x, y + index * lineHeight, width, lineHeight ], full, [
-								1,
-								1,
-								1,
+								textRgb[0],
+								textRgb[1],
+								textRgb[2],
 								row.alpha
 							], { fontIndex: 0, fontStyle: 2, hAlign: 1, vAlign: 0 } )
 						)
@@ -10787,7 +10794,7 @@ export function createUi(
 								pressed,
 								offset: chatScroll.offset(),
 								hidden: chatHidden,
-								measure: value => text.run( value ).width,
+								measure: ( value, style ) => text.run( value, style?.fontStyle ?? 0 ).width,
 								editState: {
 									caretVisible,
 									caretHeight: text.height() + 2,
@@ -11069,6 +11076,68 @@ export function createUi(
 						}
 						if ( game?.progression?.skillPoints !== undefined ) {
 							authoredSkillPoints( bar.GDR_STATIC_SP!, barX, barY, game.progression.skillPoints );
+						}
+					} );
+				} else if ( hudData && compact && compact.exp ) {
+					const expW = compact.exp[2];
+					retainedHud( barLayoutCache, [
+						hudData,
+						layoutResourcesRevision,
+						w,
+						h,
+						game?.progression?.experience,
+						game?.progression?.level,
+						game?.progression?.skillExperience,
+						game?.progression?.skillPoints,
+						expW >= 406 ? spGauge.current() : 0,
+						expW >= 406 ? spGauge.target() : 0
+					], () => {
+						const bar = hudData.bar, [expX, expY, , expH] = compact.exp!;
+						rect( [ expX, expY + 2, 200, 16 ], [ 0, 0, 0, 0.55 ] );
+						blocks.push( [ expX, expY, expW, expH ] );
+						const required = levels.get( game?.progression?.level ?? 0 )?.[0];
+						paths.push( EXPERIENCE_BAR );
+						if (
+							required && game?.progression?.experience !== undefined && resources.has( EXPERIENCE_BAR )
+						) {
+							quads.push(
+								...experienceBar( game.progression.experience, required, expX - 18, expY - 27, full )
+							);
+						}
+						if ( game?.progression?.experience !== undefined && game.progression.level !== undefined ) {
+							authoredText(
+								bar.GDR_STATIC_EXP!,
+								expX - 18,
+								expY - 27,
+								experienceReadout( game.progression.experience, game.progression.level, levels )
+							);
+						}
+						if ( expW >= 406 ) {
+							const sp = bar.GDR_GAUGE_SP!, spOx = expX + 208 - 17, spOy = expY + 4 - 9;
+							rect( [ expX + 208, expY + 5, 144, 10 ], [ 0, 0, 0, 0.55 ] );
+							paths.push( sp.texture );
+							if ( resources.has( sp.texture ) ) {
+								quads.push(
+									...gaugeFill(
+										authoredRect( sp, spOx, spOy ),
+										sp.uv,
+										sp.texture,
+										spGauge.current(),
+										spGauge.target(),
+										full
+									)
+								);
+							}
+							if ( game?.progression?.skillPoints !== undefined ) {
+								authoredSkillPoints( bar.GDR_STATIC_SP!, spOx, spOy, game.progression.skillPoints );
+							}
+						} else if ( expW >= 256 && game?.progression?.skillPoints !== undefined ) {
+							authoredSkillPoints(
+								bar.GDR_STATIC_SP!,
+								expX + 208 - 167,
+								expY + 4 - 9,
+								game.progression.skillPoints
+							);
 						}
 					} );
 				}
@@ -18580,7 +18649,7 @@ export function createUi(
 					if ( compact && (w < 477 || h < 393) ) {
 						const admission = beginWindow();
 						appendCompactGuild();
-						endWindow( admission );
+						endWindow( admission, "compact-guild" );
 						if ( friendDialog ) friendDialogBox();
 						if ( letterDeleting >= 0 ) letterDialogBox();
 					} else {

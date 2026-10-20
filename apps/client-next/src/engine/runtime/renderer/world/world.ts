@@ -83,6 +83,7 @@ import {
 import { initialStarFlicker } from "@/engine/foundation/rendering/star-flicker";
 import { createCharacterPose } from "@/engine/foundation/animation/animation-pose";
 import {
+	DEFAULT_DUNGEON_AMBIENT_COLOR,
 	worldEnvironment,
 	environmentTarget,
 	environmentTime,
@@ -1186,6 +1187,23 @@ export function createWorldRenderer(
 		},
 		/*
 		================
+		blockHides
+
+		True when the dungeon room `block` is not among those the room
+		`activeBlock` draws (the same dungeonVisibility list that culls the
+		scenery). The caller names the active room: the character presenter
+		passes the same frame's navigation block, so a character and its
+		room's scenery switch on the frame the viewer crosses. With no
+		active room (outdoors, or navigation not yet admitted) nothing hides.
+		================
+		*/
+		blockHides( block: number, activeBlock?: number ) {
+			if ( !current?.dungeonVisibility || activeBlock === undefined ) return false;
+			const visible = current.dungeonVisibility[activeBlock];
+			return visible !== undefined && !visible.includes( block );
+		},
+		/*
+		================
 		pickGround
 		================
 		*/
@@ -1711,14 +1729,21 @@ export function createWorldRenderer(
 				environmentSeconds === null ? 0 : Math.max( 0, seconds - environmentSeconds )
 			);
 			environmentSeconds = seconds;
-			const environment = worldEnvironment(
+			const dungeonAmbient =
+					current && (current.dungeonVisibility !== undefined || (current.originRegion & 0x8000) !== 0) ?
+						camera.dungeonBlock !== undefined ?
+							current.dungeonAmbient?.[camera.dungeonBlock] ?? DEFAULT_DUNGEON_AMBIENT_COLOR :
+							current.dungeonAmbient?.[0] ?? DEFAULT_DUNGEON_AMBIENT_COLOR :
+						undefined,
+				environment = worldEnvironment(
 					current?.environment,
 					localCamera,
 					aspect,
 					seconds,
 					frameClock,
 					weatherOptions,
-					environmentState
+					environmentState,
+					dungeonAmbient
 				),
 				sky = !!current?.environment;
 			if ( !current?.environment ) {

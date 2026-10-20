@@ -79,6 +79,15 @@ export interface ExperimentalOptions {
 	// (CICCos_ResolveDrawOwner 854680), which ignores the key. Off unless
 	// turned on (the balance advisor's ask, owner-approved 2026-10-15).
 	readonly vHidesCompanions: boolean;
+	// Port-only, not native: a character the navmesh puts in a dungeon room
+	// the camera's room does not draw is hidden and cannot be clicked, as
+	// that room's scenery is not drawn, so characters and rooms appear and
+	// vanish together. The original draws every entity in its frustum, so
+	// mobs show floating in the void behind a culled room (World_PickEntity-
+	// AtScreenPoint 692680 likewise raycasts entities only). On unless
+	// turned off (the owner's choice, 2026-10-19); off is the original,
+	// frustum-only draw and pick.
+	readonly dungeonCharacterPvs: boolean;
 	// Port-only, not native: an authored label wider than its box wraps onto
 	// two lines inside it, and an open list that would leave its window opens
 	// upward (the original runs the text past the window's edge and draws the
@@ -120,6 +129,11 @@ export interface ExperimentalOptions {
 	// CIFCOSStatus maps no left-click message (6A9BC0). On unless turned off
 	// (the owner's choice, 2026-10-18, BUG-086); off is native.
 	readonly petClickOpensWindow: boolean;
+	// Port-only, not native (0x0077DD61 clears commandMode bit 0x80 via 0x705B
+	// selector 2 on 0xB69E pickup error 0xB4/0xB5, stopping gold pickup too):
+	// when on, keep bit 0x80 enabled on full-bag errors and pause non-gold item
+	// pickup until bag space changes so the pet keeps picking up gold. Default on.
+	readonly smartPetPickup: boolean;
 }
 
 /*
@@ -158,8 +172,8 @@ experimentalOptions
 
 Only an explicit true enables a toggle, except smoothCamera, enchantSparks,
 compressedTextures, sharedActorRoom, greyDisabledTabs, jobKillNotices, dropPlusNotices,
-plusSevenNotices, fitWindowLabels, dropOnBagTab, noticeLinks, shortNotices, confirmGuildBan and
-petClickOpensWindow, which only an explicit false turns off.
+plusSevenNotices, fitWindowLabels, dropOnBagTab, noticeLinks, shortNotices, confirmGuildBan,
+petClickOpensWindow, smartPetPickup and dungeonCharacterPvs, which only an explicit false turns off.
 Missing or invalid render scales restore full resolution; legacy Video
 settings cannot enable scaling. Keys of retired rows (terrainRelief and texturedHorizon, removed at the owner's
 request on 2026-10-11) are never read, so a saved preference holding them
@@ -193,13 +207,15 @@ export function experimentalOptions( value: unknown = null ): ExperimentalOption
 		dropPlusNotices: record.dropPlusNotices !== false,
 		plusSevenNotices: record.plusSevenNotices !== false,
 		vHidesCompanions: enabled( "vHidesCompanions" ),
+		dungeonCharacterPvs: record.dungeonCharacterPvs !== false,
 		fitWindowLabels: record.fitWindowLabels !== false,
 		dropOnBagTab: record.dropOnBagTab !== false,
 		noticeLinks: record.noticeLinks !== false,
 		shortNotices: record.shortNotices !== false,
 		confirmGuildBan: record.confirmGuildBan !== false,
 		homingProjectiles: enabled( "homingProjectiles" ),
-		petClickOpensWindow: record.petClickOpensWindow !== false
+		petClickOpensWindow: record.petClickOpensWindow !== false,
+		smartPetPickup: record.smartPetPickup !== false
 	};
 }
 
@@ -248,6 +264,7 @@ export interface ExperimentalVideo {
 	readonly enchantSparks: boolean;
 	readonly sharedActorRoom: boolean;
 	readonly vHidesCompanions: boolean;
+	readonly dungeonCharacterPvs: boolean;
 }
 
 /*
@@ -269,7 +286,8 @@ export function experimentalVideo( options: ExperimentalOptions ): ExperimentalV
 		smoothCamera: options.smoothCamera,
 		enchantSparks: options.enchantSparks,
 		sharedActorRoom: options.sharedActorRoom,
-		vHidesCompanions: options.vHidesCompanions
+		vHidesCompanions: options.vHidesCompanions,
+		dungeonCharacterPvs: options.dungeonCharacterPvs
 	};
 }
 
@@ -287,6 +305,7 @@ export interface ExperimentalGameplay {
 	readonly dropPlusNotices: boolean;
 	readonly plusSevenNotices: boolean;
 	readonly homingProjectiles?: boolean;
+	readonly smartPetPickup?: boolean;
 }
 
 /*
@@ -300,6 +319,7 @@ export function experimentalGameplay( options: ExperimentalOptions ): Experiment
 		jobKillNotices: options.jobKillNotices,
 		dropPlusNotices: options.dropPlusNotices,
 		plusSevenNotices: options.plusSevenNotices,
-		homingProjectiles: options.homingProjectiles
+		homingProjectiles: options.homingProjectiles,
+		smartPetPickup: options.smartPetPickup
 	};
 }
