@@ -171,3 +171,34 @@ func TestReconcileGMPrivilegeIsDivisionQualified(t *testing.T) {
 		})
 	}
 }
+
+func TestReconcileAccountGMPrivilegePromotesAndDemotesAllAccountCharacters(t *testing.T) {
+	s := openTest(t, t.TempDir(), newTestClock())
+	for _, name := range []string{"CharOne", "CharTwo"} {
+		if err := s.CreateCharacter(testDivision, "gm-account", &enterworld.Character{Name: name}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := s.CreateCharacter(testDivision, "normal-account", &enterworld.Character{Name: "PlayerOne"}); err != nil {
+		t.Fatal(err)
+	}
+
+	s.ReconcileAccountGMPrivilege(testDivision, "gm-account", true)
+	s.ReadCharacters(testDivision, func(characters []*enterworld.Character) {
+		for _, c := range characters {
+			want := c.AccountID == "gm-account"
+			if c.GMPrivilege != want {
+				t.Fatalf("after grant: %s (%s) GMPrivilege = %v, want %v", c.Name, c.AccountID, c.GMPrivilege, want)
+			}
+		}
+	})
+
+	s.ReconcileAccountGMPrivilege(testDivision, "gm-account", false)
+	s.ReadCharacters(testDivision, func(characters []*enterworld.Character) {
+		for _, c := range characters {
+			if c.GMPrivilege {
+				t.Fatalf("after revoke: %s still has GMPrivilege", c.Name)
+			}
+		}
+	})
+}

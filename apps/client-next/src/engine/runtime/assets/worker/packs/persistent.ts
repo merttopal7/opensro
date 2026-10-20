@@ -250,10 +250,13 @@ export function createPersistentAssets( budgetOf: ( quota: number | undefined ) 
 	*/
 	function open( signal?: AbortSignal ) {
 		if ( stalled > 0 ) return Promise.resolve( null );
+		// A downloaded desktop shell (OpenSRODesktop in User-Agent) reads packs
+		// from local disk and never duplicates them into browser Cache Storage.
 		// A failed or late open is retried by the next caller, never kept for
 		// the session.
 		opened ??= storage( () =>
-			typeof caches === "undefined" ?
+			typeof caches === "undefined" ||
+				typeof navigator !== "undefined" && /\bOpenSRODesktop\//.test( navigator.userAgent ) ?
 				Promise.resolve( null ) :
 				caches.open( "sro-next-verified-v1" )
 		).catch( () => {

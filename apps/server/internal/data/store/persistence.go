@@ -76,11 +76,15 @@ func (s *Store) commitOnceLocked() error {
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
-	if err := writeTradeRewards(tx, s.meta.TradeRewards); err != nil {
-		return err
+	if s.changes.all || s.changes.tradeRewards {
+		if err := writeTradeRewards(tx, s.meta.TradeRewards); err != nil {
+			return err
+		}
 	}
-	if err := writeJobRankings(tx, s.meta.JobRankings); err != nil {
-		return err
+	if s.changes.all || s.changes.jobRankings {
+		if err := writeJobRankings(tx, s.meta.JobRankings); err != nil {
+			return err
+		}
 	}
 
 	if err := upsertMetaTx(tx, metaKeySchemaVersion, fmt.Sprintf("%d", CurrentVersion)); err != nil {
@@ -215,7 +219,7 @@ func (s *Store) commitOnceLocked() error {
 	}
 
 	if groundSnapshot != nil {
-		if err := replaceGroundTx(tx, groundSnapshot.Divisions); err != nil {
+		if err := syncGroundDeltaTx(tx, s.ground.loadedRecords, groundSnapshot.Divisions); err != nil {
 			return err
 		}
 		if err := upsertMetaTx(tx, metaKeyGidCounter, fmt.Sprintf("%d", groundSnapshot.GidCounter)); err != nil {

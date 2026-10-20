@@ -15,6 +15,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -316,5 +317,68 @@ func TestDeferredDoorOutsideABatchCommitsAtOnce(t *testing.T) {
 	s.UpdateCharacterDeferred(a, "no-batch", setGold(a, 5))
 	if diskGold(t, disk, "BatchA") != 5 {
 		t.Fatal("a deferred door with no batch open waited")
+	}
+}
+
+/*
+================
+TestGroundItemsDeltaWriteAndScopedMetadataDirtyFlags
+
+Proves that dropping/picking one ground item does not delete or rewrite
+untouched ground items (O(delta)), and that ordinary character commits do
+not rewrite tradeRewards/jobRankings metadata when neither plane changed.
+================
+*/
+func TestGroundItemsDeltaWriteAndScopedMetadataDirtyFlags(t *testing.T) {
+	s, a, _ := batchFixture(t)
+	disk := diskOpen(t, s)
+	registry := grounditem.NewRegistry()
+	s.AttachGround(registry)
+
+	first := registry.Add(testDivision, grounditem.Item{RefObjID: 1, Codename: "ITEM_ETC_GOLD_01", TypeFlags: 0x00C0, Position: grounditem.Point{RegionID: 0x6b4f}})
+	second := registry.Add(testDivision, grounditem.Item{RefObjID: 1, Codename: "ITEM_ETC_GOLD_01", TypeFlags: 0x00C0, Position: grounditem.Point{RegionID: 0x6b4f}})
+	if !s.UpdateTrade([]*enterworld.Character{a}, "seed-pool", func(p *domain.TradeRewardPool) bool {
+		p.Hunters = 42
+		return true
+	}) {
+		t.Fatal("seed trade pool refused")
+	}
+	if diskGround(t, disk) != 2 {
+		t.Fatalf("ground count = %d, want 2", diskGround(t, disk))
+	}
+
+	// Guard untouched ground row `first.Gid` and untouched `tradeRewards` meta row with SQLite triggers:
+	// a full-table DELETE+INSERT on ground_items or an unconditional writeTradeRewards would trip these.
+	if _, err := s.db.Exec(fmt.Sprintf(`
+		CREATE TRIGGER forbid_untouched_ground_delete BEFORE DELETE ON ground_items
+		WHEN OLD.gid = %d BEGIN SELECT RAISE(ABORT, 'untouched ground row deleted'); END;
+		CREATE TRIGGER forbid_untouched_ground_update BEFORE UPDATE ON ground_items
+		WHEN OLD.gid = %d BEGIN SELECT RAISE(ABORT, 'untouched ground row updated'); END;
+		CREATE TRIGGER forbid_unmodified_trade_rewards BEFORE UPDATE ON meta
+		WHEN OLD.key = 'tradeRewards' BEGIN SELECT RAISE(ABORT, 'unmodified tradeRewards rewritten'); END;
+	`, first.Gid, first.Gid)); err != nil {
+		t.Fatal(err)
+	}
+
+	// Remove `second`, add `third`, and update character `a` in one scoped commit.
+	var third grounditem.Item
+	if !s.UpdateCharacter(a, "delta-ground-and-char", func() bool {
+		registry.Remove(testDivision, second.Gid)
+		third = registry.Add(testDivision, grounditem.Item{RefObjID: 1, Codename: "ITEM_ETC_GOLD_01", TypeFlags: 0x00C0, Position: grounditem.Point{RegionID: 0x6b4f}})
+		a.Gold = int64Ptr(333)
+		return true
+	}) {
+		t.Fatal("UpdateCharacter refused")
+	}
+
+	if s.Health().FailedWrites != 0 {
+		t.Fatalf("delta commit failed trigger check: %+v", s.Health())
+	}
+	if diskGold(t, disk, "BatchA") != 333 || diskGround(t, disk) != 2 {
+		t.Fatalf("disk state after delta commit: gold=%d ground=%d", diskGold(t, disk, "BatchA"), diskGround(t, disk))
+	}
+	var countThird int
+	if err := disk.QueryRow("SELECT COUNT(*) FROM ground_items WHERE division = ? AND gid = ?", testDivision, third.Gid).Scan(&countThird); err != nil || countThird != 1 {
+		t.Fatalf("third ground item missing on disk: count=%d err=%v", countThird, err)
 	}
 }

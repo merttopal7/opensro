@@ -14,7 +14,7 @@ import (
 )
 
 const DefaultLeaseTTL = 10 * time.Second
-const maxDirectoryStateBytes int64 = 64 << 10
+const maxDirectoryStateBytes int64 = 1 << 20
 
 var (
 	ErrUnknownShard      = errors.New("unknown shard")
@@ -109,9 +109,38 @@ func NewPersistentDirectory(
 	return directory, nil
 }
 
+/*
+================
+SetCatalog
+
+Atomically replaces the shard catalog used for lease validation and status
+snapshots when the database shard catalog is updated at runtime.
+================
+*/
+func (directory *Directory) SetCatalog(catalog *Catalog) {
+	if catalog == nil {
+		return
+	}
+	directory.mu.Lock()
+	directory.catalog = catalog
+	directory.mu.Unlock()
+}
+
+/*
+================
+currentCatalog
+================
+*/
+func (directory *Directory) currentCatalog() *Catalog {
+	directory.mu.RLock()
+	catalog := directory.catalog
+	directory.mu.RUnlock()
+	return catalog
+}
+
 // Publish renews a worker lease and updates its active player count.
 func (directory *Directory) Publish(heartbeat Heartbeat, now time.Time) error {
-	definition, ok := directory.catalog.Resolve(heartbeat.ShardID)
+	definition, ok := directory.currentCatalog().Resolve(heartbeat.ShardID)
 	if !ok {
 		return fmt.Errorf("%w: %q", ErrUnknownShard, heartbeat.ShardID)
 	}
@@ -184,7 +213,7 @@ func (directory *Directory) Publish(heartbeat Heartbeat, now time.Time) error {
 
 // Release removes a lease only when the graceful caller still owns it.
 func (directory *Directory) Release(shardID, instanceID string) error {
-	if _, ok := directory.catalog.Resolve(shardID); !ok {
+	if _, ok := directory.currentCatalog().Resolve(shardID); !ok {
 		return fmt.Errorf("%w: %q", ErrUnknownShard, shardID)
 	}
 	if instanceID == "" {
@@ -215,10 +244,10 @@ func (directory *Directory) Release(shardID, instanceID string) error {
 // operating only while its sole GameWorld owner holds a fresh lease and
 // has opened admission (a starting owner is not yet operating).
 func (directory *Directory) Snapshot(now time.Time) []Status {
-	definitions := directory.catalog.Definitions()
-
 	directory.mu.RLock()
 	defer directory.mu.RUnlock()
+
+	definitions := directory.catalog.Definitions()
 
 	statuses := make([]Status, 0, len(definitions))
 	for _, definition := range definitions {

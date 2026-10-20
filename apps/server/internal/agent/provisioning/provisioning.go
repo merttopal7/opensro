@@ -54,6 +54,9 @@ type Accounts interface {
 	Verify(ctx context.Context, accountID, password string) (bool, error)
 	SetPassword(ctx context.Context, accountID, password string) error
 	SetDisabled(ctx context.Context, accountID string, disabled bool) error
+	SetGM(ctx context.Context, accountID string, isGM bool) error
+	SetGMShards(ctx context.Context, accountID string, shardIDs []string) error
+	AdjustSilk(ctx context.Context, accountID string, deltaOwn, deltaGift, deltaPoint int64) (auth.SilkBalance, error)
 }
 
 // Server is one provisioning API instance.
@@ -90,6 +93,8 @@ func (server *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/accounts/{id}/verify", server.handleVerify)
 	mux.HandleFunc("PUT /v1/accounts/{id}/password", server.handlePassword)
 	mux.HandleFunc("PUT /v1/accounts/{id}/disabled", server.handleDisabled)
+	mux.HandleFunc("PUT /v1/accounts/{id}/gm", server.handleGM)
+	mux.HandleFunc("POST /v1/accounts/{id}/silk", server.handleSilk)
 	return server.authorize(mux)
 }
 
@@ -119,9 +124,32 @@ func (server *Server) authorize(next http.Handler) http.Handler {
 //============================================================================
 
 type accountDocument struct {
-	ID        string    `json:"id"`
-	CreatedAt time.Time `json:"createdAt"`
-	Disabled  bool      `json:"disabled"`
+	ID        string           `json:"id"`
+	CreatedAt time.Time        `json:"createdAt"`
+	Disabled  bool             `json:"disabled"`
+	IsGM      bool             `json:"isGm"`
+	GMShards  []string         `json:"gmShards"`
+	Silk      auth.SilkBalance `json:"silk"`
+}
+
+/*
+================
+newAccountDocument
+================
+*/
+func newAccountDocument(info auth.AccountInfo) accountDocument {
+	shards := info.GMShards
+	if shards == nil {
+		shards = []string{}
+	}
+	return accountDocument{
+		ID:        info.ID,
+		CreatedAt: info.CreatedAt,
+		Disabled:  info.Disabled,
+		IsGM:      info.IsGM,
+		GMShards:  shards,
+		Silk:      info.Silk,
+	}
 }
 
 /*
@@ -142,7 +170,7 @@ func (server *Server) handleCreate(w http.ResponseWriter, r *http.Request) {
 		writeAccountError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusCreated, accountDocument{ID: info.ID, CreatedAt: info.CreatedAt, Disabled: info.Disabled})
+	writeJSON(w, http.StatusCreated, newAccountDocument(info))
 }
 
 /*
@@ -156,7 +184,73 @@ func (server *Server) handleLookup(w http.ResponseWriter, r *http.Request) {
 		writeAccountError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, accountDocument{ID: info.ID, CreatedAt: info.CreatedAt, Disabled: info.Disabled})
+	writeJSON(w, http.StatusOK, newAccountDocument(info))
+}
+
+/*
+================
+handleGM
+
+Sets either a shard-scoped GM list ({"shards": ["global-official", "aege"]})
+or an all-shards toggle ({"isGm": true/false}).
+================
+*/
+func (server *Server) handleGM(w http.ResponseWriter, r *http.Request) {
+	var request struct {
+		IsGM   *bool     `json:"isGm"`
+		Shards *[]string `json:"shards"`
+	}
+	if !decode(w, r, &request) {
+		return
+	}
+	if request.Shards != nil {
+		if err := server.accounts.SetGMShards(r.Context(), r.PathValue("id"), *request.Shards); err != nil {
+			writeAccountError(w, err)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	if request.IsGM == nil {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "shards or isGm is required")
+		return
+	}
+	if err := server.accounts.SetGM(r.Context(), r.PathValue("id"), *request.IsGM); err != nil {
+		writeAccountError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+/*
+================
+handleSilk
+
+Atomically adjusts the account's global cross-shard Silk balance (own, gift,
+point) and returns the updated balance.
+================
+*/
+func (server *Server) handleSilk(w http.ResponseWriter, r *http.Request) {
+	var request struct {
+		OwnDelta   int64 `json:"ownDelta"`
+		GiftDelta  int64 `json:"giftDelta"`
+		PointDelta int64 `json:"pointDelta"`
+	}
+	if !decode(w, r, &request) {
+		return
+	}
+	silk, err := server.accounts.AdjustSilk(
+		r.Context(),
+		r.PathValue("id"),
+		request.OwnDelta,
+		request.GiftDelta,
+		request.PointDelta,
+	)
+	if err != nil {
+		writeAccountError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, silk)
 }
 
 /*
@@ -256,6 +350,8 @@ func writeAccountError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, auth.ErrAccountExists):
 		writeError(w, http.StatusConflict, "ACCOUNT_EXISTS", "an account with that id already exists")
+	case errors.Is(err, auth.ErrInsufficientSilk):
+		writeError(w, http.StatusConflict, "INSUFFICIENT_SILK", "insufficient silk balance")
 	case errors.Is(err, auth.ErrAccountNotFound):
 		writeError(w, http.StatusNotFound, "ACCOUNT_NOT_FOUND", "no such account")
 	case errors.Is(err, auth.ErrAccountIDInvalid):

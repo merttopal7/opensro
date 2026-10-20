@@ -599,6 +599,7 @@ func (deployment *deployment) agentVariables() map[string]any {
 			"agent",
 			"accounts.db",
 		)),
+		"accounts_postgres_dsn":   strings.TrimSpace(os.Getenv("SRO_AGENT_POSTGRES_DSN")),
 		"host_network":            deployment.Network,
 		"nomad_namespace":         deployment.Namespace,
 		"agent_port":              deployment.AgentPort,

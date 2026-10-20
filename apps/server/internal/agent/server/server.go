@@ -81,6 +81,42 @@ type sessionEpochAuthority interface {
 
 /*
 ================
+gmAccountAuthority
+
+Optional capability implemented by auth.Accounts for shard-scoped account GM
+privilege.
+================
+*/
+type gmAccountAuthority interface {
+	IsGMOnShard(accountID, shardID string) bool
+}
+
+/*
+================
+shardStatusAuthority
+
+Optional capability implemented by auth.Accounts to persist live shard
+population and operating status into the database shards table.
+================
+*/
+type shardStatusAuthority interface {
+	UpdateShardStatus(shardID string, onlinePlayers int, operating bool)
+}
+
+/*
+================
+shardCatalogAuthority
+
+Optional capability implemented by auth.Accounts to reload the shard catalog
+from the database shards table at runtime.
+================
+*/
+type shardCatalogAuthority interface {
+	ShardDefinitions() ([]auth.ShardRow, error)
+}
+
+/*
+================
 Config
 ================
 */
@@ -147,6 +183,8 @@ type Server struct {
 	accountMinEpoch  map[string]uint64
 	shardInstance    map[string]string
 	shardSyncedEpoch map[string]map[string]uint64
+	catalogMu        sync.Mutex
+	catalogSyncedAt  time.Time
 }
 
 /*
@@ -262,6 +300,7 @@ func (server *Server) Handler() http.Handler {
 		"/title/servers",
 		browser(server.requireRunning(http.HandlerFunc(server.handleServers))),
 	)
+	mux.HandleFunc("/title/shards", server.handleShardRoutes)
 	mux.Handle(
 		loginPath,
 		browser(server.requireRunning(http.HandlerFunc(server.handleLogin))),
@@ -546,7 +585,7 @@ func (server *Server) RevokeAccount(accountID string, epoch uint64) {
 	server.revokedMu.Unlock()
 
 	now := server.now()
-	for _, definition := range server.catalog.Definitions() {
+	for _, definition := range server.currentCatalog().Definitions() {
 		if !definition.Enabled || strings.TrimSpace(definition.ControlURL) == "" {
 			continue
 		}
@@ -554,6 +593,53 @@ func (server *Server) RevokeAccount(accountID string, epoch uint64) {
 			server.markShardEpochSynced(definition.ID, "", accountID, epoch)
 		}
 	}
+}
+
+/*
+================
+currentCatalog
+
+Returns the active shard catalog, refreshing from the database shards table
+at most once every 2 seconds when the account authority backs shards.
+================
+*/
+func (server *Server) currentCatalog() *shard.Catalog {
+	if server == nil {
+		return nil
+	}
+	server.catalogMu.Lock()
+	defer server.catalogMu.Unlock()
+	if catAuth, ok := server.accounts.(shardCatalogAuthority); ok {
+		now := server.now()
+		if server.catalogSyncedAt.IsZero() || now.Sub(server.catalogSyncedAt) >= 2*time.Second {
+			server.catalogSyncedAt = now
+			if rows, err := catAuth.ShardDefinitions(); err == nil && len(rows) > 0 {
+				defs := make([]shard.Definition, 0, len(rows))
+				for _, r := range rows {
+					defs = append(defs, shard.Definition{
+						ID:                 r.ID,
+						Name:               r.Name,
+						NativeServerID:     r.NativeServerID,
+						NativeFarmID:       r.NativeFarmID,
+						Capacity:           r.Capacity,
+						Default:            r.Default,
+						Test:               r.Test,
+						Enabled:            r.Enabled,
+						ControlURL:         r.ControlURL,
+						TransportURL:       r.TransportURL,
+						PublicTransportURL: r.PublicTransportURL,
+					})
+				}
+				if refreshed, err := shard.NewCatalog(defs); err == nil && refreshed != nil {
+					server.catalog = refreshed
+					if server.directory != nil {
+						server.directory.SetCatalog(refreshed)
+					}
+				}
+			}
+		}
+	}
+	return server.catalog
 }
 
 /*
@@ -621,7 +707,7 @@ past its startup phase.
 ================
 */
 func (server *Server) syncShardRevocations(heartbeat shard.Heartbeat) {
-	definition, found := server.catalog.Resolve(heartbeat.ShardID)
+	definition, found := server.currentCatalog().Resolve(heartbeat.ShardID)
 	if !found || !definition.Enabled || strings.TrimSpace(definition.ControlURL) == "" {
 		return
 	}
@@ -678,7 +764,7 @@ func (server *Server) authorizedControlShard(
 	if shardID == "" {
 		return "", false
 	}
-	definition, found := server.catalog.Resolve(shardID)
+	definition, found := server.currentCatalog().Resolve(shardID)
 	if !found || !definition.Enabled {
 		return "", false
 	}

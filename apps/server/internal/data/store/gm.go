@@ -84,6 +84,7 @@ func (s *Store) ReconcileGMPrivilege(allowed []GMIdentity) (promoted, demoted []
 	}
 
 	s.mu.Lock()
+	s.staticGMCharacters = want
 	matched := map[string]bool{}
 	for divisionID, records := range s.characters {
 		for _, c := range records {
@@ -122,4 +123,40 @@ func (s *Store) ReconcileGMPrivilege(allowed []GMIdentity) (promoted, demoted []
 		log.Infof("store: GM privilege revoked from %q (no longer in %s)", identity, EnvGMCharacters)
 	}
 	return promoted, demoted
+}
+
+/*
+================
+ReconcileAccountGMPrivilege
+
+Synchronizes the GMPrivilege flag of every character owned by accountID on
+divisionID with the global account-level is_gm flag (accounts.go). Characters
+explicitly listed in SRO_GM_CHARACTERS keep their static grant even when
+isAccountGM is false.
+================
+*/
+func (s *Store) ReconcileAccountGMPrivilege(divisionID, accountID string, isAccountGM bool) {
+	if divisionID == "" || accountID == "" {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	changed := false
+	for _, c := range s.characters[divisionID] {
+		if c.AccountID != accountID {
+			continue
+		}
+		identity := GMIdentity{DivisionID: divisionID, CharacterName: c.Name}
+		target := isAccountGM || s.staticGMCharacters[identity.key()]
+		if c.GMPrivilege == target {
+			continue
+		}
+		c.GMPrivilege = target
+		s.changes.characters[c] = true
+		changed = true
+	}
+	if changed {
+		s.commitLocked("account gm-privilege reconcile " + accountID)
+	}
 }

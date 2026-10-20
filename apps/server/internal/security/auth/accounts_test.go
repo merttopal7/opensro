@@ -421,3 +421,223 @@ func TestAccountsSessionEpochAndRevocationNotice(t *testing.T) {
 		t.Fatal("expired account revocation verified")
 	}
 }
+
+/*
+================
+TestAccountsSilkBalanceAndAtomicAdjust
+
+Verifies global cross-shard Silk balance credits/debits and atomic overdraft
+protection across all three currency buckets (own, gift, point).
+================
+*/
+func TestAccountsSilkBalanceAndAtomicAdjust(t *testing.T) {
+	ctx := context.Background()
+	accounts, path := openTestAccounts(t)
+	if _, err := accounts.Create(ctx, "merchant", "password1"); err != nil {
+		t.Fatal(err)
+	}
+	initial, err := accounts.SilkBalance("merchant")
+	if err != nil || initial != (SilkBalance{}) {
+		t.Fatalf("initial silk = %+v, %v", initial, err)
+	}
+	credited, err := accounts.AdjustSilk(ctx, "merchant", 500, 100, 25)
+	if err != nil || credited != (SilkBalance{Own: 500, Gift: 100, Point: 25}) {
+		t.Fatalf("credit silk = %+v, %v", credited, err)
+	}
+	debited, err := accounts.AdjustSilk(ctx, "merchant", -150, -40, 0)
+	if err != nil || debited != (SilkBalance{Own: 350, Gift: 60, Point: 25}) {
+		t.Fatalf("debit silk = %+v, %v", debited, err)
+	}
+	// Overdraft on any bucket is refused atomically without changing the row.
+	if _, err := accounts.AdjustSilk(ctx, "merchant", -400, 10, 0); !errors.Is(err, ErrInsufficientSilk) {
+		t.Fatalf("overdraft own = %v, want ErrInsufficientSilk", err)
+	}
+	afterOverdraft, err := accounts.SilkBalance("merchant")
+	if err != nil || afterOverdraft != (SilkBalance{Own: 350, Gift: 60, Point: 25}) {
+		t.Fatalf("balance after refused overdraft = %+v, %v", afterOverdraft, err)
+	}
+	if _, err := accounts.AdjustSilk(ctx, "ghost", 10, 0, 0); !errors.Is(err, ErrAccountNotFound) {
+		t.Fatalf("adjust missing account = %v, want ErrAccountNotFound", err)
+	}
+	if err := accounts.Close(); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := OpenAccounts(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Close()
+	if persisted, err := reopened.SilkBalance("merchant"); err != nil || persisted != (SilkBalance{Own: 350, Gift: 60, Point: 25}) {
+		t.Fatalf("reopened silk = %+v, %v", persisted, err)
+	}
+}
+
+/*
+================
+TestAccountsMigrateFromSQLiteAndPostgresAuthority
+
+Verifies lossless migration of accounts, passwords, session epochs, and Silk
+balances from SQLite into another authority (and into live PostgreSQL when
+SRO_TEST_POSTGRES_DSN is provided).
+================
+*/
+func TestAccountsMigrateFromSQLiteAndPostgresAuthority(t *testing.T) {
+	ctx := context.Background()
+	source, sourcePath := openTestAccounts(t)
+	if _, err := source.Create(ctx, "Alpha", "password-alpha"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := source.AdjustSilk(ctx, "Alpha", 1200, 300, 50); err != nil {
+		t.Fatal(err)
+	}
+	if err := source.SetGMShards(ctx, "Alpha", []string{"global-official", "aege"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := source.RevokeSessions(ctx, "Alpha"); err != nil {
+		t.Fatal(err)
+	}
+	if err := source.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	target, _ := openTestAccounts(t)
+	migrated, err := target.MigrateFromSQLite(sourcePath)
+	if err != nil || migrated != 1 {
+		t.Fatalf("MigrateFromSQLite = %d, %v", migrated, err)
+	}
+	// Second migration is idempotent.
+	if again, err := target.MigrateFromSQLite(sourcePath); err != nil || again != 0 {
+		t.Fatalf("second MigrateFromSQLite = %d, %v", again, err)
+	}
+	if ok, err := target.Verify(ctx, "Alpha", "password-alpha"); err != nil || !ok {
+		t.Fatalf("verify migrated account = %v, %v", ok, err)
+	}
+	if !target.IsGM("Alpha") || !target.IsGMOnShard("Alpha", "global-official") || !target.IsGMOnShard("Alpha", "aege") {
+		t.Fatal("migrated account lost shard-scoped GM privilege")
+	}
+	if target.IsGMOnShard("Alpha", "troy") {
+		t.Fatal("account was granted GM on unconfigured shard troy")
+	}
+	if gmIDs := target.GMAccountIDs(); len(gmIDs) != 1 || gmIDs[0] != "Alpha" {
+		t.Fatalf("GMAccountIDs = %v, want [Alpha]", gmIDs)
+	}
+	if silk, err := target.SilkBalance("Alpha"); err != nil || silk != (SilkBalance{Own: 1200, Gift: 300, Point: 50}) {
+		t.Fatalf("migrated silk = %+v, %v", silk, err)
+	}
+	if epoch, ok := target.SessionEpoch("Alpha"); !ok || epoch != 2 {
+		t.Fatalf("migrated epoch = %d, %v", epoch, ok)
+	}
+
+	dsn := os.Getenv("SRO_TEST_POSTGRES_DSN")
+	if dsn == "" {
+		return
+	}
+	pg, err := OpenAccountsPostgres(dsn)
+	if err != nil {
+		t.Fatalf("OpenAccountsPostgres: %v", err)
+	}
+	defer pg.Close()
+	_, _ = pg.db.ExecContext(ctx, `DELETE FROM accounts WHERE lower(id) IN ('alpha', 'pgplayer')`)
+
+	pgMigrated, err := pg.MigrateFromSQLite(sourcePath)
+	if err != nil || pgMigrated != 1 {
+		t.Fatalf("Postgres MigrateFromSQLite = %d, %v", pgMigrated, err)
+	}
+	if ok, err := pg.Verify(ctx, "Alpha", "password-alpha"); err != nil || !ok {
+		t.Fatalf("Postgres verify migrated Alpha = %v, %v", ok, err)
+	}
+	if !pg.IsGMOnShard("Alpha", "global-official") || !pg.IsGMOnShard("Alpha", "aege") || pg.IsGMOnShard("Alpha", "troy") {
+		t.Fatal("Postgres migrated Alpha shard-scoped GM privilege mismatch")
+	}
+	if silk, err := pg.SilkBalance("Alpha"); err != nil || silk != (SilkBalance{Own: 1200, Gift: 300, Point: 50}) {
+		t.Fatalf("Postgres migrated silk = %+v, %v", silk, err)
+	}
+	if _, err := pg.Create(ctx, "PgPlayer", "postgres-pass"); err != nil {
+		t.Fatalf("Postgres Create: %v", err)
+	}
+	if _, err := pg.Create(ctx, "pgplayer", "postgres-pass"); !errors.Is(err, ErrAccountExists) {
+		t.Fatalf("Postgres case-folded duplicate = %v, want ErrAccountExists", err)
+	}
+	if silk, err := pg.AdjustSilk(ctx, "PgPlayer", 2500, 0, 100); err != nil || silk.Own != 2500 || silk.Point != 100 {
+		t.Fatalf("Postgres AdjustSilk = %+v, %v", silk, err)
+	}
+}
+
+/*
+================
+TestShardsCatalogAndStatusInDatabase
+
+Verifies that shard definitions and live population/operating status are
+stored in the shards table, and that SeedShards does not overwrite customized
+database rows.
+================
+*/
+func TestShardsCatalogAndStatusInDatabase(t *testing.T) {
+	ctx := context.Background()
+	accounts, _ := openTestAccounts(t)
+	seed := []ShardRow{
+		{
+			ID:                 "global-official",
+			Name:               "Xian",
+			NativeServerID:     1,
+			NativeFarmID:       0,
+			Capacity:           1000,
+			Default:            true,
+			Enabled:            true,
+			ControlURL:         "http://127.0.0.1:8791",
+			TransportURL:       "http://127.0.0.1:8788",
+			PublicTransportURL: "/shards/global-official",
+		},
+		{
+			ID:                 "aege",
+			Name:               "Aege",
+			NativeServerID:     2,
+			NativeFarmID:       0,
+			Capacity:           500,
+			Default:            false,
+			Enabled:            true,
+			ControlURL:         "http://127.0.0.1:8792",
+			TransportURL:       "http://127.0.0.1:8793",
+			PublicTransportURL: "/shards/aege",
+		},
+	}
+	inserted, err := accounts.SeedShards(seed)
+	if err != nil || inserted != 2 {
+		t.Fatalf("SeedShards = %d, %v", inserted, err)
+	}
+	// Customize aege capacity in DB to 2000; subsequent SeedShards must not revert it.
+	if err := accounts.UpsertShard(ctx, ShardRow{
+		ID:                 "aege",
+		Name:               "Aege",
+		NativeServerID:     2,
+		NativeFarmID:       0,
+		Capacity:           2000,
+		Default:            false,
+		Enabled:            true,
+		ControlURL:         "http://127.0.0.1:8792",
+		TransportURL:       "http://127.0.0.1:8793",
+		PublicTransportURL: "/shards/aege",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if again, err := accounts.SeedShards(seed); err != nil || again != 0 {
+		t.Fatalf("second SeedShards = %d, %v", again, err)
+	}
+	defs, err := accounts.ShardDefinitions()
+	if err != nil || len(defs) != 2 {
+		t.Fatalf("ShardDefinitions = %+v, %v", defs, err)
+	}
+	if defs[1].ID != "aege" || defs[1].Capacity != 2000 {
+		t.Fatalf("resolved aege = %+v; want capacity 2000", defs[1])
+	}
+	accounts.UpdateShardStatus("aege", 1450, true)
+	var online, operating int
+	if err := accounts.db.QueryRow(
+		`SELECT online_players, operating FROM shards WHERE id = 'aege'`,
+	).Scan(&online, &operating); err != nil {
+		t.Fatal(err)
+	}
+	if online != 1450 || operating != 1 {
+		t.Fatalf("shard status in DB = (%d, %d), want (1450, 1)", online, operating)
+	}
+}

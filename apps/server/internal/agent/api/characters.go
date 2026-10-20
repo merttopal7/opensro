@@ -51,6 +51,18 @@ type CharacterPresentation struct {
 type CharacterPresentationProjector func(*domain.Character) CharacterPresentation
 type CharacterCreationValidator func(*domain.Character) bool
 
+// syncAccountGMFromHeader synchronizes the GMPrivilege flag of all characters
+// owned by the authenticated account on this shard when the global Agent
+// supplies the account's current is_gm status via X-SRO-Account-GM.
+func (api *API) syncAccountGMFromHeader(r *http.Request) {
+	switch strings.TrimSpace(r.Header.Get("X-SRO-Account-GM")) {
+	case "1":
+		api.store.ReconcileAccountGMPrivilege(requestShardID(r), requestAccountID(r), true)
+	case "0":
+		api.store.ReconcileAccountGMPrivilege(requestShardID(r), requestAccountID(r), false)
+	}
+}
+
 // Character endpoints are the account-scoped application boundary over the
 // authority store. Session middleware establishes account ownership before
 // any handler reaches this file.
@@ -66,6 +78,7 @@ func (api *API) handleCharacterList(w http.ResponseWriter, r *http.Request) {
 	// divisionId is only a browser echo and has no authority.
 	division := requestShardID(r)
 	api.store.ReapMaturedDeletions()
+	api.syncAccountGMFromHeader(r)
 	accountID := requestAccountID(r)
 	var rows []map[string]interface{}
 	api.store.ReadCharacterSelection(division, func(characters []*domain.Character, blockers map[int64]string) {
@@ -200,6 +213,7 @@ func (api *API) handleCharacterCreate(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
+	api.syncAccountGMFromHeader(r)
 	// The record is shared store state from CreateCharacter on; read it
 	// back under the door like everyone else.
 	var characterJSON map[string]interface{}
@@ -444,6 +458,7 @@ func (api *API) handleEnterWorldToken(w http.ResponseWriter, r *http.Request) {
 	// Lazy reap first, like every character read on this surface: a
 	// matured deletion must not receive a bind ticket.
 	api.store.ReapMaturedDeletions()
+	api.syncAccountGMFromHeader(r)
 	division := requestShardID(r)
 	if !maintenanceAdmits(api.maintenanceGatePath, requestAccountID(r)) {
 		writeJSON(w, http.StatusOK, map[string]interface{}{"ok": false, "code": "MAINTENANCE"})

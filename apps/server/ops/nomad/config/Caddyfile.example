@@ -30,6 +30,14 @@ game.example.com {
 		reverse_proxy 127.0.0.1:8788
 	}
 
+	# Differential auto-updater CDN for Silkroad.exe / mobile clients
+	# (serves patches.json and encrypted PatchNNN.temir archives).
+	handle /updates/* {
+		header Cache-Control "public, max-age=60"
+		root * /var/www/opensro
+		file_server
+	}
+
 	# The browser client. `sro-nomad publish-client` keeps the current release
 	# at client and the one before it at previous (ops/nomad/LINUX_SINGLE_HOST.md).
 	# viewer.html is the embeddable 3D viewer (docs/VIEWER.md), served beside

@@ -51,6 +51,13 @@ variable "accounts_db_path" {
   type = string
 }
 
+# Optional PostgreSQL DSN for the global account and cross-shard Silk
+# authority (port-only, not native). Empty keeps the SQLite authority.
+variable "accounts_postgres_dsn" {
+  type    = string
+  default = ""
+}
+
 variable "host_network" {
   type    = string
   default = "loopback"
@@ -209,6 +216,7 @@ job "sro-agent" {
         SRO_AGENT_API_ADDR                = "${NOMAD_IP_http}:${NOMAD_PORT_http}"
         SRO_AGENT_DIRECTORY_STATE_PATH    = var.directory_state_path
         SRO_AGENT_ACCOUNTS_DB_PATH        = var.accounts_db_path
+        SRO_AGENT_POSTGRES_DSN            = var.accounts_postgres_dsn
         SRO_AGENT_PROVISIONING_TOKEN_PATH = "${NOMAD_SECRETS_DIR}/provisioning-token"
         SRO_AGENT_PROVISIONING_ADDR       = "127.0.0.1:${var.agent_provisioning_port}"
         SRO_AGENT_PRIVATE_NETWORK         = var.private_network

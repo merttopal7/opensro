@@ -19,11 +19,12 @@ import (
 )
 
 const (
-	DefaultHeartbeatInterval = 3 * time.Second
-	DefaultAcquireTimeout    = DefaultLeaseTTL + 5*time.Second
-	ControlShardHeader       = "X-SRO-Shard-ID"
-	maxHeartbeatResponse     = 64 << 10
-	maxConsecutiveFailures   = 3
+	DefaultHeartbeatInterval    = 3 * time.Second
+	DefaultAcquireTimeout       = DefaultLeaseTTL + 5*time.Second
+	ControlShardHeader          = "X-SRO-Shard-ID"
+	maxHeartbeatResponse        = 64 << 10
+	maxAccountDirectoryResponse = 64 << 20
+	maxConsecutiveFailures      = 3
 )
 
 // ErrLeaseContended means another short-lived process identity still owns the
@@ -250,12 +251,12 @@ func (reporter *Reporter) AccountIDs(ctx context.Context) ([]string, error) {
 	defer response.Body.Close()
 	body, err := io.ReadAll(io.LimitReader(
 		response.Body,
-		maxHeartbeatResponse+1,
+		maxAccountDirectoryResponse+1,
 	))
 	if err != nil {
 		return nil, err
 	}
-	if len(body) > maxHeartbeatResponse {
+	if len(body) > maxAccountDirectoryResponse {
 		return nil, fmt.Errorf("agent account directory exceeds response limit")
 	}
 	if response.StatusCode != http.StatusOK {

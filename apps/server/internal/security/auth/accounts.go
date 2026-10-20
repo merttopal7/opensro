@@ -28,11 +28,13 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
 	"time"
 
+	_ "github.com/lib/pq"
 	"golang.org/x/crypto/bcrypt"
 	_ "modernc.org/sqlite"
 	"opensro.online/server/internal/domain"
@@ -70,16 +72,28 @@ var (
 	ErrAccountNotFound  = errors.New("account not found")
 	ErrAccountIDInvalid = errors.New("account id is invalid")
 	ErrPasswordInvalid  = fmt.Errorf("password must be %d to %d bytes", MinPasswordBytes, MaxPasswordBytes)
+	ErrInsufficientSilk = errors.New("insufficient silk balance")
 )
+
+// SilkBalance holds the global cross-shard Item Mall currency buckets
+// (SR_AccountDB SK_Silk: silk_own, silk_gift, silk_point).
+type SilkBalance struct {
+	Own   int64 `json:"own"`
+	Gift  int64 `json:"gift"`
+	Point int64 `json:"point"`
+}
 
 // AccountInfo is the public view of one account: never its hash.
 type AccountInfo struct {
 	ID        string
 	CreatedAt time.Time
 	Disabled  bool
+	IsGM      bool
+	GMShards  []string
+	Silk      SilkBalance
 }
 
-// Accounts is the SQLite-backed account authority.
+// Accounts is the SQL-backed (SQLite or PostgreSQL) global account authority.
 type Accounts struct {
 	db *sql.DB
 
@@ -99,9 +113,36 @@ CREATE TABLE IF NOT EXISTS accounts (
 	password_hash BLOB    NOT NULL,
 	created_at_ms INTEGER NOT NULL,
 	disabled      INTEGER NOT NULL DEFAULT 0 CHECK (disabled IN (0, 1)),
-	session_epoch INTEGER NOT NULL DEFAULT 1
+	is_gm         INTEGER NOT NULL DEFAULT 0 CHECK (is_gm IN (0, 1)),
+	gm_shards     TEXT    NOT NULL DEFAULT '',
+	session_epoch INTEGER NOT NULL DEFAULT 1,
+	silk_own      INTEGER NOT NULL DEFAULT 0 CHECK (silk_own >= 0),
+	silk_gift     INTEGER NOT NULL DEFAULT 0 CHECK (silk_gift >= 0),
+	silk_point    INTEGER NOT NULL DEFAULT 0 CHECK (silk_point >= 0)
 ) STRICT;
 CREATE UNIQUE INDEX IF NOT EXISTS accounts_folded_id ON accounts (lower(id));
+`
+
+const accountsPostgresSchema = `
+CREATE TABLE IF NOT EXISTS accounts (
+	id            TEXT     NOT NULL PRIMARY KEY,
+	password_hash BYTEA    NOT NULL,
+	created_at_ms BIGINT   NOT NULL,
+	disabled      SMALLINT NOT NULL DEFAULT 0 CHECK (disabled IN (0, 1)),
+	is_gm         SMALLINT NOT NULL DEFAULT 0 CHECK (is_gm IN (0, 1)),
+	gm_shards     TEXT     NOT NULL DEFAULT '',
+	session_epoch BIGINT   NOT NULL DEFAULT 1,
+	silk_own      BIGINT   NOT NULL DEFAULT 0 CHECK (silk_own >= 0),
+	silk_gift     BIGINT   NOT NULL DEFAULT 0 CHECK (silk_gift >= 0),
+	silk_point    BIGINT   NOT NULL DEFAULT 0 CHECK (silk_point >= 0)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS accounts_folded_id ON accounts (lower(id));
+ALTER TABLE accounts ADD COLUMN IF NOT EXISTS is_gm SMALLINT NOT NULL DEFAULT 0;
+ALTER TABLE accounts ADD COLUMN IF NOT EXISTS gm_shards TEXT NOT NULL DEFAULT '';
+ALTER TABLE accounts ADD COLUMN IF NOT EXISTS session_epoch BIGINT NOT NULL DEFAULT 1;
+ALTER TABLE accounts ADD COLUMN IF NOT EXISTS silk_own BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE accounts ADD COLUMN IF NOT EXISTS silk_gift BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE accounts ADD COLUMN IF NOT EXISTS silk_point BIGINT NOT NULL DEFAULT 0;
 `
 
 /*
@@ -164,6 +205,22 @@ func OpenAccounts(path string) (*Accounts, error) {
 		_ = db.Close()
 		return nil, err
 	}
+	if err := ensureAccountGMColumn(db); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	if err := ensureAccountSilkColumns(db); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	if _, err := db.Exec(shardsSQLiteSchema); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("shards schema: %w", err)
+	}
+	if err := backfillAccountGMShards(db); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("backfill account_gm_shards: %w", err)
+	}
 	if _, err := db.Exec(fmt.Sprintf("PRAGMA user_version=%d", accountsSchemaVersion)); err != nil {
 		_ = db.Close()
 		return nil, err
@@ -174,7 +231,52 @@ func OpenAccounts(path string) (*Accounts, error) {
 	}
 	return &Accounts{
 		db:      db,
-		hashing: make(chan struct{}, 2),
+		hashing: make(chan struct{}, max(2, runtime.NumCPU())),
+	}, nil
+}
+
+/*
+================
+OpenAccountsPostgres
+
+Opens the global account authority backed by PostgreSQL (port-only, not native).
+Used when SRO_AGENT_POSTGRES_DSN is configured so multi-shard clusters share
+one ACID account and Silk authority across all nodes and web portals.
+================
+*/
+func OpenAccountsPostgres(dsn string) (*Accounts, error) {
+	if strings.TrimSpace(dsn) == "" {
+		return nil, errors.New("account postgres dsn is empty")
+	}
+	db, err := sql.Open("postgres", dsn)
+	if err != nil {
+		return nil, err
+	}
+	db.SetMaxOpenConns(32)
+	db.SetMaxIdleConns(8)
+	db.SetConnMaxLifetime(30 * time.Minute)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := db.PingContext(ctx); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("postgres ping: %w", err)
+	}
+	if _, err := db.ExecContext(ctx, accountsPostgresSchema); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("postgres account schema: %w", err)
+	}
+	if _, err := db.ExecContext(ctx, shardsPostgresSchema); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("postgres shards schema: %w", err)
+	}
+	if err := backfillAccountGMShards(db); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("postgres backfill account_gm_shards: %w", err)
+	}
+	return &Accounts{
+		db:      db,
+		hashing: make(chan struct{}, max(2, runtime.NumCPU())),
 	}, nil
 }
 
@@ -215,6 +317,179 @@ func ensureAccountSessionEpoch(db *sql.DB) error {
 		return fmt.Errorf("account schema session_epoch: %w", err)
 	}
 	return nil
+}
+
+/*
+================
+ensureAccountGMColumn
+
+Upgrades an existing SQLite accounts.db written before is_gm and gm_shards
+were added so every account defaults to non-GM (0 / empty shard list).
+================
+*/
+func ensureAccountGMColumn(db *sql.DB) error {
+	var count int
+	if err := db.QueryRow(
+		`SELECT count(*) FROM pragma_table_info('accounts') WHERE name = 'is_gm'`,
+	).Scan(&count); err != nil {
+		return fmt.Errorf("account schema inspect is_gm: %w", err)
+	}
+	if count == 0 {
+		if _, err := db.Exec(
+			`ALTER TABLE accounts ADD COLUMN is_gm INTEGER NOT NULL DEFAULT 0 CHECK (is_gm IN (0, 1))`,
+		); err != nil {
+			return fmt.Errorf("account schema is_gm: %w", err)
+		}
+	}
+	if err := db.QueryRow(
+		`SELECT count(*) FROM pragma_table_info('accounts') WHERE name = 'gm_shards'`,
+	).Scan(&count); err != nil {
+		return fmt.Errorf("account schema inspect gm_shards: %w", err)
+	}
+	if count == 0 {
+		if _, err := db.Exec(
+			`ALTER TABLE accounts ADD COLUMN gm_shards TEXT NOT NULL DEFAULT ''`,
+		); err != nil {
+			return fmt.Errorf("account schema gm_shards: %w", err)
+		}
+	}
+	return nil
+}
+
+/*
+================
+ensureAccountSilkColumns
+
+Upgrades an existing SQLite accounts.db written before silk_own, silk_gift,
+and silk_point were added so every account starts with 0 Silk across all
+three global currency buckets.
+================
+*/
+func ensureAccountSilkColumns(db *sql.DB) error {
+	for _, column := range []string{"silk_own", "silk_gift", "silk_point"} {
+		var count int
+		if err := db.QueryRow(
+			`SELECT count(*) FROM pragma_table_info('accounts') WHERE name = $1`,
+			column,
+		).Scan(&count); err != nil {
+			return fmt.Errorf("account schema inspect %s: %w", column, err)
+		}
+		if count > 0 {
+			continue
+		}
+		if _, err := db.Exec(
+			fmt.Sprintf(`ALTER TABLE accounts ADD COLUMN %s INTEGER NOT NULL DEFAULT 0 CHECK (%s >= 0)`, column, column),
+		); err != nil {
+			return fmt.Errorf("account schema %s: %w", column, err)
+		}
+	}
+	return nil
+}
+
+/*
+================
+MigrateFromSQLite
+
+Imports any account rows present in a local SQLite accounts.db that are not
+yet present in this store (preserving id, password_hash, created_at_ms,
+disabled, session_epoch, and silk_*). Used when switching an existing
+cluster from SQLite to PostgreSQL without losing existing player accounts.
+================
+*/
+func (accounts *Accounts) MigrateFromSQLite(sqlitePath string) (int, error) {
+	if strings.TrimSpace(sqlitePath) == "" {
+		return 0, nil
+	}
+	if info, err := os.Lstat(sqlitePath); err != nil || !info.Mode().IsRegular() {
+		return 0, nil
+	}
+	source, err := OpenAccounts(sqlitePath)
+	if err != nil {
+		return 0, fmt.Errorf("open source sqlite %s: %w", sqlitePath, err)
+	}
+	defer source.Close()
+
+	rows, err := source.db.Query(
+		`SELECT id, password_hash, created_at_ms, disabled, is_gm, gm_shards, session_epoch, silk_own, silk_gift, silk_point FROM accounts`,
+	)
+	if err != nil {
+		return 0, err
+	}
+	defer rows.Close()
+
+	type migratedRow struct {
+		id           string
+		passwordHash []byte
+		createdAtMS  int64
+		disabled     int
+		isGM         int
+		gmShards     string
+		sessionEpoch int64
+		silkOwn      int64
+		silkGift     int64
+		silkPoint    int64
+	}
+	var pending []migratedRow
+	for rows.Next() {
+		var r migratedRow
+		if err := rows.Scan(
+			&r.id,
+			&r.passwordHash,
+			&r.createdAtMS,
+			&r.disabled,
+			&r.isGM,
+			&r.gmShards,
+			&r.sessionEpoch,
+			&r.silkOwn,
+			&r.silkGift,
+			&r.silkPoint,
+		); err != nil {
+			return 0, err
+		}
+		pending = append(pending, r)
+	}
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
+
+	tx, err := accounts.db.Begin()
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	inserted := 0
+	for _, r := range pending {
+		result, err := tx.Exec(
+			`INSERT INTO accounts (id, password_hash, created_at_ms, disabled, is_gm, gm_shards, session_epoch, silk_own, silk_gift, silk_point)
+			 SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9, $10
+			 WHERE NOT EXISTS (SELECT 1 FROM accounts WHERE lower(id) = lower($11))`,
+			r.id,
+			r.passwordHash,
+			r.createdAtMS,
+			r.disabled,
+			r.isGM,
+			r.gmShards,
+			r.sessionEpoch,
+			r.silkOwn,
+			r.silkGift,
+			r.silkPoint,
+			r.id,
+		)
+		if err != nil {
+			return 0, fmt.Errorf("migrate account %q: %w", r.id, err)
+		}
+		if n, _ := result.RowsAffected(); n == 1 {
+			inserted++
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	if err := backfillAccountGMShards(accounts.db); err != nil {
+		return 0, err
+	}
+	return inserted, nil
 }
 
 /*
@@ -269,8 +544,8 @@ func (accounts *Accounts) Seed(catalog *Catalog) (int, error) {
 		hash, _ := catalog.PasswordHash(id)
 		result, err := tx.Exec(
 			`INSERT INTO accounts (id, password_hash, created_at_ms)
-			 SELECT ?, ?, ?
-			 WHERE NOT EXISTS (SELECT 1 FROM accounts WHERE lower(id) = lower(?))`,
+			 SELECT $1, $2, $3
+			 WHERE NOT EXISTS (SELECT 1 FROM accounts WHERE lower(id) = lower($4))`,
 			id, hash, now, id,
 		)
 		if err != nil {
@@ -281,6 +556,9 @@ func (accounts *Accounts) Seed(catalog *Catalog) (int, error) {
 		}
 	}
 	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	if err := backfillAccountGMShards(accounts.db); err != nil {
 		return 0, err
 	}
 	return inserted, nil
@@ -297,7 +575,7 @@ database error, reports false: the authority fails closed.
 func (accounts *Accounts) PasswordHash(accountID string) ([]byte, bool) {
 	var hash []byte
 	err := accounts.db.QueryRow(
-		`SELECT password_hash FROM accounts WHERE id = ? AND disabled = 0`,
+		`SELECT password_hash FROM accounts WHERE id = $1 AND disabled = 0`,
 		accountID,
 	).Scan(&hash)
 	if err != nil {
@@ -317,7 +595,7 @@ account, or a database error, reports false: the authority fails closed.
 func (accounts *Accounts) SessionEpoch(accountID string) (uint64, bool) {
 	var epoch int64
 	err := accounts.db.QueryRow(
-		`SELECT session_epoch FROM accounts WHERE id = ? AND disabled = 0`,
+		`SELECT session_epoch FROM accounts WHERE id = $1 AND disabled = 0`,
 		accountID,
 	).Scan(&epoch)
 	if err != nil || epoch < 1 {
@@ -366,7 +644,7 @@ func (accounts *Accounts) readEpoch(ctx context.Context, accountID string) (uint
 	var epoch int64
 	if err := accounts.db.QueryRowContext(
 		ctx,
-		`SELECT session_epoch FROM accounts WHERE id = ?`,
+		`SELECT session_epoch FROM accounts WHERE id = $1`,
 		accountID,
 	).Scan(&epoch); err != nil {
 		return 0, err
@@ -393,7 +671,7 @@ func (accounts *Accounts) Credential(typedID string) (string, []byte, bool) {
 	var id string
 	var hash []byte
 	err := accounts.db.QueryRow(
-		`SELECT id, password_hash FROM accounts WHERE lower(id) = lower(?) AND disabled = 0`,
+		`SELECT id, password_hash FROM accounts WHERE lower(id) = lower($1) AND disabled = 0`,
 		typedID,
 	).Scan(&id, &hash)
 	if err != nil {
@@ -453,20 +731,27 @@ Lookup
 func (accounts *Accounts) Lookup(accountID string) (AccountInfo, error) {
 	var createdAt int64
 	var disabled int
+	var isGM int
+	var rawGMShards string
+	var silk SilkBalance
 	err := accounts.db.QueryRow(
-		`SELECT created_at_ms, disabled FROM accounts WHERE id = ?`,
+		`SELECT created_at_ms, disabled, is_gm, gm_shards, silk_own, silk_gift, silk_point FROM accounts WHERE id = $1`,
 		accountID,
-	).Scan(&createdAt, &disabled)
+	).Scan(&createdAt, &disabled, &isGM, &rawGMShards, &silk.Own, &silk.Gift, &silk.Point)
 	if errors.Is(err, sql.ErrNoRows) {
 		return AccountInfo{}, ErrAccountNotFound
 	}
 	if err != nil {
 		return AccountInfo{}, err
 	}
+	gmShards := accounts.accountGMShards(accountID, rawGMShards, isGM)
 	return AccountInfo{
 		ID:        accountID,
 		CreatedAt: time.UnixMilli(createdAt).UTC(),
 		Disabled:  disabled == 1,
+		IsGM:      len(gmShards) > 0,
+		GMShards:  gmShards,
+		Silk:      silk,
 	}, nil
 }
 
@@ -490,11 +775,12 @@ func (accounts *Accounts) Create(ctx context.Context, accountID, password string
 	result, err := accounts.db.ExecContext(
 		ctx,
 		`INSERT INTO accounts (id, password_hash, created_at_ms)
-		 SELECT ?, ?, ?
-		 WHERE NOT EXISTS (SELECT 1 FROM accounts WHERE lower(id) = lower(?))`,
+		 SELECT $1, $2, $3
+		 WHERE NOT EXISTS (SELECT 1 FROM accounts WHERE lower(id) = lower($4))`,
 		accountID, hash, now.UnixMilli(), accountID,
 	)
-	if err != nil && strings.Contains(err.Error(), "UNIQUE constraint failed") {
+	if err != nil && (strings.Contains(err.Error(), "UNIQUE constraint failed") ||
+		strings.Contains(err.Error(), "duplicate key value violates unique constraint")) {
 		// Another writer won the race the NOT EXISTS guard could not see.
 		return AccountInfo{}, ErrAccountExists
 	}
@@ -542,7 +828,7 @@ func (accounts *Accounts) SetPassword(ctx context.Context, accountID, password s
 	}
 	result, err := accounts.db.ExecContext(
 		ctx,
-		`UPDATE accounts SET password_hash = ?, session_epoch = session_epoch + 1 WHERE id = ?`,
+		`UPDATE accounts SET password_hash = $1, session_epoch = session_epoch + 1 WHERE id = $2`,
 		hash, accountID,
 	)
 	if err != nil {
@@ -573,7 +859,7 @@ func (accounts *Accounts) UpgradePasswordHash(ctx context.Context, accountID str
 	}
 	result, err := accounts.db.ExecContext(
 		ctx,
-		`UPDATE accounts SET password_hash = ? WHERE id = ? AND password_hash = ?`,
+		`UPDATE accounts SET password_hash = $1 WHERE id = $2 AND password_hash = $3`,
 		hash, accountID, verified,
 	)
 	if err != nil {
@@ -595,7 +881,7 @@ func (accounts *Accounts) SetDisabled(ctx context.Context, accountID string, dis
 	}
 	result, err := accounts.db.ExecContext(
 		ctx,
-		`UPDATE accounts SET disabled = ?, session_epoch = session_epoch + 1 WHERE id = ?`,
+		`UPDATE accounts SET disabled = $1, session_epoch = session_epoch + 1 WHERE id = $2`,
 		flag, accountID,
 	)
 	if err != nil {
@@ -624,7 +910,7 @@ func (accounts *Accounts) RevokeSessions(ctx context.Context, accountID string) 
 	}
 	result, err := accounts.db.ExecContext(
 		ctx,
-		`UPDATE accounts SET session_epoch = session_epoch + 1 WHERE id = ?`,
+		`UPDATE accounts SET session_epoch = session_epoch + 1 WHERE id = $1`,
 		accountID,
 	)
 	if err != nil {

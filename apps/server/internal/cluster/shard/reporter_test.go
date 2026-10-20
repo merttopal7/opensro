@@ -2,6 +2,8 @@ package shard
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -123,5 +125,48 @@ func TestReporterRefusesMalformedAccountDirectory(t *testing.T) {
 				t.Fatalf("body %s accepted", body)
 			}
 		})
+	}
+}
+
+/*
+================
+TestReporterReads50000AccountDirectory
+
+Proves that GameWorld startup can load a 50,000-account directory (>700 KB JSON)
+without tripping the 64 KB heartbeat cap.
+================
+*/
+func TestReporterReads50000AccountDirectory(t *testing.T) {
+	const totalAccounts = 50_000
+	expected := make([]string, totalAccounts)
+	for i := 0; i < totalAccounts; i++ {
+		expected[i] = fmt.Sprintf("player_%05d", i)
+	}
+	payload, err := json.Marshal(struct {
+		AccountIDs []string `json:"accountIds"`
+	}{AccountIDs: expected})
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(payload)
+	}))
+	t.Cleanup(server.Close)
+
+	identityFile := filepath.Join(t.TempDir(), "identity.jwt")
+	if err := os.WriteFile(identityFile, []byte("workload-identity"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	reporter, err := NewReporter(server.URL, identityFile, "test", func() int { return 0 })
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := reporter.AccountIDs(context.Background())
+	if err != nil {
+		t.Fatalf("AccountIDs(50000): %v", err)
+	}
+	if len(got) != totalAccounts {
+		t.Fatalf("len(AccountIDs) = %d, want %d", len(got), totalAccounts)
 	}
 }

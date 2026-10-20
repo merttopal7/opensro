@@ -28,8 +28,9 @@ KEEP_MONTHLY=6
 EXTRA_PATHS="/etc/caddy /etc/nomad.d /etc/systemd/system/opensro* /etc/systemd/system/nomad.service /etc/opensro-web /etc/opensro-discord-bot /root/opensro-secrets /var/lib/caddy/.local/share/caddy"
 
 # PostgreSQL databases dumped with pg_dump. A listed database must exist:
-# add opensro_web once the website is deployed.
-POSTGRES_DATABASES=""
+# opensro holds global accounts, cross-shard Silk balances, the shards catalog,
+# and account_gm_shards permissions.
+POSTGRES_DATABASES="opensro"
 
 # Companion SQLite stores use online snapshots, never a raw copy of live WAL files.
 # Add /var/lib/opensro-discord-bot/bot.sqlite3 when the bot is deployed.

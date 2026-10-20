@@ -77,6 +77,7 @@ const SMALL_PACK_BYTES = 4 << 20;
 // small pack is persisted whole when it is fetched (pack below), so one
 // pushed out is reread from the persistent store, not downloaded again.
 const RESIDENT_PACK_BYTES = 32 << 20;
+const HEX_BYTES = Array.from( { length: 256 }, ( _, i ) => i.toString( 16 ).padStart( 2, "0" ) );
 
 /*
 ================
@@ -166,10 +167,10 @@ export function createPacks(
 	async function sha( bytes: Uint8Array<ArrayBuffer> ) {
 		hashCalls++;
 		hashBytes += bytes.length;
-		return Array.from(
-			new Uint8Array( await crypto.subtle.digest( "SHA-256", bytes ) ),
-			b => b.toString( 16 ).padStart( 2, "0" )
-		).join( "" );
+		const digest = new Uint8Array( await crypto.subtle.digest( "SHA-256", bytes ) );
+		let hex = "";
+		for ( const b of digest ) hex += HEX_BYTES[b]!;
+		return hex;
 	}
 	/*
 	================

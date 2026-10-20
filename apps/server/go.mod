@@ -6,6 +6,7 @@ require (
 	github.com/coreos/go-oidc/v3 v3.21.0
 	github.com/gorilla/websocket v1.5.3
 	github.com/hashicorp/nomad/api v0.0.0-20260924191603-3f304768e47b
+	github.com/lib/pq v1.10.9
 	github.com/quic-go/quic-go v0.63.0
 	github.com/quic-go/webtransport-go v0.13.0
 	github.com/sirupsen/logrus v1.10.2

@@ -23,6 +23,9 @@ public static class NativeLensResources {
 	const uint D3DCREATE_SOFTWARE_VERTEXPROCESSING = 0x20;
 	const uint D3DCREATE_FPU_PRESERVE = 0x02;
 	const uint D3DLOCK_READONLY = 0x10;
+	const uint D3DPOOL_SYSTEMMEM = 2;
+	const uint D3DX_DEFAULT = 0xffffffffu;
+	const uint D3DFMT_UNKNOWN = 0;
 	const uint D3DFMT_A8R8G8B8 = 21;
 	const uint D3DFMT_DXT1 = 0x31545844;
 	const uint D3DFMT_DXT3 = 0x33545844;
@@ -84,8 +87,14 @@ public static class NativeLensResources {
 
 	[DllImport("d3d9.dll", ExactSpelling = true)]
 	static extern IntPtr Direct3DCreate9(uint version);
+	[DllImport("d3d9.dll", ExactSpelling = true)]
+	static extern int Direct3DCreate9Ex(uint version, out IntPtr api);
 	[DllImport("d3dx9_39.dll", ExactSpelling = true)]
 	static extern int D3DXCreateTextureFromFileInMemory(IntPtr device, byte[] data, uint size, out IntPtr texture);
+	[DllImport("d3dx9_39.dll", ExactSpelling = true)]
+	static extern int D3DXCreateTextureFromFileInMemoryEx(IntPtr device, byte[] data, uint size,
+		uint width, uint height, uint mipLevels, uint usage, uint format, uint pool,
+		uint filter, uint mipFilter, uint colorKey, IntPtr imageInfo, IntPtr palette, out IntPtr texture);
 	[DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
 	static extern IntPtr CreateWindowExW(uint extended, string className, string title, uint style,
 		int x, int y, int width, int height, IntPtr parent, IntPtr menu, IntPtr instance, IntPtr parameter);
@@ -234,6 +243,7 @@ public static class NativeLensResources {
 		}
 		IntPtr api = IntPtr.Zero;
 		IntPtr device = IntPtr.Zero;
+		bool useSystemMemPool = false;
 		try {
 			api = Direct3DCreate9(D3D_SDK_VERSION);
 			if ( api == IntPtr.Zero ) {
@@ -243,16 +253,32 @@ public static class NativeLensResources {
 			parameters.Window = window;
 			parameters.Windowed = 1;
 			parameters.SwapEffect = D3DSWAPEFFECT_DISCARD;
-			Check(Method<CreateDeviceMethod>(api, 16)(api, 0, D3DDEVTYPE_HAL, window,
+			int createHr = Method<CreateDeviceMethod>(api, 16)(api, 0, D3DDEVTYPE_HAL, window,
 				D3DCREATE_SOFTWARE_VERTEXPROCESSING | D3DCREATE_FPU_PRESERVE,
-				ref parameters, out device), "CreateDevice");
+				ref parameters, out device);
+			if ( createHr < 0 ) {
+				// WDDM 3.x / D3D9On12 drivers in non-interactive sessions refuse legacy D3D9 HAL
+				// (0x8876086a) while admitting D3D9Ex; D3DPOOL_SYSTEMMEM preserves identical D3DX mips.
+				Release(api);
+				api = IntPtr.Zero;
+				Check(Direct3DCreate9Ex(D3D_SDK_VERSION, out api), "Direct3DCreate9Ex");
+				Check(Method<CreateDeviceMethod>(api, 16)(api, 0, D3DDEVTYPE_HAL, window,
+					D3DCREATE_SOFTWARE_VERTEXPROCESSING | D3DCREATE_FPU_PRESERVE,
+					ref parameters, out device), "CreateDevice");
+				useSystemMemPool = true;
+			}
 			for ( int index = 0; index < sources.Length; index++ ) {
 				string name = sources[index];
 				Directory.CreateDirectory(Path.GetDirectoryName(targets[index]));
 				byte[] data = ReadDds(name);
 				IntPtr texture = IntPtr.Zero;
 				try {
-					Check(D3DXCreateTextureFromFileInMemory(device, data, (uint)data.Length, out texture), name);
+					int loadHr = useSystemMemPool ?
+						D3DXCreateTextureFromFileInMemoryEx(device, data, (uint)data.Length,
+							D3DX_DEFAULT, D3DX_DEFAULT, D3DX_DEFAULT, 0, D3DFMT_UNKNOWN, D3DPOOL_SYSTEMMEM,
+							D3DX_DEFAULT, D3DX_DEFAULT, 0, IntPtr.Zero, IntPtr.Zero, out texture) :
+						D3DXCreateTextureFromFileInMemory(device, data, (uint)data.Length, out texture);
+					Check(loadHr, name);
 					File.WriteAllBytes(targets[index], SerializeTexture(texture));
 				} finally {
 					Release(texture);

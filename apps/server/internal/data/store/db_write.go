@@ -11,6 +11,8 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"reflect"
+	"slices"
 	"sort"
 	"strings"
 
@@ -49,30 +51,131 @@ func upsertCharacterTx(tx *sql.Tx, division string, c *domain.Character) error {
 	return err
 }
 
-// replaceGroundTx replaces the WHOLE ground plane inside a transaction.
-// Ground rows are TTL-bounded drops - a handful of rows - so a replace
-// on ground-dirty commits is simpler than row diffing and still O(small).
 /*
 ================
-replaceGroundTx
+groundItemRecordEqual
+
+Reports whether two persisted ground-item records are identical on disk.
+Checks frequently mutated fields (OwnerJID, StackCount) first and avoids
+reflection unless a companion summon is attached.
 ================
 */
-func replaceGroundTx(tx *sql.Tx, divisions map[string][]domain.GroundItemRecord) error {
-	if _, err := tx.Exec("DELETE FROM ground_items"); err != nil {
-		return err
+func groundItemRecordEqual(a, b domain.GroundItemRecord) bool {
+	if a.Gid != b.Gid ||
+		a.OwnerJID != b.OwnerJID ||
+		a.StackCount != b.StackCount ||
+		a.RefObjID != b.RefObjID ||
+		a.GoldAmount != b.GoldAmount ||
+		a.DroppedAtMs != b.DroppedAtMs ||
+		a.RecordID != b.RecordID ||
+		a.PopulationWorld != b.PopulationWorld ||
+		a.TransformRefObjID != b.TransformRefObjID ||
+		a.TypeFlags != b.TypeFlags ||
+		a.Plus != b.Plus ||
+		a.Durability != b.Durability ||
+		a.RegionID != b.RegionID ||
+		a.X != b.X ||
+		a.Y != b.Y ||
+		a.Z != b.Z ||
+		a.Heading != b.Heading ||
+		a.Codename != b.Codename ||
+		a.DroppedBy != b.DroppedBy ||
+		a.VarianceBits != b.VarianceBits ||
+		a.TradeOwner != b.TradeOwner ||
+		!slices.Equal(a.MagicOptions, b.MagicOptions) {
+		return false
 	}
-	divisionIDs := make([]string, 0, len(divisions))
-	for divisionID := range divisions {
+	if a.Summon == nil && b.Summon == nil {
+		return true
+	}
+	return reflect.DeepEqual(a.Summon, b.Summon)
+}
+
+/*
+================
+upsertGroundItemTx
+================
+*/
+func upsertGroundItemTx(tx *sql.Tx, divisionID string, item domain.GroundItemRecord) error {
+	record, err := json.Marshal(item)
+	if err != nil {
+		return fmt.Errorf("marshaling ground %s/gid %d: %w", divisionID, item.Gid, err)
+	}
+	_, err = tx.Exec(
+		"INSERT INTO ground_items (division, gid, record) VALUES (?, ?, ?) ON CONFLICT(division, gid) DO UPDATE SET record = excluded.record",
+		divisionID, item.Gid, string(record),
+	)
+	return err
+}
+
+/*
+================
+syncGroundDeltaTx
+
+Applies the O(delta) difference between previous (the last committed ground
+plane on disk) and current (the new ground snapshot) inside a transaction.
+Unchanged ground items are neither re-marshaled nor re-inserted, keeping
+commits O(dropped + picked + expired) regardless of how many items lie on
+the ground across the shard.
+================
+*/
+func syncGroundDeltaTx(tx *sql.Tx, previous, current map[string][]domain.GroundItemRecord) error {
+	divisionSet := make(map[string]struct{}, len(previous)+len(current))
+	for divisionID := range previous {
+		divisionSet[divisionID] = struct{}{}
+	}
+	for divisionID := range current {
+		divisionSet[divisionID] = struct{}{}
+	}
+	divisionIDs := make([]string, 0, len(divisionSet))
+	for divisionID := range divisionSet {
 		divisionIDs = append(divisionIDs, divisionID)
 	}
 	sort.Strings(divisionIDs)
+
 	for _, divisionID := range divisionIDs {
-		for _, item := range divisions[divisionID] {
-			record, err := json.Marshal(item)
-			if err != nil {
-				return fmt.Errorf("marshaling ground %s/gid %d: %w", divisionID, item.Gid, err)
+		prevRows := previous[divisionID]
+		currRows := current[divisionID]
+		if len(currRows) == 0 {
+			if len(prevRows) > 0 {
+				if _, err := tx.Exec("DELETE FROM ground_items WHERE division = ?", divisionID); err != nil {
+					return err
+				}
 			}
-			if _, err := tx.Exec("INSERT INTO ground_items (division, gid, record) VALUES (?, ?, ?)", divisionID, item.Gid, string(record)); err != nil {
+			continue
+		}
+
+		i, j := 0, 0
+		for i < len(prevRows) && j < len(currRows) {
+			if prevRows[i].Gid < currRows[j].Gid {
+				if _, err := tx.Exec("DELETE FROM ground_items WHERE division = ? AND gid = ?", divisionID, prevRows[i].Gid); err != nil {
+					return err
+				}
+				i++
+				continue
+			}
+			if prevRows[i].Gid > currRows[j].Gid {
+				if err := upsertGroundItemTx(tx, divisionID, currRows[j]); err != nil {
+					return err
+				}
+				j++
+				continue
+			}
+			if !groundItemRecordEqual(prevRows[i], currRows[j]) {
+				if err := upsertGroundItemTx(tx, divisionID, currRows[j]); err != nil {
+					return err
+				}
+			}
+			i++
+			j++
+		}
+		for ; i < len(prevRows); i++ {
+			if _, err := tx.Exec("DELETE FROM ground_items WHERE division = ? AND gid = ?", divisionID, prevRows[i].Gid); err != nil {
+				return err
+			}
+		}
+		for ; j < len(currRows); j++ {
+			if err := upsertGroundItemTx(tx, divisionID, currRows[j]); err != nil {
 				return err
 			}
 		}

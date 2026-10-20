@@ -28,7 +28,7 @@ func (server *Server) handleMark(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	target := ""
-	for _, definition := range server.catalog.Definitions() {
+	for _, definition := range server.currentCatalog().Definitions() {
 		if definition.Enabled && uint64(definition.NativeServerID) == prefix {
 			target = strings.TrimSuffix(definition.ControlURL, "/") + r.URL.Path
 			break

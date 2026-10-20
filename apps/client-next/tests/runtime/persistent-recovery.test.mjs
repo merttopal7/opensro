@@ -681,3 +681,26 @@ test("an inventory scan slower than two seconds does not make foreground reads m
 	gate.resolve();
 	await write;
 });
+
+test("OpenSRODesktop never opens or writes to browser Cache Storage", async t => {
+	let opens = 0;
+	backend( t, {
+		open: async () => {
+			opens++;
+			throw new Error( "should not open Cache Storage in desktop shell" );
+		}
+	} );
+	const original = Object.getOwnPropertyDescriptor( globalThis, "navigator" );
+	Object.defineProperty( globalThis, "navigator", {
+		value: { userAgent: "Mozilla/5.0 Chrome/140.0 OpenSRODesktop/1.0" },
+		configurable: true
+	} );
+	t.after( () => {
+		if ( original ) Object.defineProperty( globalThis, "navigator", original );
+	} );
+	const store = createPersistentAssets();
+	assert.equal( await store.has( "https://example.test", "a" ), null );
+	assert.equal( await store.read( "https://example.test", "a", 3 ), null );
+	await store.write( "https://example.test", "a", Uint8Array.of( 1, 2, 3 ) );
+	assert.equal( opens, 0 );
+});

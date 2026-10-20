@@ -119,6 +119,8 @@ type MetaView struct {
 // transaction can persist changes across character and social planes.
 type changeSet struct {
 	all            bool
+	tradeRewards   bool
+	jobRankings    bool
 	characters     map[*domain.Character]bool
 	nextCharID     map[string]bool
 	nextGuildID    map[string]bool
@@ -144,6 +146,8 @@ func newChangeSet() changeSet {
 
 func (changes changeSet) empty() bool {
 	return !changes.all &&
+		!changes.tradeRewards &&
+		!changes.jobRankings &&
 		len(changes.characters) == 0 &&
 		len(changes.nextCharID) == 0 &&
 		len(changes.nextGuildID) == 0 &&
@@ -208,9 +212,10 @@ type Store struct {
 	camps       map[string]map[int64]domain.TrainingCampRecord
 	campMembers map[string]map[int64][]domain.TrainingCampMemberRecord
 
-	charDivision map[*domain.Character]string
-	changes      changeSet
-	ground       groundState
+	charDivision       map[*domain.Character]string
+	staticGMCharacters map[string]bool
+	changes            changeSet
+	ground             groundState
 	// batch is the simulation tick's deferred commit (tickbatch.go).
 	batch tickBatch
 	// ledger attributes every committed gold change (economy_ledger.go).

@@ -31,7 +31,7 @@ Never throws: persistence is an optimization, not a requirement.
 ================
 */
 export async function requestPersistentStorage( nav: StorageNavigator = navigator ): Promise<boolean> {
-	if ( !nav.storage?.persist || /\bFirefox\//.test( nav.userAgent ) ) return false;
+	if ( !nav.storage?.persist || /\b(?:Firefox|OpenSRODesktop)\//.test( nav.userAgent ) ) return false;
 	try {
 		return await nav.storage.persisted() || await nav.storage.persist();
 	} catch {

@@ -114,7 +114,7 @@ func (s *Store) RenameCharacterOffline(division, before, after string) error {
 			return err
 		}
 	}
-	if err := replaceGroundTx(tx, ground); err != nil {
+	if err := syncGroundDeltaTx(tx, s.ground.loadedRecords, ground); err != nil {
 		return err
 	}
 	if err := upsertMetaTx(tx, metaKeyUpdatedAtMs, fmt.Sprint(s.now().UnixMilli())); err != nil {

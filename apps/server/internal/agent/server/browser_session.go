@@ -300,6 +300,6 @@ func (server *Server) liveSession(claims auth.AgentSessionClaims) (shard.Definit
 	if !server.sessionActive(claims) {
 		return shard.Definition{}, false
 	}
-	definition, known := server.catalog.Resolve(claims.ShardID)
+	definition, known := server.currentCatalog().Resolve(claims.ShardID)
 	return definition, known && definition.Enabled
 }

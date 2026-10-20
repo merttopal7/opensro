@@ -67,9 +67,59 @@ func main() {
 	)
 	defer stopSignals()
 
-	catalog, catalogPath, err := shard.LoadFromEnv()
+	seedCatalog, catalogPath, err := shard.LoadFromEnv()
 	if err != nil {
 		log.Fatalf("agent: shard catalog %s: %v", catalogPath, err)
+	}
+	accounts, err := openAccountAuthority()
+	if err != nil {
+		log.Fatalf("agent: accounts: %v", err)
+	}
+	defer accounts.Close()
+	seedRows := make([]auth.ShardRow, 0, len(seedCatalog.Definitions()))
+	for _, d := range seedCatalog.Definitions() {
+		seedRows = append(seedRows, auth.ShardRow{
+			ID:                 d.ID,
+			Name:               d.Name,
+			NativeServerID:     d.NativeServerID,
+			NativeFarmID:       d.NativeFarmID,
+			Capacity:           d.Capacity,
+			Default:            d.Default,
+			Test:               d.Test,
+			Enabled:            d.Enabled,
+			ControlURL:         d.ControlURL,
+			TransportURL:       d.TransportURL,
+			PublicTransportURL: d.PublicTransportURL,
+		})
+	}
+	if seededShards, err := accounts.SeedShards(seedRows); err != nil {
+		log.Fatalf("agent: seed shard catalog %s: %v", catalogPath, err)
+	} else if seededShards > 0 {
+		log.Infof("agent: seeded %d shard(s) into database from %s", seededShards, catalogPath)
+	}
+	dbRows, err := accounts.ShardDefinitions()
+	if err != nil {
+		log.Fatalf("agent: database shard definitions: %v", err)
+	}
+	dbDefs := make([]shard.Definition, 0, len(dbRows))
+	for _, r := range dbRows {
+		dbDefs = append(dbDefs, shard.Definition{
+			ID:                 r.ID,
+			Name:               r.Name,
+			NativeServerID:     r.NativeServerID,
+			NativeFarmID:       r.NativeFarmID,
+			Capacity:           r.Capacity,
+			Default:            r.Default,
+			Test:               r.Test,
+			Enabled:            r.Enabled,
+			ControlURL:         r.ControlURL,
+			TransportURL:       r.TransportURL,
+			PublicTransportURL: r.PublicTransportURL,
+		})
+	}
+	catalog, err := shard.NewCatalog(dbDefs)
+	if err != nil {
+		log.Fatalf("agent: database shard catalog: %v", err)
 	}
 	directoryPath := strings.TrimSpace(os.Getenv(envDirectoryPath))
 	if directoryPath == "" {
@@ -83,11 +133,6 @@ func main() {
 	if err != nil {
 		log.Fatalf("agent: shard directory: %v", err)
 	}
-	accounts, err := openAccountAuthority()
-	if err != nil {
-		log.Fatalf("agent: accounts: %v", err)
-	}
-	defer accounts.Close()
 	sessionSigner, err := auth.NewAgentSessionSigner(
 		strings.TrimSpace(os.Getenv(envSessionKeyRingPath)),
 	)

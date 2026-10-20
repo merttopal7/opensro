@@ -28,7 +28,11 @@ import (
 )
 
 const (
-	envAccountsDBPath         = "SRO_AGENT_ACCOUNTS_DB_PATH"
+	envAccountsDBPath = "SRO_AGENT_ACCOUNTS_DB_PATH"
+	// envAccountsPostgresDSN selects PostgreSQL as the global account and
+	// cross-shard Silk authority (port-only, not native). When unset or
+	// empty, the Agent uses its local SQLite database at envAccountsDBPath.
+	envAccountsPostgresDSN    = "SRO_AGENT_POSTGRES_DSN"
 	envProvisioningAddr       = "SRO_AGENT_PROVISIONING_ADDR"
 	envProvisioningTokenPath  = "SRO_AGENT_PROVISIONING_TOKEN_PATH"
 	defaultAccountsDBPath     = ".state/agent/accounts.db"
@@ -39,9 +43,10 @@ const (
 ================
 openAccountAuthority
 
-Opens the account database and inserts any seed-catalog account it lacks.
-An authority with no accounts is refused: GameWorld treats an empty account
-directory as a failure, and nobody could log in.
+Opens the account database (PostgreSQL when SRO_AGENT_POSTGRES_DSN is set,
+else SQLite) and inserts any seed-catalog account it lacks. An authority
+with no accounts is refused: GameWorld treats an empty account directory as
+a failure, and nobody could log in.
 ================
 */
 func openAccountAuthority() (*auth.Accounts, error) {
@@ -49,9 +54,32 @@ func openAccountAuthority() (*auth.Accounts, error) {
 	if path == "" {
 		path = defaultAccountsDBPath
 	}
-	accounts, err := auth.OpenAccounts(path)
-	if err != nil {
-		return nil, fmt.Errorf("account database %s: %w", path, err)
+	postgresDSN := strings.TrimSpace(os.Getenv(envAccountsPostgresDSN))
+
+	var (
+		accounts *auth.Accounts
+		err      error
+		label    string
+	)
+	if postgresDSN != "" {
+		// port-only, not native: central PostgreSQL account & Silk authority.
+		label = "postgres"
+		accounts, err = auth.OpenAccountsPostgres(postgresDSN)
+		if err != nil {
+			return nil, fmt.Errorf("account postgres database: %w", err)
+		}
+		if migrated, migErr := accounts.MigrateFromSQLite(path); migErr != nil {
+			_ = accounts.Close()
+			return nil, fmt.Errorf("migrate sqlite %s to postgres: %w", path, migErr)
+		} else if migrated > 0 {
+			log.Infof("agent: migrated %d existing account(s) from sqlite %s to postgres", migrated, path)
+		}
+	} else {
+		label = path
+		accounts, err = auth.OpenAccounts(path)
+		if err != nil {
+			return nil, fmt.Errorf("account database %s: %w", path, err)
+		}
 	}
 	if seedPath := strings.TrimSpace(os.Getenv(envAccountsPath)); seedPath != "" {
 		catalog, err := auth.Load(seedPath)
@@ -70,7 +98,7 @@ func openAccountAuthority() (*auth.Accounts, error) {
 	}
 	if accounts.Len() == 0 {
 		_ = accounts.Close()
-		return nil, fmt.Errorf("account database %s holds no accounts and no seed catalog added any", path)
+		return nil, fmt.Errorf("account database %s holds no accounts and no seed catalog added any", label)
 	}
 	return accounts, nil
 }

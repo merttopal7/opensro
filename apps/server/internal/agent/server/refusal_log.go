@@ -210,10 +210,11 @@ The configured shard a typed server id names, or "" for any other text.
 ================
 */
 func (server *Server) loggableShard(typed string) string {
-	if server.catalog == nil {
+	catalog := server.currentCatalog()
+	if catalog == nil {
 		return ""
 	}
-	if definition, ok := server.catalog.Resolve(typed); ok {
+	if definition, ok := catalog.Resolve(typed); ok {
 		return definition.ID
 	}
 	return ""

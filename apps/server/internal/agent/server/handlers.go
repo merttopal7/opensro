@@ -37,15 +37,16 @@ serverInfo
 ================
 */
 type serverInfo struct {
-	ID             string `json:"id"`
-	NativeServerID uint16 `json:"nativeServerId"`
-	NativeFarmID   uint16 `json:"nativeFarmId"`
-	Name           string `json:"name"`
-	IsTest         bool   `json:"isTest"`
-	OnlinePlayers  int    `json:"onlinePlayers"`
-	Capacity       int    `json:"capacity"`
-	Operating      bool   `json:"operating"`
-	TransportURL   string `json:"transportUrl"`
+	ID                   string `json:"id"`
+	NativeServerID       uint16 `json:"nativeServerId"`
+	NativeFarmID         uint16 `json:"nativeFarmId"`
+	Name                 string `json:"name"`
+	IsTest               bool   `json:"isTest"`
+	OnlinePlayers        int    `json:"onlinePlayers"`
+	Capacity             int    `json:"capacity"`
+	Operating            bool   `json:"operating"`
+	TransportURL         string `json:"transportUrl"`
+	UpstreamTransportURL string `json:"upstreamTransportUrl,omitempty"`
 }
 
 /*
@@ -58,6 +59,26 @@ func (server *Server) handleServers(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	_ = server.currentCatalog()
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusOK, serverRows(server.directory.Snapshot(server.now())))
+}
+
+/*
+================
+handleShardRoutes
+
+Returns the full shard catalog and upstream transport URLs without requiring
+browser release-protocol headers so native/Tauri edges and cluster monitors
+can discover all 50 shards dynamically from the Agent.
+================
+*/
+func (server *Server) handleShardRoutes(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	_ = server.currentCatalog()
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, http.StatusOK, serverRows(server.directory.Snapshot(server.now())))
 }
@@ -73,15 +94,16 @@ func serverRows(statuses []shard.Status) []serverInfo {
 	rows := make([]serverInfo, 0, len(statuses))
 	for _, status := range statuses {
 		rows = append(rows, serverInfo{
-			ID:             status.ID,
-			NativeServerID: status.NativeServerID,
-			NativeFarmID:   status.NativeFarmID,
-			Name:           status.Name,
-			IsTest:         status.Test,
-			OnlinePlayers:  status.OnlinePlayers,
-			Capacity:       status.Capacity,
-			Operating:      status.Operating,
-			TransportURL:   status.AdvertisedTransportURL(),
+			ID:                   status.ID,
+			NativeServerID:       status.NativeServerID,
+			NativeFarmID:         status.NativeFarmID,
+			Name:                 status.Name,
+			IsTest:               status.Test,
+			OnlinePlayers:        status.OnlinePlayers,
+			Capacity:             status.Capacity,
+			Operating:            status.Operating,
+			TransportURL:         status.AdvertisedTransportURL(),
+			UpstreamTransportURL: status.TransportURL,
 		})
 	}
 	return rows
@@ -114,7 +136,7 @@ but has not opened admission yet.
 ================
 */
 func (server *Server) shardStarting(serverID string) bool {
-	definition, ok := server.catalog.Resolve(serverID)
+	definition, ok := server.currentCatalog().Resolve(serverID)
 	if !ok || !definition.Enabled {
 		return false
 	}
@@ -198,7 +220,7 @@ func (server *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	definition, ok := server.catalog.Resolve(request.ServerID)
+	definition, ok := server.currentCatalog().Resolve(request.ServerID)
 	if !ok {
 		refuse(5, "UNKNOWN_SHARD", "Unknown server.")
 		return
@@ -325,6 +347,10 @@ func (server *Server) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
+	if statusAuth, ok := server.accounts.(shardStatusAuthority); ok {
+		operating := heartbeat.Phase != shard.PhaseStarting
+		statusAuth.UpdateShardStatus(heartbeat.ShardID, heartbeat.OnlinePlayers, operating)
+	}
 	server.syncShardRevocations(heartbeat)
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
@@ -386,6 +412,9 @@ func (server *Server) handleLeaseRelease(w http.ResponseWriter, r *http.Request)
 		})
 		return
 	}
+	if statusAuth, ok := server.accounts.(shardStatusAuthority); ok {
+		statusAuth.UpdateShardStatus(release.ShardID, 0, false)
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
@@ -411,7 +440,7 @@ func (server *Server) handleShardRequest(w http.ResponseWriter, r *http.Request)
 	// The line names the stored account the verified session resolves to
 	// (loggableAccount), never anything read from the header itself.
 	account, shardID = server.loggableAccount(claims.AccountID), server.loggableShard(claims.ShardID)
-	definition, ok := server.catalog.Resolve(claims.ShardID)
+	definition, ok := server.currentCatalog().Resolve(claims.ShardID)
 	if !ok || !definition.Enabled {
 		refuse(http.StatusServiceUnavailable, "SHARD_UNAVAILABLE", "shard unavailable")
 		return
@@ -449,6 +478,13 @@ func (server *Server) handleShardRequest(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	request.Header.Set("Authorization", r.Header.Get("Authorization"))
+	if gmAuth, ok := server.accounts.(gmAccountAuthority); ok {
+		if gmAuth.IsGMOnShard(claims.AccountID, claims.ShardID) {
+			request.Header.Set("X-SRO-Account-GM", "1")
+		} else {
+			request.Header.Set("X-SRO-Account-GM", "0")
+		}
+	}
 	// The shard enforces the release protocol too; the agent already did.
 	request.Header.Set(releaseprotocol.Header, r.Header.Get(releaseprotocol.Header))
 	if contentType := r.Header.Get("Content-Type"); contentType != "" {

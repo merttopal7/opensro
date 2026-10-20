@@ -60,6 +60,12 @@ test("Firefox is never asked, because it would prompt the player", async () => {
 	assert.deepEqual( nav.calls, [] );
 });
 
+test("OpenSRODesktop is never asked, because packs already reside on local disk", async () => {
+	const nav = storageNavigator( CHROME + " OpenSRODesktop/1.0" );
+	assert.equal( await requestPersistentStorage( nav ), false );
+	assert.deepEqual( nav.calls, [] );
+});
+
 test("a missing API or a failing call reads as not persistent", async () => {
 	assert.equal( await requestPersistentStorage( { userAgent: CHROME } ), false );
 	assert.equal( await requestPersistentStorage( storageNavigator( CHROME, { fail: true } ) ), false );

@@ -1,0 +1,86 @@
+# ===========================================================================
+# nginx.conf.example - Server block to drop into your existing Docker Nginx
+#
+# Matches your existing nginx.conf structure (/etc/nginx/certs/fullchain.pem,
+# http2 on, host.docker.internal).
+# ===========================================================================
+
+    ##
+    ## sro.temirshield.com → OpenSRO (Agent: 8787, GameWorld: 8788)
+    ##
+    server {
+        listen 443 ssl;
+        http2 on;
+        server_name sro.temirshield.com;
+        client_max_body_size 100M;
+
+        ssl_certificate     /etc/nginx/certs/fullchain.pem;
+        ssl_certificate_key /etc/nginx/certs/privkey.pem;
+
+        # İç / debug uç noktaları dışarıya kapat
+        location ~ ^/api/(development|debug|internal)/ {
+            return 404;
+        }
+
+        # 1) sro-agent (Login, Shard Listesi, Hesap) -> 8787
+        location /api/ {
+            proxy_http_version 1.1;
+            proxy_set_header Host              $host;
+            proxy_set_header X-Real-IP         $remote_addr;
+            proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto https;
+
+            proxy_pass http://host.docker.internal:8787/;
+        }
+
+        # 2) sro-gameworld (Oyun WebSocket & HTTP) -> 8788
+        location /shards/global-official/transport/ {
+            proxy_http_version 1.1;
+            proxy_set_header Upgrade           $http_upgrade;
+            proxy_set_header Connection        $connection_upgrade;
+            proxy_set_header Host              $host;
+            proxy_set_header X-Real-IP         $remote_addr;
+            proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto https;
+
+            proxy_read_timeout 3600s;
+            proxy_send_timeout 3600s;
+            proxy_buffering    off;
+
+            proxy_pass http://host.docker.internal:8788/transport/;
+        }
+
+        # 3) Doğrudan kök dizin isteklerini de (Silkroad.exe /title/shards vb.) Agent'a ilet
+        location / {
+            proxy_http_version 1.1;
+            proxy_set_header Upgrade           $http_upgrade;
+            proxy_set_header Connection        $connection_upgrade;
+            proxy_set_header Host              $host;
+            proxy_set_header X-Real-IP         $remote_addr;
+            proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto https;
+
+            proxy_read_timeout 3600s;
+            proxy_send_timeout 3600s;
+
+            proxy_pass http://host.docker.internal:8787;
+        }
+    }
+
+        # 3) Doğrudan kök dizin isteklerini de (Silkroad.exe /title/shards vb.) Agent'a ilet
+        location / {
+            proxy_http_version 1.1;
+            proxy_set_header Upgrade           $http_upgrade;
+            proxy_set_header Connection        $connection_upgrade;
+            proxy_set_header Host              $host;
+            proxy_set_header X-Real-IP         $remote_addr;
+            proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto https;
+
+            proxy_read_timeout 3600s;
+            proxy_send_timeout 3600s;
+
+            proxy_pass http://host.docker.internal:8787;
+        }
+    }
+

@@ -135,6 +135,26 @@ func TestProvisioningAccountLifecycle(t *testing.T) {
 	if _, body = call(t, api, testToken, "POST", "/v1/accounts/hunter/verify", map[string]string{"password": "new password"}); body["valid"] != false {
 		t.Fatal("disabled account verified")
 	}
+
+	status, body = call(t, api, testToken, "POST", "/v1/accounts/hunter/silk", map[string]int64{"ownDelta": 1000, "giftDelta": 200, "pointDelta": 50})
+	if status != http.StatusOK || body["own"] != float64(1000) || body["gift"] != float64(200) || body["point"] != float64(50) {
+		t.Fatalf("silk credit = %d %v", status, body)
+	}
+	status, body = call(t, api, testToken, "POST", "/v1/accounts/hunter/silk", map[string]int64{"ownDelta": -1500})
+	if status != http.StatusConflict || body["code"] != "INSUFFICIENT_SILK" {
+		t.Fatalf("silk overdraft = %d %v, want 409 INSUFFICIENT_SILK", status, body)
+	}
+	if status, _ = call(t, api, testToken, "PUT", "/v1/accounts/hunter/gm", map[string]any{"shards": []string{"global-official", "aege"}}); status != http.StatusNoContent {
+		t.Fatalf("grant shard gm = %d", status)
+	}
+	status, body = call(t, api, testToken, "GET", "/v1/accounts/hunter", nil)
+	if status != http.StatusOK || body["isGm"] != true {
+		t.Fatalf("lookup gm = %d %v", status, body)
+	}
+	shards, _ := body["gmShards"].([]any)
+	if len(shards) != 2 || shards[0] != "aege" || shards[1] != "global-official" {
+		t.Fatalf("lookup gmShards = %v, want [aege global-official]", shards)
+	}
 }
 
 func TestProvisioningRejectsBadInput(t *testing.T) {
