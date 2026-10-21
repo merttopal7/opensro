@@ -634,7 +634,7 @@ baseUrl
 				resumeCharacter = undefined;
 				const base = identity.apiBase, current = generation;
 				controller = new AbortController();
-				if ( departure === 1 ) {
+				if ( departure === 1 || departure === 2 ) {
 					identity = null;
 					logoutPending = true;
 					publish( { phase: "authenticating" } );
@@ -646,8 +646,8 @@ baseUrl
 						entityCount: 0,
 						error: undefined
 					} );}
-				const kind = departure === 1 ? "logout" : "return-to-dock";
-				(departure === 1 ?
+				const kind = departure === 1 || departure === 2 ? "logout" : "return-to-dock";
+				(departure === 1 || departure === 2 ?
 					http.logout( base, controller.signal ) :
 					http.returnToDock( base, controller.signal )).then( value => {
 						if ( !disposed && generation === current ) {
