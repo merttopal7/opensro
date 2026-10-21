@@ -117,6 +117,18 @@ type shardCatalogAuthority interface {
 
 /*
 ================
+shardBanAuthority
+
+Optional capability implemented by auth.Accounts to enforce shard-scoped
+account bans at login.
+================
+*/
+type shardBanAuthority interface {
+	IsBannedOnShard(shardID, accountID string) bool
+}
+
+/*
+================
 Config
 ================
 */
@@ -301,6 +313,7 @@ func (server *Server) Handler() http.Handler {
 		browser(server.requireRunning(http.HandlerFunc(server.handleServers))),
 	)
 	mux.HandleFunc("/title/shards", server.handleShardRoutes)
+	mux.HandleFunc("/shards/", server.handleDynamicShardTransport)
 	mux.Handle(
 		loginPath,
 		browser(server.requireRunning(http.HandlerFunc(server.handleLogin))),
@@ -628,6 +641,9 @@ func (server *Server) currentCatalog() *shard.Catalog {
 						ControlURL:         r.ControlURL,
 						TransportURL:       r.TransportURL,
 						PublicTransportURL: r.PublicTransportURL,
+						OwnerAccountID:     r.OwnerAccountID,
+						CheckMode:          r.CheckMode,
+						MaxLevel:           r.MaxLevel,
 					})
 				}
 				if refreshed, err := shard.NewCatalog(defs); err == nil && refreshed != nil {

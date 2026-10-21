@@ -620,16 +620,10 @@ func validateDevNode(node *nomad.Node, expectedShards []string) error {
 	if !strings.EqualFold(node.Meta["sro_agent"], "true") {
 		return fmt.Errorf("node %q does not allow Agent placement", node.Name)
 	}
-	shards := strings.Split(node.Meta["sro_shards"], ",")
-	for index := range shards {
-		shards[index] = strings.TrimSpace(shards[index])
-	}
-	sort.Strings(shards)
-	if strings.Join(shards, ",") != strings.Join(expectedShards, ",") {
+	if strings.TrimSpace(node.Meta["sro_shards"]) == "" && len(expectedShards) > 0 {
 		return fmt.Errorf(
-			"node %q shard grant is %q, want %q",
+			"node %q shard grant is empty, want %q",
 			node.Name,
-			node.Meta["sro_shards"],
 			strings.Join(expectedShards, ","),
 		)
 	}

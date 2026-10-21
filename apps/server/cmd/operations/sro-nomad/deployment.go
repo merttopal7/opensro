@@ -599,7 +599,7 @@ func (deployment *deployment) agentVariables() map[string]any {
 			"agent",
 			"accounts.db",
 		)),
-		"accounts_postgres_dsn":   strings.TrimSpace(os.Getenv("SRO_AGENT_POSTGRES_DSN")),
+		"accounts_postgres_dsn":   configuredPostgresDSN(deployment.StateDir),
 		"host_network":            deployment.Network,
 		"nomad_namespace":         deployment.Namespace,
 		"agent_port":              deployment.AgentPort,
@@ -657,10 +657,42 @@ func (deployment *deployment) gameVariables(
 		"gm_characters":       deployment.GMCharacters,
 		"beta_mastery":        deployment.BetaMastery,
 		"stack_sizes":         deployment.StackSizes,
+		"max_level":           shardMaxLevelValue(game.Definition.MaxLevel),
 		"public_api_addr":     game.PublicAPIAddr,
 		"transport_pprof":     boolEnvValue(game.PprofAddr != ""),
 		"pprof_addr":          pprofAddrValue(game.PprofAddr),
 	}))
+}
+
+/*
+================
+shardMaxLevelValue
+================
+*/
+func shardMaxLevelValue(maxLevel int) string {
+	if maxLevel >= 1 && maxLevel <= 140 {
+		return strconv.Itoa(maxLevel)
+	}
+	return "90"
+}
+
+/*
+================
+configuredPostgresDSN
+================
+*/
+func configuredPostgresDSN(stateDir string) string {
+	if dsn := strings.TrimSpace(os.Getenv("SRO_AGENT_POSTGRES_DSN")); dsn != "" {
+		return dsn
+	}
+	if stateDir != "" {
+		if raw, err := os.ReadFile(filepath.Join(stateDir, "postgres-dsn.txt")); err == nil {
+			if dsn := strings.TrimSpace(string(raw)); dsn != "" {
+				return dsn
+			}
+		}
+	}
+	return ""
 }
 
 /*

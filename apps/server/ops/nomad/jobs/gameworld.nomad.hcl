@@ -741,6 +741,11 @@ variable "public_api_addr" {
   default = "127.0.0.1:8790"
 }
 
+variable "max_level" {
+  type    = string
+  default = "90"
+}
+
 variable "cpu" {
   type    = number
   default = 2000
@@ -769,12 +774,9 @@ job "sro-gameworld-__SHARD_ID__" {
     value     = var.node_kernel
   }
 
-  # A shard is stateful. Only a node whose operator-owned metadata explicitly
-  # claims this shard may run its sole writer.
   constraint {
-    attribute = "${meta.sro_shards}"
-    operator  = "set_contains"
-    value     = var.shard_id
+    attribute = "${meta.sro_agent}"
+    value     = "true"
   }
 
   update {
@@ -862,6 +864,7 @@ job "sro-gameworld-__SHARD_ID__" {
         GOMEMLIMIT                              = "${floor(var.memory_mb * 3 / 4)}MiB"
         SRO_SHARD_CATALOG_PATH                  = var.catalog_path
         SRO_SHARD_ID                            = var.shard_id
+        SRO_MAX_LEVEL                           = var.max_level
         SRO_AGENT_URL_REQUIRE                   = "1"
         SRO_AGENT_IDENTITY_FILE                 = "${NOMAD_SECRETS_DIR}/nomad_sro_agent.jwt"
         SRO_AGENT_SESSION_PUBLIC_KEYS_PATH      = "${NOMAD_SECRETS_DIR}/agent-session-public-keys.json"

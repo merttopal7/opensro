@@ -43,15 +43,18 @@ PlayerOperation
 ================
 */
 type PlayerOperation struct {
-	ID        string              `json:"id"`
-	Operator  string              `json:"operator"`
-	Character string              `json:"character"`
-	Action    string              `json:"action,omitempty"`
-	Items     []OperatorItemGrant `json:"items,omitempty"`
-	Town      uint32              `json:"town"`
-	Reason    string              `json:"reason"`
-	// Silk is a grant-silk operation's amount.
-	Silk uint32 `json:"silk,omitempty"`
+	ID         string              `json:"id"`
+	Operator   string              `json:"operator"`
+	Character  string              `json:"character"`
+	Action     string              `json:"action,omitempty"`
+	Items      []OperatorItemGrant `json:"items,omitempty"`
+	Town       uint32              `json:"town"`
+	Reason     string              `json:"reason"`
+	Silk       uint32              `json:"silk,omitempty"`
+	Level      *int64              `json:"level,omitempty"`
+	Gold       *int64              `json:"gold,omitempty"`
+	SkillPoint *int64              `json:"skillPoint,omitempty"`
+	MaxLevel   *int64              `json:"maxLevel,omitempty"`
 }
 
 /*
@@ -81,7 +84,10 @@ type PlayerOperations struct {
 	// ResetStats returns spent STR/INT points to the free pool (port-only).
 	ResetStats func(PlayerOperation) (any, error)
 	// GrantSilk credits silk to the character's account (operator tooling).
-	GrantSilk func(PlayerOperation) (any, error)
+	GrantSilk    func(PlayerOperation) (any, error)
+	Kick         func(PlayerOperation) (any, error)
+	SetCharacter func(PlayerOperation) (any, error)
+	SetLevelCap  func(PlayerOperation) (any, error)
 }
 
 /*
@@ -168,8 +174,22 @@ func (endpoint *operatorEndpoint) ServeHTTP(w http.ResponseWriter, r *http.Reque
 	var request PlayerOperation
 	if err := decodeJSONRequest(http.MaxBytesReader(w, r.Body, operatorBodyLimit), &request); err != nil ||
 		!operatorRequestID.MatchString(request.ID) || len(request.Operator) == 0 || len(request.Operator) > 80 ||
-		len(request.Character) == 0 || len(request.Character) > 64 || len(strings.TrimSpace(request.Reason)) < 5 || len(request.Reason) > 500 {
+		(request.Action != "set-level-cap" && (len(request.Character) == 0 || len(request.Character) > 64)) ||
+		len(strings.TrimSpace(request.Reason)) < 5 || len(request.Reason) > 500 {
 		http.Error(w, "invalid player operation", http.StatusBadRequest)
+		return
+	}
+	if request.Action == "set-level-cap" {
+		if endpoint.config.SetLevelCap == nil || request.MaxLevel == nil || *request.MaxLevel < 1 || *request.MaxLevel > 140 {
+			http.Error(w, "invalid level cap", http.StatusBadRequest)
+			return
+		}
+		result, err := endpoint.config.SetLevelCap(request)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusConflict)
+			return
+		}
+		writeJSON(w, http.StatusOK, result)
 		return
 	}
 	operation := endpoint.config.Rescue
@@ -210,6 +230,18 @@ func (endpoint *operatorEndpoint) ServeHTTP(w http.ResponseWriter, r *http.Reque
 			return
 		}
 		operation = endpoint.config.ResetStats
+	case "kick":
+		if endpoint.config.Kick == nil {
+			http.Error(w, "invalid kick", http.StatusBadRequest)
+			return
+		}
+		operation = endpoint.config.Kick
+	case "set-character":
+		if endpoint.config.SetCharacter == nil || (request.Level == nil && request.Gold == nil && request.SkillPoint == nil) {
+			http.Error(w, "invalid character update", http.StatusBadRequest)
+			return
+		}
+		operation = endpoint.config.SetCharacter
 	default:
 		http.Error(w, "unknown player operation", http.StatusBadRequest)
 		return

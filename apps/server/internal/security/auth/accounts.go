@@ -217,6 +217,10 @@ func OpenAccounts(path string) (*Accounts, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("shards schema: %w", err)
 	}
+	if err := ensureShardOwnerColumns(db); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
 	if err := backfillAccountGMShards(db); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("backfill account_gm_shards: %w", err)

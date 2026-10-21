@@ -221,7 +221,7 @@ func openAuthorityPlane(
 		MaintenanceGatePath:     strings.TrimSpace(os.Getenv(agentapi.EnvMaintenanceGate)),
 		AuthoredAreas:           devPaths.AuthoredAreas,
 		BenchmarkFixtureControl: os.Getenv(agentapi.EnvBenchmarkFixtureControl) == "1",
-		LevelCap:                progression.LevelCap,
+		LevelCap:                progression.CurrentLevelCap(),
 		SkillGroup: func(id uint32) (uint32, bool) {
 			row, ok := textdata.Skills.SkillByID(id)
 			return row.Group, ok

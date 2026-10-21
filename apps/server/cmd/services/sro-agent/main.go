@@ -115,6 +115,9 @@ func main() {
 			ControlURL:         r.ControlURL,
 			TransportURL:       r.TransportURL,
 			PublicTransportURL: r.PublicTransportURL,
+			OwnerAccountID:     r.OwnerAccountID,
+			CheckMode:          r.CheckMode,
+			MaxLevel:           r.MaxLevel,
 		})
 	}
 	catalog, err := shard.NewCatalog(dbDefs)

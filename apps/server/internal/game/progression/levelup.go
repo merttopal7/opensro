@@ -26,6 +26,9 @@ package progression
 import (
 	"math"
 	"os"
+	"strconv"
+	"strings"
+	"sync/atomic"
 
 	log "github.com/sirupsen/logrus"
 	"opensro.online/server/internal/domain"
@@ -43,6 +46,42 @@ import (
 // below the next-level threshold, so neither side of the wire ever
 // walks a crossing.
 const LevelCap int64 = 90
+
+var activeLevelCap atomic.Int64
+
+/*
+================
+CurrentLevelCap
+
+Returns the active shard character level cap (defaults to LevelCap = 90, or
+SRO_MAX_LEVEL when configured between 1 and 140).
+================
+*/
+func CurrentLevelCap() int64 {
+	if v := activeLevelCap.Load(); v >= 1 && v <= 140 {
+		return v
+	}
+	if raw := strings.TrimSpace(os.Getenv("SRO_MAX_LEVEL")); raw != "" {
+		if parsed, err := strconv.ParseInt(raw, 10, 64); err == nil && parsed >= 1 && parsed <= 140 {
+			activeLevelCap.Store(parsed)
+			return parsed
+		}
+	}
+	return LevelCap
+}
+
+/*
+================
+SetLevelCap
+
+Updates the active shard character level cap at runtime (1..140).
+================
+*/
+func SetLevelCap(cap int64) {
+	if cap >= 1 && cap <= 140 {
+		activeLevelCap.Store(cap)
+	}
+}
 
 // StatPointsPerLevel / autoStatPerLevel are the pinned retail growth
 // rule (adopt wave; proven arithmetically by the era observations - a
@@ -769,7 +808,7 @@ func walkExpCurve(levels enterworld.LevelDataSource, level, exp, delta int64) ex
 			result.exp = total
 			break
 		}
-		if result.level >= LevelCap {
+		if result.level >= CurrentLevelCap() {
 			// Freeze just below the boundary: emitting a crossing the
 			// server refuses to apply would desync the client's walk.
 			result.exp = required - 1

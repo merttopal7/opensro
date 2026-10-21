@@ -20,13 +20,16 @@ func Initialize(dir string) error {
 		return fmt.Errorf("authority dir: %w", err)
 	}
 
-	lockFile, warning, err := acquireLock(filepath.Join(dir, LockFileName), time.Now())
+	lockPath := filepath.Join(dir, LockFileName)
+	lockFile, warning, err := acquireLock(lockPath, time.Now())
 	if err != nil {
 		return err
 	}
 	defer func() {
+		_ = lockFile.Truncate(0)
 		_ = unlockFileExclusive(lockFile)
 		_ = lockFile.Close()
+		_ = os.Remove(lockPath)
 	}()
 	if warning != "" {
 		fmt.Fprintf(os.Stderr, "store: %s\n", warning)

@@ -12,6 +12,8 @@ other players and the GameWorld process continue running.
 package main
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -22,6 +24,7 @@ import (
 	agentapi "opensro.online/server/internal/agent/api"
 	"opensro.online/server/internal/data/store"
 	"opensro.online/server/internal/game/item/inventory"
+	"opensro.online/server/internal/game/progression"
 	"opensro.online/server/internal/transport"
 )
 
@@ -91,7 +94,18 @@ installPlayerOperations
 */
 func installPlayerOperations(api *agentapi.API, game *gameplayPlane, hub *transport.Hub, authority *store.Store, shard string) error {
 	state := store.DirForShardFromEnv(shard)
-	bytes, err := os.ReadFile(filepath.Join(state, "operator-token"))
+	tokenPath := filepath.Join(state, "operator-token")
+	bytes, err := os.ReadFile(tokenPath)
+	if errors.Is(err, os.ErrNotExist) {
+		raw := make([]byte, 32)
+		if _, rerr := rand.Read(raw); rerr == nil {
+			generated := hex.EncodeToString(raw)
+			if werr := os.WriteFile(tokenPath, []byte(generated+"\n"), 0o600); werr == nil {
+				bytes = []byte(generated)
+				err = nil
+			}
+		}
+	}
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
 	}
@@ -100,7 +114,18 @@ func installPlayerOperations(api *agentapi.API, game *gameplayPlane, hub *transp
 	}
 	read := func(name string) (any, error) {
 		if name == "" {
-			return map[string]any{"towns": game.items.OperatorTowns()}, nil
+			chars := game.items.OperatorCharacters(shard)
+			for _, row := range chars {
+				if cname, ok := row["name"].(string); ok {
+					_, bound := hub.BoundSession(shard + ":" + strings.ToLower(cname))
+					row["online"] = bound
+				}
+			}
+			return map[string]any{
+				"towns":      game.items.OperatorTowns(),
+				"characters": chars,
+				"levelCap":   progression.CurrentLevelCap(),
+			}, nil
 		}
 		player, err := game.items.OperatorCharacter(shard, name)
 		if err != nil {
@@ -112,7 +137,7 @@ func installPlayerOperations(api *agentapi.API, game *gameplayPlane, hub *transp
 			player["session"] = map[string]any{"id": session.ID, "ready": session.WorldReady(), "evicted": session.Evicted()}
 		}
 		return map[string]any{"shard": shard, "capturedAt": time.Now().UTC().Format(time.RFC3339Nano), "player": player,
-			"towns": game.items.OperatorTowns(), "storage": authority.Health()}, nil
+			"towns": game.items.OperatorTowns(), "levelCap": progression.CurrentLevelCap(), "storage": authority.Health()}, nil
 	}
 	control := playerOperationControl{hub: hub, authority: authority, shard: shard}
 	return api.InstallPlayerOperations(agentapi.PlayerOperations{
@@ -132,6 +157,29 @@ func installPlayerOperations(api *agentapi.API, game *gameplayPlane, hub *transp
 				return nil, err
 			}
 			return read(request.Character)
+		},
+		Kick: func(request agentapi.PlayerOperation) (any, error) {
+			if err := control.run(request.Character, "kick", func() error {
+				return nil
+			}); err != nil {
+				return nil, err
+			}
+			return read(request.Character)
+		},
+		SetCharacter: func(request agentapi.PlayerOperation) (any, error) {
+			if err := control.run(request.Character, "set character", func() error {
+				return game.items.OperatorSetCharacter(shard, request.Character, request.Level, request.Gold, request.SkillPoint)
+			}); err != nil {
+				return nil, err
+			}
+			return read(request.Character)
+		},
+		SetLevelCap: func(request agentapi.PlayerOperation) (any, error) {
+			if request.MaxLevel == nil || *request.MaxLevel < 1 || *request.MaxLevel > 140 {
+				return nil, fmt.Errorf("invalid level cap")
+			}
+			progression.SetLevelCap(*request.MaxLevel)
+			return map[string]any{"shard": shard, "levelCap": progression.CurrentLevelCap()}, nil
 		},
 		GrantItems: func(request agentapi.PlayerOperation) (any, error) {
 			if authority.Health().LastError != "" {

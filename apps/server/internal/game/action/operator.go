@@ -74,11 +74,107 @@ func (rt *Runtime) OperatorCharacter(division, name string) (map[string]any, err
 		return nil, fmt.Errorf("character not found")
 	}
 	world := rt.Worlds.Snapshot(simulation.WorldKey(division, c.Name), func() simulation.WorldState { return simulation.SeedWorldState(c) })
-	return map[string]any{"id": c.ID, "name": c.Name, "level": c.Level, "hp": c.CurrentHP, "mp": c.CurrentMP,
-		"savedWorld": c.World, "liveWorld": world, "teleportMode": c.NativeTeleportMode,
+	return map[string]any{"id": c.ID, "name": c.Name, "level": c.Level, "gold": c.Gold, "skillPoint": c.SkillPoints,
+		"hp": c.CurrentHP, "mp": c.CurrentMP, "savedWorld": c.World, "liveWorld": world, "teleportMode": c.NativeTeleportMode,
 		"bodyStatus": c.NativeBodyStatus, "companions": c.Companions(), "inventory": c.MissionInventory,
 		"pk": c.PK, "pvpState": c.PVPState(), "aggressions": c.Aggressions,
 		"strength": domain.CharacterStrength(c), "intellect": domain.CharacterIntellect(c), "statPoints": c.StatPoints}, nil
+}
+
+/*
+================
+OperatorCharacters
+
+Returns a summary list of all non-deleted characters on division for the
+Customer & Shard Management Panel.
+================
+*/
+func (rt *Runtime) OperatorCharacters(division string) []map[string]any {
+	unlock := rt.lockDivision(division)
+	defer unlock()
+	raw := rt.deps.CharactersForDivision(division)
+	rows := make([]map[string]any, 0, len(raw))
+	for _, item := range raw {
+		c := rt.characterSnapshot(division, item)
+		if c == nil || c.DeletePending {
+			continue
+		}
+		world := rt.Worlds.Snapshot(simulation.WorldKey(division, c.Name), func() simulation.WorldState { return simulation.SeedWorldState(c) })
+		rows = append(rows, map[string]any{
+			"id":         c.ID,
+			"name":       c.Name,
+			"accountId":  c.AccountID,
+			"level":      c.Level,
+			"gold":       c.Gold,
+			"skillPoint": c.SkillPoints,
+			"hp":         c.CurrentHP,
+			"mp":         c.CurrentMP,
+			"statPoints": c.StatPoints,
+			"regionId":   world.Spawn.RegionID,
+		})
+	}
+	return rows
+}
+
+/*
+================
+OperatorSetCharacter
+
+Updates a character's level, gold, and/or skill points under the character's
+transport control lease.
+================
+*/
+func (rt *Runtime) OperatorSetCharacter(division, name string, level, gold, sp *int64) error {
+	unlock := rt.lockDivision(division)
+	defer unlock()
+	c := rt.findCharacter(division, name)
+	if c == nil {
+		return fmt.Errorf("character not found")
+	}
+	if !rt.deps.Update(c, "operator-set-character", func() bool {
+		if c.DeletePending {
+			return false
+		}
+		next := c.Snapshot()
+		if level != nil {
+			lv := *level
+			if lv < 1 || lv > 140 {
+				return false
+			}
+			next.Level = &lv
+			next.MaxLevel = &lv
+			base := progression.BaseStatAtLevel(lv)
+			free := (lv - 1) * progression.StatPointsPerLevel
+			str, intel := base, base
+			next.Strength, next.Intellect, next.StatPoints = &str, &intel, &free
+			if err := rt.operatorResetVitals(next); err == nil {
+				c.CurrentHP, c.CurrentMP = next.CurrentHP, next.CurrentMP
+			}
+			c.Level = next.Level
+			c.MaxLevel = next.MaxLevel
+			c.Strength = next.Strength
+			c.Intellect = next.Intellect
+			c.StatPoints = next.StatPoints
+		}
+		if gold != nil {
+			g := *gold
+			if g < 0 {
+				return false
+			}
+			c.Gold = &g
+		}
+		if sp != nil {
+			s := *sp
+			if s < 0 {
+				return false
+			}
+			c.SkillPoints = &s
+		}
+		return true
+	}) {
+		return fmt.Errorf("character update refused")
+	}
+	return nil
 }
 
 /*

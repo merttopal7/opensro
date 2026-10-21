@@ -22,6 +22,7 @@ import sys
 TARGETS = (
 	("agent", "./cmd/services/sro-agent"),
 	("gameworld", "./cmd/services/sro-gameworld"),
+	("panel", "./cmd/services/sro-panel"),
 	("sro-nomad", "./cmd/operations/sro-nomad"),
 	("sro-init", "./cmd/operations/sro-init"),
 	("sro-provision-identity", "./cmd/operations/sro-provision-identity"),
@@ -37,17 +38,21 @@ START_SH = """#!/usr/bin/env bash
 set -Eeuo pipefail
 cd "$(dirname "$0")"
 
-chmod +x agent gameworld sro-nomad sro-init sro-provision-identity hash-agent-password sro-authority-upgrade sro-game-data-check sro-swap-sun init-postgres.sh ops/backup/*.sh
+chmod +x agent gameworld panel sro-nomad sro-init sro-provision-identity hash-agent-password sro-authority-upgrade sro-game-data-check sro-swap-sun init-postgres.sh ops/backup/*.sh
 
 export SRO_SERVER_GAME_DATA_ROOT="$(pwd)/.generated/game-data/1.150/server.srogz"
-export SRO_AGENT_POSTGRES_DSN="${SRO_AGENT_POSTGRES_DSN:-postgres://app:123@127.0.0.1:5432/opensro?sslmode=disable}"
+export SRO_AGENT_POSTGRES_DSN="postgres://app:123@127.0.0.1:5433/opensro?sslmode=disable"
+export SRO_PANEL_ADDR="${SRO_PANEL_ADDR:-127.0.0.1:8795}"
+
+mkdir -p .state/cluster
+echo "$SRO_AGENT_POSTGRES_DSN" > .state/cluster/postgres-dsn.txt
 
 # 1) Nomad 2.0.7 binary check (downloads automatically if missing)
 if [ ! -x "./nomad" ]; then
 	if command -v nomad >/dev/null 2>&1; then
 		export SRO_NOMAD_BINARY="$(command -v nomad)"
 	else
-		echo "[1/5] Downloading HashiCorp Nomad 2.0.7..."
+		echo "[1/6] Downloading HashiCorp Nomad 2.0.7..."
 		curl -fsSL "https://releases.hashicorp.com/nomad/2.0.7/nomad_2.0.7_linux_amd64.zip" -o nomad.zip
 		unzip -o nomad.zip nomad
 		rm -f nomad.zip
@@ -59,46 +64,59 @@ else
 fi
 
 # 2) PostgreSQL check
-echo "[2/5] Checking PostgreSQL ($SRO_AGENT_POSTGRES_DSN)..."
-if command -v docker >/dev/null 2>&1 && ! ss -tln | grep -q ':5432 '; then
+echo "[2/6] Checking PostgreSQL ($SRO_AGENT_POSTGRES_DSN)..."
+if command -v docker >/dev/null 2>&1 && ! ss -tln | grep -Eq ':5433([[:space:]]|$)'; then
 	echo "      Starting PostgreSQL via Docker..."
 	docker compose up -d
 	sleep 3
 fi
 
 # 3) Start Nomad dev-agent in background
-mkdir -p .state
-if ! ss -tln | grep -q ':4646 '; then
-	echo "[3/5] Starting Nomad supervisor..."
+mkdir -p .state/cluster
+if ! ss -tln | grep -Eq ':4646([[:space:]]|$)'; then
+	echo "[3/6] Cleaning orphaned release processes and starting Nomad supervisor..."
+	pkill -9 -f "\\.state/cluster/releases/" >/dev/null 2>&1 || true
+	sleep 1
 	nohup ./sro-nomad dev-agent > .state/nomad-agent.log 2>&1 &
 	for _ in $(seq 1 20); do
-		if ss -tln | grep -q ':4646 '; then
+		if ss -tln | grep -Eq ':4646([[:space:]]|$)'; then
+			sleep 3
 			break
 		fi
 		sleep 1
 	done
 else
-	echo "[3/5] Nomad supervisor already running (127.0.0.1:4646)."
+	echo "[3/6] Nomad supervisor already running (127.0.0.1:4646)."
 fi
 
 # 4) Initial identity keys and global-official shard setup
 if [ ! -f ".state/cluster/agent-provisioning-token" ]; then
-	echo "[4/5] Provisioning identity keys and shard database..."
+	echo "[4/6] Provisioning identity keys and shard database..."
 	./sro-provision-identity
 	./sro-init -shard global-official
 else
-	echo "[4/5] Identity keys already exist, preserving."
+	echo "[4/6] Identity keys already exist, preserving."
+fi
+if [ ! -f ".state/cluster/accounts.json" ] || [ "$(cat .state/cluster/accounts.json 2>/dev/null)" = "[]" ]; then
+	echo '[{"id":"tester","passwordHash":"$2a$10$58hJQO.3HVzQLXaLFBDwSuXRiTuvUjf/oUJBxKJEKJX.mO5shR1zm"}]' > .state/cluster/accounts.json
 fi
 
-# 5) Deploy sro-agent and sro-gameworld
-echo "[5/5] Deploying sro-agent and sro-gameworld..."
-./sro-nomad deploy
+# 5) Start Customer & Shard Management Panel (sro-panel)
+echo "[5/6] Starting Customer & Shard Panel ($SRO_PANEL_ADDR)..."
+pkill -x panel >/dev/null 2>&1 || true
+nohup ./panel > .state/panel.log 2>&1 &
+
+# 6) Deploy sro-agent and sro-gameworld
+echo "[6/6] Deploying sro-agent and sro-gameworld..."
+"$SRO_NOMAD_BINARY" var purge sro/operations/fleet >/dev/null 2>&1 || true
+./sro-nomad deploy -agent-cpu=100 -agent-memory-mb=128 -gameworld-cpu=200 -gameworld-memory-mb=1024
 
 echo ""
 echo "=== OpenSRO Server Active! ==="
-echo "Agent API  : http://127.0.0.1:8787"
-echo "GameWorld  : http://127.0.0.1:8788"
-echo "Status     : ./sro-nomad status"
+echo "Agent API     : http://127.0.0.1:8787"
+echo "GameWorld     : http://127.0.0.1:8788"
+echo "Customer Panel: http://127.0.0.1:8795"
+echo "Status        : ./sro-nomad status"
 """
 
 DOCKER_COMPOSE_YML = """services:
@@ -111,7 +129,7 @@ DOCKER_COMPOSE_YML = """services:
       POSTGRES_PASSWORD: "123"
       POSTGRES_DB: opensro
     ports:
-      - "127.0.0.1:5432:5432"
+      - "127.0.0.1:5433:5432"
     volumes:
       - ./postgres-data:/var/lib/postgresql/data
       - ./schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
@@ -148,6 +166,9 @@ CREATE TABLE IF NOT EXISTS shards (
 	control_url          TEXT     NOT NULL,
 	transport_url        TEXT     NOT NULL,
 	public_transport_url TEXT     NOT NULL DEFAULT '',
+	owner_account_id     TEXT     NOT NULL DEFAULT '',
+	check_mode           SMALLINT NOT NULL DEFAULT 0 CHECK (check_mode IN (0, 1)),
+	max_level            INTEGER  NOT NULL DEFAULT 90 CHECK (max_level >= 1 AND max_level <= 140),
 	online_players       INTEGER  NOT NULL DEFAULT 0 CHECK (online_players >= 0),
 	operating            SMALLINT NOT NULL DEFAULT 0 CHECK (operating IN (0, 1)),
 	updated_at_ms        BIGINT   NOT NULL DEFAULT 0
@@ -158,6 +179,14 @@ CREATE TABLE IF NOT EXISTS account_gm_shards (
 	shard_id      TEXT   NOT NULL,
 	granted_at_ms BIGINT NOT NULL,
 	PRIMARY KEY (account_id, shard_id)
+);
+
+CREATE TABLE IF NOT EXISTS shard_bans (
+	shard_id     TEXT   NOT NULL,
+	account_id   TEXT   NOT NULL,
+	reason       TEXT   NOT NULL DEFAULT '',
+	banned_at_ms BIGINT NOT NULL,
+	PRIMARY KEY (shard_id, account_id)
 );
 """
 
@@ -179,7 +208,15 @@ WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'opensro')\\gexec
 EOSQL
 
 sudo -u postgres psql -v ON_ERROR_STOP=1 -d opensro -f schema.sql
-sudo -u postgres psql -v ON_ERROR_STOP=1 -d opensro -c "GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO app;"
+sudo -u postgres psql -v ON_ERROR_STOP=1 -d opensro <<'EOSQL'
+ALTER SCHEMA public OWNER TO app;
+GRANT ALL ON SCHEMA public TO app;
+ALTER TABLE accounts OWNER TO app;
+ALTER TABLE shards OWNER TO app;
+ALTER TABLE account_gm_shards OWNER TO app;
+ALTER TABLE shard_bans OWNER TO app;
+GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO app;
+EOSQL
 echo "PostgreSQL 'opensro' veritabani ve tablolar hazir!"
 """
 

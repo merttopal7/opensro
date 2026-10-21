@@ -46,6 +46,9 @@ type Definition struct {
 	// serving the client proxies to TransportURL, so every client origin
 	// works unchanged, or the absolute URL of a public transport host.
 	PublicTransportURL string `json:"publicTransportUrl,omitempty"`
+	OwnerAccountID     string `json:"ownerAccountId,omitempty"`
+	CheckMode          bool   `json:"checkMode,omitempty"`
+	MaxLevel           int    `json:"maxLevel,omitempty"`
 }
 
 // AdvertisedTransportURL is the transport reference returned to clients. They

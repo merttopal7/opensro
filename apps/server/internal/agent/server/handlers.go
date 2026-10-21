@@ -13,6 +13,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/httputil"
+	"net/url"
 	"opensro.online/server/internal/releaseprotocol"
 	"strconv"
 	"strings"
@@ -45,6 +47,9 @@ type serverInfo struct {
 	OnlinePlayers        int    `json:"onlinePlayers"`
 	Capacity             int    `json:"capacity"`
 	Operating            bool   `json:"operating"`
+	CheckMode            bool   `json:"checkMode,omitempty"`
+	MaxLevel             int    `json:"maxLevel,omitempty"`
+	OwnerAccountID       string `json:"ownerAccountId,omitempty"`
 	TransportURL         string `json:"transportUrl"`
 	UpstreamTransportURL string `json:"upstreamTransportUrl,omitempty"`
 }
@@ -101,7 +106,10 @@ func serverRows(statuses []shard.Status) []serverInfo {
 			IsTest:               status.Test,
 			OnlinePlayers:        status.OnlinePlayers,
 			Capacity:             status.Capacity,
-			Operating:            status.Operating,
+			Operating:            status.Operating && !status.CheckMode,
+			CheckMode:            status.CheckMode,
+			MaxLevel:             status.MaxLevel,
+			OwnerAccountID:       status.OwnerAccountID,
 			TransportURL:         status.AdvertisedTransportURL(),
 			UpstreamTransportURL: status.TransportURL,
 		})
@@ -280,6 +288,22 @@ func (server *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	server.passwordFailures.update(clientIP(r), request.ID, server.now(), false, true)
 	server.upgradePasswordCost(r.Context(), accountID, hash, request.Password)
+
+	if banAuth, ok := server.accounts.(shardBanAuthority); ok && banAuth.IsBannedOnShard(definition.ID, accountID) {
+		refuse(5, "ACCOUNT_BANNED", "Bu sunucuda (shard) hesabınız engellenmiştir.")
+		return
+	}
+	if definition.CheckMode {
+		isOwner := definition.OwnerAccountID != "" && strings.EqualFold(definition.OwnerAccountID, accountID)
+		isGM := false
+		if gmAuth, ok := server.accounts.(gmAccountAuthority); ok && gmAuth.IsGMOnShard(accountID, definition.ID) {
+			isGM = true
+		}
+		if !isOwner && !isGM {
+			refuse(5, "SHARD_OFFLINE", "Sunucu şu anda bakımda (Check). Yalnızca GM ve sunucu sahibi giriş yapabilir.")
+			return
+		}
+	}
 
 	epoch := uint64(1)
 	if epochAuth, ok := server.accounts.(sessionEpochAuthority); ok {
@@ -478,12 +502,15 @@ func (server *Server) handleShardRequest(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	request.Header.Set("Authorization", r.Header.Get("Authorization"))
+	isOwnerGM := definition.OwnerAccountID != "" && definition.OwnerAccountID == claims.AccountID
 	if gmAuth, ok := server.accounts.(gmAccountAuthority); ok {
-		if gmAuth.IsGMOnShard(claims.AccountID, claims.ShardID) {
+		if isOwnerGM || gmAuth.IsGMOnShard(claims.AccountID, claims.ShardID) {
 			request.Header.Set("X-SRO-Account-GM", "1")
 		} else {
 			request.Header.Set("X-SRO-Account-GM", "0")
 		}
+	} else if isOwnerGM {
+		request.Header.Set("X-SRO-Account-GM", "1")
 	}
 	// The shard enforces the release protocol too; the agent already did.
 	request.Header.Set(releaseprotocol.Header, r.Header.Get(releaseprotocol.Header))
@@ -528,4 +555,41 @@ func shardRequestURL(controlURL string, request *http.Request) (string, error) {
 		target += "?" + request.URL.RawQuery
 	}
 	return target, nil
+}
+
+/*
+================
+handleDynamicShardTransport
+
+Reverse-proxies /shards/{shardID}/transport/... (including WebSocket upgrades)
+to the target shard's configured TransportURL so dynamic customer-created
+shards work automatically behind a single Nginx /shards/ route.
+================
+*/
+func (server *Server) handleDynamicShardTransport(w http.ResponseWriter, r *http.Request) {
+	after := strings.TrimPrefix(r.URL.Path, "/shards/")
+	shardID, rest, ok := strings.Cut(after, "/")
+	if !ok || shardID == "" || strings.Contains(rest, "..") {
+		http.NotFound(w, r)
+		return
+	}
+	def, found := server.currentCatalog().Resolve(shardID)
+	if !found || !def.Enabled || strings.TrimSpace(def.TransportURL) == "" {
+		http.Error(w, "unknown or disabled shard", http.StatusNotFound)
+		return
+	}
+	targetURL, err := url.Parse(def.TransportURL)
+	if err != nil {
+		http.Error(w, "invalid shard transport url", http.StatusBadGateway)
+		return
+	}
+	proxy := httputil.NewSingleHostReverseProxy(targetURL)
+	originalDirector := proxy.Director
+	proxy.Director = func(req *http.Request) {
+		originalDirector(req)
+		req.URL.Path = "/" + rest
+		req.URL.RawPath = ""
+		req.Host = targetURL.Host
+	}
+	proxy.ServeHTTP(w, r)
 }

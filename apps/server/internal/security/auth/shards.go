@@ -35,6 +35,11 @@ type ShardRow struct {
 	ControlURL         string
 	TransportURL       string
 	PublicTransportURL string
+	OwnerAccountID     string
+	CheckMode          bool
+	MaxLevel           int
+	OnlinePlayers      int
+	Operating          bool
 }
 
 const shardsSQLiteSchema = `
@@ -50,6 +55,9 @@ CREATE TABLE IF NOT EXISTS shards (
 	control_url          TEXT    NOT NULL,
 	transport_url        TEXT    NOT NULL,
 	public_transport_url TEXT    NOT NULL DEFAULT '',
+	owner_account_id     TEXT    NOT NULL DEFAULT '',
+	check_mode           INTEGER NOT NULL DEFAULT 0 CHECK (check_mode IN (0, 1)),
+	max_level            INTEGER NOT NULL DEFAULT 90 CHECK (max_level >= 1 AND max_level <= 140),
 	online_players       INTEGER NOT NULL DEFAULT 0 CHECK (online_players >= 0),
 	operating            INTEGER NOT NULL DEFAULT 0 CHECK (operating IN (0, 1)),
 	updated_at_ms        INTEGER NOT NULL DEFAULT 0
@@ -60,6 +68,14 @@ CREATE TABLE IF NOT EXISTS account_gm_shards (
 	shard_id      TEXT    NOT NULL,
 	granted_at_ms INTEGER NOT NULL,
 	PRIMARY KEY (account_id, shard_id)
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS shard_bans (
+	shard_id     TEXT    NOT NULL,
+	account_id   TEXT    NOT NULL,
+	reason       TEXT    NOT NULL DEFAULT '',
+	banned_at_ms INTEGER NOT NULL,
+	PRIMARY KEY (shard_id, account_id)
 ) STRICT;
 `
 
@@ -76,16 +92,30 @@ CREATE TABLE IF NOT EXISTS shards (
 	control_url          TEXT     NOT NULL,
 	transport_url        TEXT     NOT NULL,
 	public_transport_url TEXT     NOT NULL DEFAULT '',
+	owner_account_id     TEXT     NOT NULL DEFAULT '',
+	check_mode           SMALLINT NOT NULL DEFAULT 0 CHECK (check_mode IN (0, 1)),
+	max_level            INTEGER  NOT NULL DEFAULT 90 CHECK (max_level >= 1 AND max_level <= 140),
 	online_players       INTEGER  NOT NULL DEFAULT 0 CHECK (online_players >= 0),
 	operating            SMALLINT NOT NULL DEFAULT 0 CHECK (operating IN (0, 1)),
 	updated_at_ms        BIGINT   NOT NULL DEFAULT 0
 );
+ALTER TABLE shards ADD COLUMN IF NOT EXISTS owner_account_id TEXT NOT NULL DEFAULT '';
+ALTER TABLE shards ADD COLUMN IF NOT EXISTS check_mode SMALLINT NOT NULL DEFAULT 0;
+ALTER TABLE shards ADD COLUMN IF NOT EXISTS max_level INTEGER NOT NULL DEFAULT 90;
 
 CREATE TABLE IF NOT EXISTS account_gm_shards (
 	account_id    TEXT   NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
 	shard_id      TEXT   NOT NULL,
 	granted_at_ms BIGINT NOT NULL,
 	PRIMARY KEY (account_id, shard_id)
+);
+
+CREATE TABLE IF NOT EXISTS shard_bans (
+	shard_id     TEXT   NOT NULL,
+	account_id   TEXT   NOT NULL,
+	reason       TEXT   NOT NULL DEFAULT '',
+	banned_at_ms BIGINT NOT NULL,
+	PRIMARY KEY (shard_id, account_id)
 );
 `
 
@@ -233,6 +263,14 @@ func (accounts *Accounts) UpsertShard(ctx context.Context, def ShardRow) error {
 	if def.Enabled {
 		enabled = 1
 	}
+	checkMode := 0
+	if def.CheckMode {
+		checkMode = 1
+	}
+	maxLevel := def.MaxLevel
+	if maxLevel < 1 || maxLevel > 140 {
+		maxLevel = 90
+	}
 	now := time.Now().UnixMilli()
 	tx, err := accounts.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -258,8 +296,11 @@ func (accounts *Accounts) UpsertShard(ctx context.Context, def ShardRow) error {
 		     control_url = $8,
 		     transport_url = $9,
 		     public_transport_url = $10,
-		     updated_at_ms = $11
-		 WHERE id = $12`,
+		     owner_account_id = $11,
+		     check_mode = $12,
+		     max_level = $13,
+		     updated_at_ms = $14
+		 WHERE id = $15`,
 		def.Name,
 		int(def.NativeServerID),
 		int(def.NativeFarmID),
@@ -270,6 +311,9 @@ func (accounts *Accounts) UpsertShard(ctx context.Context, def ShardRow) error {
 		def.ControlURL,
 		def.TransportURL,
 		def.PublicTransportURL,
+		strings.TrimSpace(def.OwnerAccountID),
+		checkMode,
+		maxLevel,
 		now,
 		def.ID,
 	)
@@ -282,8 +326,9 @@ func (accounts *Accounts) UpsertShard(ctx context.Context, def ShardRow) error {
 			`INSERT INTO shards (
 				id, name, native_server_id, native_farm_id, capacity,
 				is_default, is_test, enabled, control_url, transport_url,
-				public_transport_url, online_players, operating, updated_at_ms
-			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 0, 0, $12)`,
+				public_transport_url, owner_account_id, check_mode, max_level,
+				online_players, operating, updated_at_ms
+			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, 0, 0, $15)`,
 			def.ID,
 			def.Name,
 			int(def.NativeServerID),
@@ -295,6 +340,9 @@ func (accounts *Accounts) UpsertShard(ctx context.Context, def ShardRow) error {
 			def.ControlURL,
 			def.TransportURL,
 			def.PublicTransportURL,
+			strings.TrimSpace(def.OwnerAccountID),
+			checkMode,
+			maxLevel,
 			now,
 		); err != nil {
 			return err
@@ -314,7 +362,8 @@ native_server_id, id.
 func (accounts *Accounts) ShardDefinitions() ([]ShardRow, error) {
 	rows, err := accounts.db.Query(
 		`SELECT id, name, native_server_id, native_farm_id, capacity,
-		        is_default, is_test, enabled, control_url, transport_url, public_transport_url
+		        is_default, is_test, enabled, control_url, transport_url, public_transport_url,
+		        owner_account_id, check_mode, max_level, online_players, operating
 		 FROM shards
 		 ORDER BY native_server_id ASC, id ASC`,
 	)
@@ -329,6 +378,7 @@ func (accounts *Accounts) ShardDefinitions() ([]ShardRow, error) {
 			def                      ShardRow
 			nativeServer, nativeFarm int
 			isDefault, isTest, en    int
+			checkMode, operating     int
 		)
 		if err := rows.Scan(
 			&def.ID,
@@ -342,6 +392,11 @@ func (accounts *Accounts) ShardDefinitions() ([]ShardRow, error) {
 			&def.ControlURL,
 			&def.TransportURL,
 			&def.PublicTransportURL,
+			&def.OwnerAccountID,
+			&checkMode,
+			&def.MaxLevel,
+			&def.OnlinePlayers,
+			&operating,
 		); err != nil {
 			return nil, err
 		}
@@ -350,6 +405,11 @@ func (accounts *Accounts) ShardDefinitions() ([]ShardRow, error) {
 		def.Default = isDefault == 1
 		def.Test = isTest == 1
 		def.Enabled = en == 1
+		def.CheckMode = checkMode == 1
+		def.Operating = operating == 1
+		if def.MaxLevel < 1 || def.MaxLevel > 140 {
+			def.MaxLevel = 90
+		}
 		defs = append(defs, def)
 	}
 	if err := rows.Err(); err != nil {
