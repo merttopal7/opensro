@@ -132,6 +132,20 @@ test( "all twelve well-formed retail DOFs retain exact water ownership, transfor
 					ambientColor: block.unk1,
 					fog: block.fog,
 					waterObjects: expected,
+					// Every other object the block places (torches, cobwebs, doors, boulders).
+					blockObjects: block.objects.flatMap( ( o, i ) =>
+						o.flag & 4 ?
+							[] :
+							[ {
+								index: i,
+								name: o.name,
+								path: o.path,
+								position: o.position,
+								rotation: o.rotation,
+								scale: o.scale,
+								flags: o.flag
+							} ]
+					),
 					connectedBlocks: block.connectedBlocks,
 					visibleBlocks: block.visibleBlocks
 				} );
@@ -270,6 +284,32 @@ const dungeonRegionPortals = {
 	32777: 8
 };
 
+test("Donwhang's torches, doors and boulders decode as drawable, block-culled groups", () => {
+	const bundle = dungeonFixture.bundles.get( 32769 );
+	const decoded = createWorldDecoder().decode(
+		new TextEncoder().encode( JSON.stringify( bundle ) ),
+		false,
+		{ origin: 32769, part: "all" }
+	);
+	assert.deepEqual( decoded.warnings.filter( w => /Object resource absent|Mesh absent/.test( w ) ), [] );
+	const instancesOf = name => {
+		const groups = decoded.groups.filter( g => g.id.toLowerCase().includes( name ) );
+		return { groups, count: groups.reduce( ( n, g ) => n + (g.geometry.instances?.length ?? 0) / 16, 0 ) };
+	};
+	// The cave file places 4 sealed doors, 10 boulder piles and 364 wall torches.
+	assert.equal( instancesOf( "out_obj_door" ).count, 4 );
+	assert.equal( instancesOf( "out_obj_stone" ).count, 10 );
+	assert.ok( instancesOf( "flame_a" ).count >= 364 );
+	for ( const name of [ "out_obj_door", "out_obj_stone", "flame_a", "cobweb" ] ) {
+		const { groups } = instancesOf( name );
+		assert.ok( groups.length > 0, `${name}: no groups` );
+		assert.ok( groups.every( g => g.dungeonBlock !== undefined ), `${name}: groups follow the room culling` );
+	}
+	// Their particle emitters follow the same rooms.
+	assert.ok( (decoded.scenery?.length ?? 0) > 0 );
+	assert.ok( decoded.scenery.every( e => Number.isInteger( e.dungeonBlock ) ), "every cave emitter names its room" );
+});
+
 for ( const regionId of [ 32769, 32770, 32771, 32772, 32773, 32774, 32775, 32777 ] ) {
 	test(
 		`0x8000-bit dungeon region ${regionId} streams, decodes mesh/collision/water and crosses every room portal seam`,
@@ -400,8 +440,12 @@ test(
 		// Verify every dungeon room BSR particle reference resolves and compiles in program.ts.
 		const dungeonRefs = collectDungeonParticleReferences( manifest );
 		const uniqueEfps = [ ...new Set( dungeonRefs.map( r => r.effectPath ) ) ].sort();
-		assert.equal( uniqueEfps.length, 48 );
+		assert.equal( uniqueEfps.length, 70 );
 		assert.ok( uniqueEfps.includes( "system/system_dungeonpotal_02.efp" ) );
+		// Objects placed in rooms (blockObjects) carry their own programs: the
+		// Donwhang torches and sunbeams reported missing in game.
+		assert.ok( uniqueEfps.includes( "map/frame5.efp" ) );
+		assert.ok( uniqueEfps.includes( "map/404_sunbeams.efp" ) );
 
 		const particlesRoot = join( extractedRoot, "Particles_extracted" );
 		const particleImageRoot = join( imageSourceRoot, "Particles_extracted" );

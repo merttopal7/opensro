@@ -20,7 +20,9 @@ export interface ObjectBranch {
 	sourcePath?: string;
 	materialPaths: string[];
 	meshPaths: string[];
-	renderMeshSection?: { paths: string[]; };
+	// cameraCollision[i] is mesh i's BSR collision dword (CPrimMesh +0x1E8);
+	// absent when the resource carries none, and then every mesh collides.
+	renderMeshSection?: { paths: string[]; cameraCollision?: boolean[]; };
 }
 /*
 ================
@@ -37,6 +39,8 @@ export interface Mesh {
 	uvs: number[];
 	indices: number[];
 	bounds: { min: number[]; max: number[]; };
+	// A 0x400 mesh's stage-1 lightmap and its second UV set (formats.mjs readBmsLightmap).
+	lightmap?: { texturePublicPath: string; uvs: number[]; };
 }
 /*
 ================
@@ -127,6 +131,9 @@ export interface Bundle {
 			regionId: string;
 			position: { x: number; y: number; z: number; };
 			yaw: number;
+			// A DOF block object: the record's rotation vector and scale (dungeonObjectMatrix).
+			rotation?: readonly [number, number, number];
+			scaleXyz?: readonly [number, number, number];
 		}[];
 		resources: {
 			meshes: Mesh[];
