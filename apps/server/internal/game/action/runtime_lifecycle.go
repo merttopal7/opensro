@@ -584,6 +584,7 @@ func (rt *Runtime) forgetCharacterLocked(divisionID, characterName string) {
 	}
 
 	rt.forgetPetSession(divisionID, characterName)
+	rt.retirePetShields(divisionID, characterName)
 	rt.forgetRecoverySession(divisionID, characterName)
 	rt.Worlds.Forget(simulation.WorldKey(divisionID, characterName))
 	rt.groundApproachStops.Delete(simulation.WorldKey(divisionID, characterName))

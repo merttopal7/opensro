@@ -48,6 +48,11 @@ export function tooltipItems(
 		item = game.cosRecords?.find( row => row.gid === cosGid )?.inventory?.find( row =>
 			row.slot === Number( id.slice( 9 ) )
 		);
+	} else if ( id.startsWith( "pet-gear:" ) ) {
+		// Port-only: a wolf's worn gear (pet-training.ts).
+		item = game.petTraining?.gid === cosGid ?
+			game.petTraining.gear[Number( id.slice( 9 ) )] ?? undefined :
+			undefined;
 	} else if ( id.startsWith( "exchange-my:" ) ) {
 		// The exchange table's two sides are bound-item slots natively
 		// (CIFExchange, 6B20A0/6B2DA0), as the bag's are.

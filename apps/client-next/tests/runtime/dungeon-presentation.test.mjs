@@ -19,6 +19,7 @@ import { dataExtractedRoot } from "../../../../scripts/build/world/paths.mjs";
 import { readDofPresentation } from "../../../../scripts/build/world/assets/buildDungeonResources.mjs";
 import { dungeonWaterVertices, resolveDungeonWater } from "../../../../scripts/build/world/assets/dungeonWater.mjs";
 import { parseJmxResourceBsr, parseJmxBmsStaticMesh } from "../../../../scripts/build/world/objects/formats.mjs";
+import { NATIVE_ONLY } from "../helpers/expanded-build.mjs";
 
 test("dungeon water fan follows shared-face order and the provider keeps the last tint", async () => {
 	const mesh = { positions: [ 0, 0, 0, 10, 0, 0, 10, 0, 20, 0, 0, 20 ], indices: [ 0, 1, 2, 0, 2, 3 ] };
@@ -90,7 +91,7 @@ test( "all shipped water objects resolve their real BSR/BMS provider geometry", 
 const { parseDof } = await import(
 	sourceFileUrl( "tests/oracles/legacy/packages/runtime/src/world/dungeon/parseDof.ts" ).href
 );
-test("all twelve well-formed retail DOFs retain exact water ownership, transforms, tint and fog", () => {
+test( "all twelve well-formed retail DOFs retain exact water ownership, transforms, tint and fog", NATIVE_ONLY, () => {
 	let count = 0, water = 0;
 	for ( const dir of [ "china", "wchina" ] ) {
 		for (
@@ -145,7 +146,7 @@ test("all twelve well-formed retail DOFs retain exact water ownership, transform
 	}
 	assert.equal( count, 12 );
 	assert.equal( water, 36 );
-});
+} );
 
 import { resolveSkyTextures } from "../../../../scripts/build/world/assets/copySkyImages.mjs";
 test("flare publication retains native mip resources and the shared original sun source", () => {

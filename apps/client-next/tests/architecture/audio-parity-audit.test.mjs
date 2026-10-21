@@ -140,8 +140,11 @@ test("accepted equipment emits world ITEM audio and detects an injected silent c
 test("whole-surface audit reports removed assets and generated selector drift without claiming unrun closure", async () => {
 	const report = await audit( {
 		assetExists: p => !p.endsWith( "/itsword.wav" ),
+		// A changed native row is drift on a native and an expanded build alike.
 		sourceRead: p =>
-			fs.readFileSync( p, "utf8" ) + (p.endsWith( "item-sound-catalog.ts" ) ? "\n// changed generation" : "")
+			p.endsWith( "item-sound-catalog.ts" ) ?
+				fs.readFileSync( p, "utf8" ).replace( '"path": "/assets/audio/', '"path": "/assets/audio/changed-' ) :
+				fs.readFileSync( p, "utf8" )
 	} );
 	assert.ok(
 		report.issues.some( x =>

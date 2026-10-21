@@ -15,7 +15,7 @@ privilege, area, surface and stranding checks, and snaps the unknown height
 */
 import type { Pose } from "@/engine/contracts/gameplay";
 import type { UiRect } from "@/engine/contracts/ui";
-import { worldMapPoint } from "@/engine/foundation/ui/world-map";
+import { type WorldMapLayout, worldMapPoint } from "@/engine/foundation/ui/world-map";
 
 const MAP_WARP_UNKNOWN_Y = -10000;
 // MAP_WARP_LOCAL_MAX keeps a printed coordinate inside its region: the server
@@ -47,14 +47,22 @@ The last painted map frame and the target awaiting confirmation.
 ================
 */
 export function createMapTeleport() {
-	let frame: { page: number; clip: UiRect; pan: readonly [number, number]; center: Pose; } | null = null;
+	let frame: {
+		page: number;
+		clip: UiRect;
+		pan: readonly [number, number];
+		center: Pose;
+		layout?: WorldMapLayout;
+	} | null = null;
 	let pending: MapTeleportTarget | null = null;
 	return {
-		view( page: number, clip: UiRect, pan: readonly [number, number], center: Pose ) {
-			frame = { page, clip, pan: [ pan[0], pan[1] ], center };
+		view( page: number, clip: UiRect, pan: readonly [number, number], center: Pose, layout?: WorldMapLayout ) {
+			frame = { page, clip, pan: [ pan[0], pan[1] ], center, layout };
 		},
 		pick( x: number, y: number ): MapTeleportTarget | null {
-			pending = frame ? worldMapPoint( frame.page, frame.clip, frame.pan, frame.center, x, y ) : null;
+			pending = frame ?
+				worldMapPoint( frame.page, frame.clip, frame.pan, frame.center, x, y, frame.layout ) :
+				null;
 			return pending;
 		},
 		choose( target: MapTeleportTarget ) {

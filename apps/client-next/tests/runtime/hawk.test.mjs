@@ -15,6 +15,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { defined } from "../helpers/defined.mjs";
+import { NATIVE_ONLY } from "../helpers/expanded-build.mjs";
 const { stepHawk, hawkEvent, hawkYaw } = await import( "../../src/engine/foundation/animation/hawk.ts" );
 const { createCharacterEffects } = await import( "../../src/engine/runtime/characters/effects/effects.ts" );
 const { createPresentationRandom } = await import( "../../src/engine/runtime/random/random.ts" );
@@ -156,30 +157,34 @@ function fixture( skill = 78, blood = false, bloodEnabled = true ) {
 		}
 	};
 }
-test("all 17 SCT_MOVER rows publish required native clips and keep a managed hawk past clip duration", () => {
-	let count = 0;
-	for ( const [id, record] of Object.entries( catalog ) ) {
-		if ( record.stages.some( s => defined( s.script ).kind === "mover" ) ) {
-			const f = fixture( +id ), rows = f.step( 30 );
-			assert.equal( rows.length, 1 );
-			assert.equal( rows[0].pose.y, 21 );
-			assert.equal( rows[0].attachment, undefined );
-			assert.equal( rows[0].clip, "state-0" );
-			assert.equal( f.effects.error(), null );
-			f.effects.dispose();
-			count++;
+test(
+	"all 17 SCT_MOVER rows publish required native clips and keep a managed hawk past clip duration",
+	NATIVE_ONLY,
+	() => {
+		let count = 0;
+		for ( const [id, record] of Object.entries( catalog ) ) {
+			if ( record.stages.some( s => defined( s.script ).kind === "mover" ) ) {
+				const f = fixture( +id ), rows = f.step( 30 );
+				assert.equal( rows.length, 1 );
+				assert.equal( rows[0].pose.y, 21 );
+				assert.equal( rows[0].attachment, undefined );
+				assert.equal( rows[0].clip, "state-0" );
+				assert.equal( f.effects.error(), null );
+				f.effects.dispose();
+				count++;
+			}
+		}
+		assert.equal( count, 17 );
+		assert.throws( () => effectScript( [ "SCT_MOVER", "1" ] ) );
+		for ( const path of [ "res/npc/animal/blackhawk.bsr", "res/npc/animal/lighthawk.bsr" ] ) {
+			const states = manifest.models[path].states;
+			assert.deepEqual( Object.keys( states ), [ "0", "2", "7" ] );
+			assert.equal( states[2].durationMs, 933 );
+			assert.equal( states[2].loop, false );
+			assert.equal( states[2].trackEvents[0].cursorMs, 342 );
 		}
 	}
-	assert.equal( count, 17 );
-	assert.throws( () => effectScript( [ "SCT_MOVER", "1" ] ) );
-	for ( const path of [ "res/npc/animal/blackhawk.bsr", "res/npc/animal/lighthawk.bsr" ] ) {
-		const states = manifest.models[path].states;
-		assert.deepEqual( Object.keys( states ), [ "0", "2", "7" ] );
-		assert.equal( states[2].durationMs, 933 );
-		assert.equal( states[2].loop, false );
-		assert.equal( states[2].trackEvents[0].cursorMs, 342 );
-	}
-});
+);
 test("hawk command travels, hits on authored callback exactly once, holds and returns; normal hit resource is used for packed fatal damage", () => {
 	const f = fixture();
 	f.command();

@@ -1,0 +1,92 @@
+/*
+===========================================================================
+
+portal_alexandria_test.go - the portal catalogue with SRO_ALEXANDRIA off and on
+
+Port-only, not native. Off, an Alexandria variant's catalogue equals the
+native one exactly; on, its gate, building and both links are registered.
+
+===========================================================================
+*/
+package action
+
+import (
+	"path/filepath"
+	"reflect"
+	"strconv"
+	"testing"
+
+	"opensro.online/server/internal/game/enterworld"
+	"opensro.online/server/internal/game/world/alexandria"
+	"opensro.online/server/internal/testsupport/alexandriatest"
+	"opensro.online/server/internal/testsupport/licensed"
+)
+
+/*
+================
+mustPortalCatalog
+================
+*/
+func mustPortalCatalog(t *testing.T, dir string) *portalCatalog {
+	t.Helper()
+	catalog, err := loadPortalCatalog(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return catalog
+}
+
+/*
+================
+TestAlexandriaPortalCatalogFollowsTheFlag
+================
+*/
+func TestAlexandriaPortalCatalogFollowsTheFlag(t *testing.T) {
+	licensed.RequireGameData(t)
+	t.Setenv(alexandria.EnvAlexandria, "")
+	native := mustPortalCatalog(t, licensed.RetailTextdataDir(t))
+	// The placement row does not matter here; any native npcpos ref will do.
+	variant := alexandriatest.Variant(t, firstNpcPosRef(t))
+
+	for _, value := range []string{"", "off"} {
+		t.Setenv(alexandria.EnvAlexandria, value)
+		if got := mustPortalCatalog(t, variant.Dir); !reflect.DeepEqual(got, native) {
+			t.Fatalf("SRO_ALEXANDRIA=%q: the catalogue differs from the native one", value)
+		}
+	}
+
+	t.Setenv(alexandria.EnvAlexandria, "on")
+	on := mustPortalCatalog(t, variant.Dir)
+	linked, err := strconv.ParseUint(variant.LinkedTeleport, 10, 32)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gate, other := uint32(alexandriatest.TeleportID), uint32(linked)
+	if destination, ok := on.destinations[gate]; !ok || destination.code != alexandriatest.TeleportCode {
+		t.Fatalf("on: gate %d = %+v (present %v)", gate, destination, ok)
+	}
+	if on.buildings[alexandriatest.BuildingCode] != alexandriatest.BuildingRef || on.sources[alexandriatest.BuildingRef] != gate {
+		t.Fatalf("on: building %s not registered", alexandriatest.BuildingCode)
+	}
+	_, out := on.links[[2]uint32{gate, other}]
+	_, back := on.links[[2]uint32{other, gate}]
+	if !out || !back || len(on.links) != len(native.links)+2 {
+		t.Fatalf("on: links out %v back %v, %d links for the native %d", out, back, len(on.links), len(native.links))
+	}
+}
+
+/*
+================
+firstNpcPosRef
+================
+*/
+func firstNpcPosRef(t *testing.T) string {
+	t.Helper()
+	for _, row := range enterworld.ReadTextdataFile(filepath.Join(licensed.RetailTextdataDir(t), "npcpos.txt")) {
+		if len(row) >= 5 {
+			return row[0]
+		}
+	}
+	t.Fatal("npcpos has no rows")
+	return ""
+}

@@ -18,7 +18,7 @@ import { spawnSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
 import ts from "typescript";
 import { build } from "esbuild";
-import { itemSoundSource } from "./generate-item-sounds.mjs";
+import { itemSoundCatalogCurrent } from "./generate-item-sounds.mjs";
 import { gameRoot } from "../../../scripts/build/world/paths.mjs";
 export const root = path.resolve( import.meta.dirname, ".." );
 const hash = b => createHash( "sha256" ).update( b ).digest( "hex" );
@@ -175,8 +175,10 @@ export async function audit(
 		issues.push( { kind: "native-selector-evidence-stale" } );
 	}
 	if (
-		sourceRead( path.join( root, "src/engine/foundation/audio/item-sound-catalog.ts" ) ) !==
-			itemSoundSource( catalogBytes )
+		!itemSoundCatalogCurrent(
+			sourceRead( path.join( root, "src/engine/foundation/audio/item-sound-catalog.ts" ) ),
+			catalogBytes
+		)
 	) issues.push( { kind: "item-catalog-drift" } );
 	const animationCues = new Set(), animationOccurrences = [];
 	for ( const [model, clips] of Object.entries( animation.models ) ) {

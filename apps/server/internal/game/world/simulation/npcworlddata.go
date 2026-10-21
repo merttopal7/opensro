@@ -18,6 +18,7 @@ import (
 	"unicode/utf16"
 
 	"opensro.online/server/internal/domain"
+	"opensro.online/server/internal/game/world/alexandria"
 )
 
 const (
@@ -67,6 +68,14 @@ func LoadNpcWorldRoster(textdataDir string) []NpcDef {
 	if len(refs) == 0 {
 		return nil
 	}
+	// Port-only, not native: Alexandria's placements are appended npcpos rows
+	// in its own regions, so skipping them keeps every native NPC identity.
+	// A malformed overlay loads no roster; the boot gate (alexandria.Check)
+	// refuses that shard first.
+	hidden, err := alexandria.Hidden(textdataDir)
+	if err != nil {
+		return nil
+	}
 	fortresses := loadSiegeFortressIDs(textdataDir)
 	storeGroupsByNpc := loadNpcStoreGroupIndex(textdataDir, refs)
 	fixtureByCode := make(map[string]NpcDef)
@@ -97,7 +106,7 @@ func LoadNpcWorldRoster(textdataDir string) []NpcDef {
 		x, okX := npcFloat(cols[2])
 		y, okY := npcFloat(cols[3])
 		z, okZ := npcFloat(cols[4])
-		if !ok || !okX || !okY || !okZ {
+		if !ok || !okX || !okY || !okZ || hidden.HidesRegion(region) {
 			continue
 		}
 		index := len(roster)
@@ -355,6 +364,10 @@ func AppendTeleportGates(dir string, roster []NpcDef) ([]NpcDef, error) {
 		}
 	}
 	fortresses := loadSiegeFortressIDs(dir)
+	hidden, err := alexandria.Hidden(dir)
+	if err != nil {
+		return nil, err
+	}
 	rows := readNpcTabbed(filepath.Join(dir, "teleportbuilding.txt"))
 	if len(rows) == 0 {
 		return nil, fmt.Errorf("missing teleportbuilding table")
@@ -366,6 +379,9 @@ func AppendTeleportGates(dir string, roster []NpcDef) ([]NpcDef, error) {
 		}
 		if len(c) != 58 {
 			return nil, fmt.Errorf("teleportbuilding row %d shape", index+1)
+		}
+		if hidden.HidesBuilding(c[2]) {
+			continue
 		}
 		ref, ok := npcUint32(c[1])
 		region, okRegion := npcRegion(c[41])

@@ -18,7 +18,16 @@ import { avatarToGlb } from "../../../../scripts/build/char/exportGlb.mjs";
 const { worldObjectMaterial } = await import(
 	sourceFileUrl( "src/engine/foundation/rendering/world-material.ts" ).href
 );
+const { copyMaterial } = await import( sourceFileUrl( "src/engine/foundation/rendering/geometry.ts" ).href );
 const colors = { diffuse: [ .5, .6, .7, 1 ], ambient: [ .1, .2, .3, 1 ] };
+test("untextured published BMT materials pass renderer admission with their authored color", () => {
+	for ( const texturePublicPath of [ null, undefined ] ) {
+		const material = copyMaterial( worldObjectMaterial( { flags: 64, colors, texturePublicPath } ) );
+		assert.equal( material.texture, undefined );
+		assert.deepEqual( material.color, colors.diffuse );
+		assert.equal( material.blend, false );
+	}
+});
 test("native BMT material branches keep cutout, opaque, culling and no-light distinct", () => {
 	for (
 		const [flags, cutoff, sided, unlit] of [

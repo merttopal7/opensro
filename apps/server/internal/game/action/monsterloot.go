@@ -571,6 +571,10 @@ func (rt *Runtime) planMonsterKillLoot(
 	for _, family := range progression.DropMixFamilies {
 		widest = max(widest, familyRate(family))
 	}
+	// Port-only, not native: a Pharaoh Tomb elite or unique rolls equipment
+	// gearRate times as often (SRO_PHARAOH_TOMB_GEAR_RATE); 1 everywhere else.
+	gearRate := rt.pharaohGearRate(monster)
+	widest = max(widest, familyRate("equipment")*gearRate)
 	// Gold keeps its native heap count: the beta gold rate already scales
 	// each heap, and a heap per scaled pass would only litter the ground.
 	nativePasses := passes
@@ -596,7 +600,7 @@ func (rt *Runtime) planMonsterKillLoot(
 		if len(prepared) >= capacity {
 			break
 		}
-		if pass < nativePasses*familyRate("equipment") {
+		if pass < nativePasses*familyRate("equipment")*gearRate {
 			if equipment, ok := rt.prepareEquipmentDrop(monster, at, snapshot.Name, now); ok {
 				prepared = append(prepared, equipment)
 			}
@@ -639,6 +643,14 @@ func (rt *Runtime) planMonsterKillLoot(
 		planned.OwnerJID = ownerJID
 		planned = rt.scatterMonsterDrop(planned, at, monster.Rarity())
 		admitted = append(admitted, planned)
+	}
+	// Port-only: derive pet loot from actual admitted equipment, preserving
+	// native monster tables, degrees, ranks, beta rates, capacity and level gaps.
+	for _, parent := range admitted {
+		if gear, ok := rt.preparePetGearDrop(snapshot, parent, at, now); ok {
+			gear.OwnerJID = ownerJID
+			admitted = append(admitted, rt.scatterMonsterDrop(gear, at, monster.Rarity()))
+		}
 	}
 
 	// Port-only, not native (owner 2026-10-20): with SRO_UNIQUE_POP_TICKET

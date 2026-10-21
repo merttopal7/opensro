@@ -64,15 +64,15 @@ One row per level up to the mastery cap (mastery prices run past the
 character cap), from the level table.
 ================
 */
-func BuildLevels(header Header, levels enterworld.LevelDataSource, betaMastery int64) LevelsFile {
-	file := LevelsFile{Header: header, LevelCap: progression.LevelCap, MasteryLevelCap: progression.MasteryLevelCap,
+func BuildLevels(header Header, levels enterworld.LevelDataSource, betaMastery, levelCap int64) LevelsFile {
+	file := LevelsFile{Header: header, LevelCap: levelCap, MasteryLevelCap: progression.MasteryLevelCap,
 		MasteryTotal: MasteryTotal{Chinese: progression.TotalMasteryCapChina,
 			EuropeanPerLevel: progression.TotalMasteryEuropePerLevel,
 			EuropeanCeiling:  progression.TotalMasteryCapEuropeCeiling, Beta: betaMastery},
 		Levels: []LevelRow{}}
 	for level := int64(1); level <= progression.MasteryLevelCap; level++ {
 		row := LevelRow{Level: level}
-		if exp, ok := levels.ExpRequired(level); ok && level < progression.LevelCap {
+		if exp, ok := levels.ExpRequired(level); ok && level < levelCap {
 			row.Exp = exp
 		}
 		if sp, ok := progression.MasteryLevelUpCost(levels, level); ok {

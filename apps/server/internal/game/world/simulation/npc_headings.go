@@ -51,6 +51,9 @@ func npcPlacementHeading(code string, region uint16, x, y, z float64) (uint16, b
 	if heading, found := recoveredNPCHeadings[key]; found {
 		return heading, true
 	}
-	heading, found := supplementalNPCHeadings[key]
+	if heading, found := supplementalNPCHeadings[key]; found {
+		return heading, true
+	}
+	heading, found := alexandriaNPCHeadings[key]
 	return heading, found
 }

@@ -15,6 +15,7 @@ import { pathToFileURL as sourceFileUrl } from "node:url";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { NATIVE_ONLY } from "../helpers/expanded-build.mjs";
 async function load( source ) {
 	return import( sourceFileUrl( source ).href );
 }
@@ -41,7 +42,7 @@ test("retail signed rotation selects weapon fallback; positive and axis-band val
 	assert.throws( () => effectScript( [ "SCT_RUT", "bad" ] ), /parameter/ );
 	assert.deepEqual( effectScript( [ "SCT_ARROW" ] ), { kind: "arrow" } );
 });
-test("published stage decoding retains lifecycle controls and negative fade sentinels", () => {
+test( "published stage decoding retains lifecycle controls and negative fade sentinels", NATIVE_ONLY, () => {
 	const bytes = readFileSync( CLIENT_PUBLIC_ROOT + "/assets/skill/effectRecords.json" ),
 		raw = JSON.parse( bytes ),
 		decoded = createEffectDecoder().decode( bytes );
@@ -64,7 +65,7 @@ test("published stage decoding retains lifecycle controls and negative fade sent
 	}
 	assert.ok( negative > 0 );
 	assert.equal( kills, 1024 );
-});
+} );
 
 test("real sword stage waits for native anchor metadata, renders at the target anchor, and reports other script branches explicitly", () => {
 	const catalog = createEffectDecoder().decode(

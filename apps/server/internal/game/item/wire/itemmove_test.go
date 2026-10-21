@@ -346,3 +346,65 @@ func TestItemMoveRequestSubMoveCountIsOptional(t *testing.T) {
 		t.Fatalf("sub-moves = %+v, want none", got.SubMoves)
 	}
 }
+
+/*
+================
+TestGoldGroupItemBodyCarriesU32Quantity
+
+The v1.150 client reads a u32 amount for the gold-heap group (TID3 5) and a
+u16 stack count for every other ETC group (CSOItem 78C830). An SD token
+(TID 3/3/5/1) belongs to that group, so a u16 body ended the session on pickup
+with "Truncated inventory item".
+================
+*/
+func TestGoldGroupItemBodyCarriesU32Quantity(t *testing.T) {
+	const sdToken = 0x0c | 0x60 | 0x280 | 0x800
+	body := ItemBody{RefObjID: 42864, TypeFlags: sdToken, Quantity: 5}
+	got := body.Encode()
+	want := []byte{
+		0x70, 0xA7, 0x00, 0x00, // refObjId 42864
+		5, 0, 0, 0, // u32 amount
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("body = % X, want % X", got, want)
+	}
+	if len(got) != body.EncodedSize() {
+		t.Fatalf("EncodedSize = %d, body is %d bytes", body.EncodedSize(), len(got))
+	}
+	back, err := readItemBody(NewReader(got), sdToken)
+	if err != nil || back.Quantity != 5 || back.RefObjID != 42864 {
+		t.Fatalf("round trip = %+v, %v", back, err)
+	}
+}
+
+/*
+================
+TestOtherEtcGroupsKeepU16Quantity
+================
+*/
+func TestOtherEtcGroupsKeepU16Quantity(t *testing.T) {
+	const potion = 0x0c | 0x60 | 0x180 // TID 3/3/3: not the gold group
+	got := ItemBody{RefObjID: 1, TypeFlags: potion, Quantity: 5}.Encode()
+	if want := []byte{1, 0, 0, 0, 5, 0}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("body = % X, want % X", got, want)
+	}
+}
+
+/*
+================
+TestGoldHeapExcludesShopTokens
+
+Group 0x280 is one wire width but two meanings: gold heaps (TID 3.3.5.0)
+and the later shop tokens (TID 3.3.5.1), which v1.188's CGItem_IsGold
+(483159..483163) excludes by TID4.
+================
+*/
+func TestGoldHeapExcludesShopTokens(t *testing.T) {
+	const gold, sdToken = 0x0c | 0x60 | 0x280, 0x0c | 0x60 | 0x280 | 0x800
+	if !IsGoldBand(gold) || !IsGoldBand(sdToken) {
+		t.Fatal("both rows carry the group's u32 amount")
+	}
+	if !IsGoldHeap(gold) || IsGoldHeap(sdToken) {
+		t.Fatalf("gold heap: gold %v, token %v; want true, false", IsGoldHeap(gold), IsGoldHeap(sdToken))
+	}
+}

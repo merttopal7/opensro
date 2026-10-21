@@ -14,7 +14,14 @@ import { effectRecordAlias, resolveEffectRecordAliases } from "@/engine/foundati
 import type { AssetOwner } from "@/engine/contracts/assets";
 import type { GameplayState } from "@/engine/contracts/gameplay";
 import type { EntityState } from "@/engine/contracts/world";
-import { skillSoundRoots } from "@/engine/foundation/animation/sound-selectors";
+import {
+	skillSoundRoots,
+	PET_BOND_TRANSFER_SOUND,
+	PET_BOND_REVIVE_SOUND,
+	PET_ROAR_SOUND,
+	PET_SHIELD_SOUND,
+	PET_SHIELD_BURST_SOUND
+} from "@/engine/foundation/animation/sound-selectors";
 
 /*
 ================
@@ -22,7 +29,7 @@ SoundScene
 Only sound dependency identities cross into this owner.
 ================
 */
-export type SoundScene = Pick<GameplayState, "localGid" | "skills" | "casts" | "attachedEffects">;
+export type SoundScene = Pick<GameplayState, "localGid" | "skills" | "casts" | "attachedEffects" | "petTraining">;
 /*
 ================
 SoundEntity
@@ -102,12 +109,21 @@ export function createSoundPreparation( assets: AssetOwner, origin: string ) {
 	// before any set is built, equal members before any path is chosen.
 	const selection: {
 		entities: readonly SoundEntity[] | null;
+		petTraining: SoundScene["petTraining"];
 		skills: SoundScene["skills"] | undefined;
 		casts: SoundScene["casts"] | undefined;
 		attachedEffects: SoundScene["attachedEffects"] | undefined;
 		ids: Set<number> | null;
 		refs: Set<number> | null;
-	} = { entities: null, skills: undefined, casts: undefined, attachedEffects: undefined, ids: null, refs: null };
+	} = {
+		petTraining: undefined,
+		entities: null,
+		skills: undefined,
+		casts: undefined,
+		attachedEffects: undefined,
+		ids: null,
+		refs: null
+	};
 	let paths: readonly string[] = [];
 	let active = false;
 
@@ -195,9 +211,12 @@ export function createSoundPreparation( assets: AssetOwner, origin: string ) {
 	*/
 	function select( gameplay: SoundScene, entities: readonly SoundEntity[] ) {
 		if (
-			selection.ids && selection.entities === entities && selection.skills === gameplay.skills &&
+			selection.ids && selection.petTraining === gameplay.petTraining && selection.entities === entities &&
+			selection.skills === gameplay.skills &&
 			selection.casts === gameplay.casts && selection.attachedEffects === gameplay.attachedEffects
 		) return;
+		const expansionChanged = selection.petTraining !== gameplay.petTraining;
+		selection.petTraining = gameplay.petTraining;
 		selection.entities = entities;
 		selection.skills = gameplay.skills;
 		selection.casts = gameplay.casts;
@@ -209,7 +228,10 @@ export function createSoundPreparation( assets: AssetOwner, origin: string ) {
 		for ( const entity of entities ) {
 			if ( !entity.groundItem ) refs.add( entity.transformSkin?.refObjId ?? entity.refObjId );
 		}
-		if ( selection.ids && sameMembers( selection.ids, ids ) && sameMembers( selection.refs!, refs ) ) return;
+		if (
+			!expansionChanged && selection.ids && sameMembers( selection.ids, ids ) &&
+			sameMembers( selection.refs!, refs )
+		) return;
 		selection.ids = ids;
 		selection.refs = refs;
 		const wantedProfiles = new Set<string>();
@@ -222,6 +244,17 @@ export function createSoundPreparation( assets: AssetOwner, origin: string ) {
 		const groups = new Set<string>( [ "-" ] );
 		for ( const id of ids ) for ( const name of skills?.get( id ) ?? [] ) groups.add( name );
 		const wanted = new Set<string>();
+		if ( gameplay.petTraining && (wantedProfiles.has( "COS_P_BEAR" ) || wantedProfiles.has( "COS_P_BEAR2" )) ) {
+			for (
+				const path of [
+					PET_ROAR_SOUND,
+					PET_SHIELD_SOUND,
+					PET_SHIELD_BURST_SOUND,
+					PET_BOND_TRANSFER_SOUND,
+					PET_BOND_REVIVE_SOUND
+				]
+			) wanted.add( path );
+		}
 		for ( const row of rules ) {
 			if ( !row.publicPath ) continue;
 			if ( row.object === "PLAYER" ? groups.has( row.skillId ?? "-" ) : wantedProfiles.has( row.object ) ) {

@@ -16,6 +16,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { defined } from "../helpers/defined.mjs";
+import { NATIVE_ONLY } from "../helpers/expanded-build.mjs";
 async function load( path ) {
 	return import( sourceFileUrl( "src/engine/" + path ).href );
 }
@@ -55,24 +56,28 @@ test("production fortress packets latch music before end flags and after start f
 	assert.equal( g.take().musicMode, 0 );
 	g.dispose();
 });
-test("real profiles retain all city/field tracks and MP3 clocks are readable without resampling", async () => {
-	const profiles = decodeAmbientProfiles(
-		JSON.parse( await readFile( CLIENT_PUBLIC_ROOT + "/assets/audio/effectenvsnd.json", "utf8" ) )
-	);
-	assert.equal( profiles.length, 27 );
-	assert.ok( profiles.every( p => p.music ) );
-	const paths = new Set( [
-		...profiles.map( p => p.music ),
-		...[ "event_carol_01", "event_carol_02", "event_carol_03", "event_carol_04", "shiningstar", "fortress_war" ]
-			.map( n => "/assets/audio/music/" + n + ".mp3" )
-	] );
-	for ( const path of paths ) {
-		const bytes = await readFile( CLIENT_PUBLIC_ROOT + path );
-		assert.equal( musicSampleRate( bytes ), 44100, path );
+test(
+	"real profiles retain all city/field tracks and MP3 clocks are readable without resampling",
+	NATIVE_ONLY,
+	async () => {
+		const profiles = decodeAmbientProfiles(
+			JSON.parse( await readFile( CLIENT_PUBLIC_ROOT + "/assets/audio/effectenvsnd.json", "utf8" ) )
+		);
+		assert.equal( profiles.length, 27 );
+		assert.ok( profiles.every( p => p.music ) );
+		const paths = new Set( [
+			...profiles.map( p => p.music ),
+			...[ "event_carol_01", "event_carol_02", "event_carol_03", "event_carol_04", "shiningstar", "fortress_war" ]
+				.map( n => "/assets/audio/music/" + n + ".mp3" )
+		] );
+		for ( const path of paths ) {
+			const bytes = await readFile( CLIENT_PUBLIC_ROOT + path );
+			assert.equal( musicSampleRate( bytes ), 44100, path );
+		}
+		assert.equal( musicSampleRate( Uint8Array.of( 255, 251, 148, 0 ) ), 48000 );
+		assert.throws( () => musicSampleRate( new Uint8Array( 4 ) ) );
 	}
-	assert.equal( musicSampleRate( Uint8Array.of( 255, 251, 148, 0 ) ), 48000 );
-	assert.throws( () => musicSampleRate( new Uint8Array( 4 ) ) );
-});
+);
 
 test("fortress music rejects zero and unresolved identifiers, and only consumes bit zero", () => {
 	const state = {

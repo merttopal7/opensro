@@ -24,7 +24,10 @@ const { experienceReadout, minimapCoordinates, minimapRotation, skillPointReadou
 );
 const { movementHeading } = await load( "foundation/gameplay/native-movement" );
 const { feedbackLevels } = await load( "foundation/gameplay/feedback-levels" );
-const { worldMapQuads, worldMapPageAt } = await load( "foundation/ui/world-map" );
+const { worldMapQuads, worldMapPageAt, worldMapPages, decodeWorldMapLayout, nativeLayout, worldMapImagePaths } =
+	await load(
+		"foundation/ui/world-map"
+	);
 const { fortressNotice } = await load( "foundation/gameplay/system-notices" );
 const { createFeedback } = await load( "runtime/simulation/worker/session/world/gameplay/feedback/feedback" );
 
@@ -72,6 +75,98 @@ test("skill remainder follows unsigned native arithmetic; malformed packets do n
 	p.writeInt32LE( -16, 8 );
 	assert.equal( owner.receive( 0x30d2, p, 1 ).skillExperience, 0xffffffff % 400 );
 });
+const MAPINFO_NATIVE_ROW0 = [
+	"0",
+	"0",
+	"world",
+	"interface/worldmap/map/map_worldmap.ddj",
+	"128",
+	"128",
+	"128",
+	"128",
+	"3584",
+	"1024",
+	"66",
+	"113",
+	"177",
+	"82",
+	"0",
+	"192",
+	"192",
+	"0",
+	"xxx"
+];
+const MAPINFO_ALEXANDRIA = [
+	"12",
+	"1",
+	"alex",
+	"interface/worldmap/map/map_alex.ddj",
+	"1024",
+	"1024",
+	"878",
+	"1024",
+	"878",
+	"1024",
+	"46",
+	"96",
+	"51",
+	"89",
+	"0",
+	"0",
+	"192",
+	"0",
+	"xxx"
+];
+
+test("map pages and the overview box come from the published mapinfo rows", () => {
+	const inCity = { regionId: 90 * 256 + 48, x: 960, y: 0, z: 960, angle: 0 };
+	// No published rows, or none beyond the native ones: the native five pages and 28 x 8 overview.
+	for ( const raw of [ null, {}, { rows: [] }, { rows: [ MAPINFO_NATIVE_ROW0 ] } ] ) {
+		const layout = decodeWorldMapLayout( raw );
+		assert.deepEqual( worldMapPages( layout ).map( page => page.id ), [ 1, 2, 3, 4, 5 ] );
+		assert.equal( worldMapPageAt( inCity, layout ), 0 );
+		assert.equal( worldMapImagePaths( [], layout ).filter( path => path.includes( "map_world_" ) ).length, 28 * 8 );
+	}
+	// A published town page appears; a fortress page (id 1001) does not.
+	const fortress = [
+		"1001",
+		"1",
+		"fort",
+		"interface/worldmap/map/map_fort_jangan.ddj",
+		...MAPINFO_ALEXANDRIA.slice( 4 )
+	];
+	const layout = decodeWorldMapLayout( { rows: [ MAPINFO_NATIVE_ROW0, MAPINFO_ALEXANDRIA, fortress ] } );
+	assert.deepEqual( worldMapPages( layout ).map( page => page.id ), [ 1, 2, 3, 4, 5, 12 ] );
+	assert.equal( worldMapPageAt( inCity, layout ), 12 );
+	// A native town keeps its page.
+	assert.equal( worldMapPageAt( { regionId: 105 * 256 + 79, x: 1000, y: 0, z: 1000, angle: 0 }, layout ), 5 );
+	const quads = worldMapQuads( inCity, 12, [ 100, 100, 256, 256 ], [ 0, 0 ], inCity, layout );
+	assert.ok( quads[0].uv[2] <= 1 && quads[0].uv[3] <= 1 );
+	// A layout is data the caller passes: decoding one leaves the native default untouched.
+	assert.deepEqual( worldMapPages().map( page => page.id ), [ 1, 2, 3, 4, 5 ] );
+	assert.equal( worldMapPageAt( inCity ), 0 );
+	assert.equal( worldMapPageAt( inCity, nativeLayout() ), 0 );
+});
+
+test("a wider overview box adds the tile columns and rows it names", () => {
+	const widened = [ ...MAPINFO_NATIVE_ROW0 ];
+	widened[10] = "46";
+	widened[13] = "70";
+	const tiles = worldMapImagePaths( [], decodeWorldMapLayout( { rows: [ widened ] } ) ).filter( path =>
+		path.includes( "map_world_" )
+	);
+	assert.equal( tiles.length, 33 * 11 );
+	assert.ok( tiles.some( path => path.endsWith( "map_world_46x113.png" ) ) );
+	assert.ok( tiles.some( path => path.endsWith( "map_world_174x73.png" ) ) );
+	// A box that is not a whole number of tiles is ignored.
+	const ragged = [ ...MAPINFO_NATIVE_ROW0 ];
+	ragged[10] = "47";
+	const kept = worldMapImagePaths( [], decodeWorldMapLayout( { rows: [ ragged ] } ) );
+	assert.equal( kept.filter( path => path.includes( "map_world_" ) ).length, 28 * 8 );
+	// The native default is unchanged by either.
+	assert.equal( worldMapImagePaths().filter( path => path.includes( "map_world_" ) ).length, 28 * 8 );
+});
+
 test("town maps stay inside published texture UVs and manual center survives player movement", () => {
 	const pose = { regionId: 105 * 256 + 79, x: 1000, y: 0, z: 1000, angle: 0 };
 	assert.equal( worldMapPageAt( pose ), 5 );

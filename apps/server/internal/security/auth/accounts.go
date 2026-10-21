@@ -101,10 +101,30 @@ type Accounts struct {
 	// starve logins of CPU.
 	hashing chan struct{}
 
+	// cost is the bcrypt cost of the hashes this store creates, and of its
+	// unknown-account dummy (AccountsOptions).
+	cost      int
+	dummyOnce sync.Once
+	dummy     []byte
+
 	revokeMu sync.RWMutex
 	onRevoke func(accountID string, epoch uint64)
 
 	closeOnce sync.Once
+}
+
+/*
+================
+AccountsOptions
+
+How OpenAccountsWith opens a store. The zero value is production's.
+================
+*/
+type AccountsOptions struct {
+	// BcryptCost is the cost of new hashes; zero is AccountBcryptCost.
+	// Tests pass bcrypt.MinCost so a login does not cost a production hash
+	// under the race detector; production never sets it.
+	BcryptCost int
 }
 
 const accountsSchema = `
@@ -155,6 +175,24 @@ catalog.go refuses them.
 ================
 */
 func OpenAccounts(path string) (*Accounts, error) {
+	return OpenAccountsWith(path, AccountsOptions{})
+}
+
+/*
+================
+OpenAccountsWith
+
+OpenAccounts with explicit options.
+================
+*/
+func OpenAccountsWith(path string, options AccountsOptions) (*Accounts, error) {
+	cost := options.BcryptCost
+	if cost == 0 {
+		cost = AccountBcryptCost
+	}
+	if cost < bcrypt.MinCost || cost > MaxBcryptCost {
+		return nil, fmt.Errorf("account bcrypt cost %d is outside %d..%d", cost, bcrypt.MinCost, MaxBcryptCost)
+	}
 	if strings.TrimSpace(path) == "" {
 		return nil, errors.New("account database path is empty")
 	}
@@ -236,6 +274,7 @@ func OpenAccounts(path string) (*Accounts, error) {
 	return &Accounts{
 		db:      db,
 		hashing: make(chan struct{}, max(2, runtime.NumCPU())),
+		cost:    cost,
 	}, nil
 }
 
@@ -281,6 +320,7 @@ func OpenAccountsPostgres(dsn string) (*Accounts, error) {
 	return &Accounts{
 		db:      db,
 		hashing: make(chan struct{}, max(2, runtime.NumCPU())),
+		cost:    AccountBcryptCost,
 	}, nil
 }
 
@@ -815,7 +855,7 @@ func (accounts *Accounts) Verify(ctx context.Context, accountID, password string
 	defer accounts.release()
 	hash, found := accounts.PasswordHash(accountID)
 	if !found {
-		hash = verifyDummyHash()
+		hash = accounts.dummyHash()
 	}
 	return found && bcrypt.CompareHashAndPassword(hash, []byte(password)) == nil, nil
 }
@@ -851,7 +891,7 @@ func (accounts *Accounts) SetPassword(ctx context.Context, accountID, password s
 ================
 UpgradePasswordHash
 
-Rehashes password at AccountBcryptCost only while the stored hash is still
+Rehashes password at the store's cost only while the stored hash is still
 verified, the one the caller checked password against. A password change
 that landed in between wins: the swap matches no row and reports false.
 ================
@@ -946,7 +986,18 @@ func (accounts *Accounts) hash(ctx context.Context, password string) ([]byte, er
 		return nil, err
 	}
 	defer accounts.release()
-	return bcrypt.GenerateFromPassword([]byte(password), AccountBcryptCost)
+	return bcrypt.GenerateFromPassword([]byte(password), accounts.cost)
+}
+
+/*
+================
+BcryptCost
+
+The cost of the hashes this store creates.
+================
+*/
+func (accounts *Accounts) BcryptCost() int {
+	return accounts.cost
 }
 
 /*
@@ -972,21 +1023,16 @@ func (accounts *Accounts) release() {
 	<-accounts.hashing
 }
 
-var (
-	dummyHashOnce sync.Once
-	dummyHash     []byte
-)
-
 /*
 ================
-verifyDummyHash
+dummyHash
 
 A hash at the store's cost that no password matches.
 ================
 */
-func verifyDummyHash() []byte {
-	dummyHashOnce.Do(func() {
-		dummyHash, _ = bcrypt.GenerateFromPassword([]byte("\x00unmatchable\x00"), AccountBcryptCost)
+func (accounts *Accounts) dummyHash() []byte {
+	accounts.dummyOnce.Do(func() {
+		accounts.dummy, _ = bcrypt.GenerateFromPassword([]byte("\x00unmatchable\x00"), accounts.cost)
 	})
-	return dummyHash
+	return accounts.dummy
 }

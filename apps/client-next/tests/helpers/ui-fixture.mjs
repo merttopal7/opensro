@@ -41,7 +41,9 @@ export function uiFixture(
 				const bytes = pending.get( id );
 				if ( bytes?.path && hold( bytes.path ) ) return null;
 				pending.delete( id );
-				return bytes?.image ?
+				return bytes?.absent ?
+					{ kind: "error", id, error: "absent", absent: true } :
+					bytes?.image ?
 					{ kind: "image", id, image: bytes.image } :
 					bytes ?
 					{
@@ -74,7 +76,9 @@ export function uiFixture(
 							}
 						} );
 					}
-				} catch {}
+				} catch {
+					if ( path.endsWith( ".json" ) ) pending.set( id, { absent: true } );
+				}
 				return id;
 			},
 			cancel: id => pending.delete( id )
@@ -168,7 +172,7 @@ export function uiFixture(
 			*/
 			step( state, now ) {
 				let result = checkedStep( state, now );
-				for ( let i = 0; i < 8 && pending.size; i++ ) result = checkedStep( state, now ) ?? result;
+				for ( let i = 0; i < 16 && pending.size; i++ ) result = checkedStep( state, now ) ?? result;
 				// The skill catalogue decodes in bounded steps after its bytes arrive.
 				for ( let i = 0; i < 64 && ui.stats().hudSettling; i++ ) result = checkedStep( state, now ) ?? result;
 				return result;

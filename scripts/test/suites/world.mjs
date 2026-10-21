@@ -7,6 +7,7 @@ export default {
       stripTypes: true,
       files: [
         "scripts/test/world/worldFormats.test.mjs",
+        "scripts/test/world/outdoorObjectIndex.test.mjs",
       ]
     }
   ]

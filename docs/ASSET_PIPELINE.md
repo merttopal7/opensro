@@ -89,6 +89,30 @@ reports packed files no current builder produced. Sizes, the delivery path
 in the browser, the ledger and data releases are described in
 [ASSET_DELIVERY.md](ASSET_DELIVERY.md).
 
+## Alexandria (port-only, not native)
+
+v1.150 has no Alexandria. `SRO_ALEXANDRIA=1 py -3 scripts/import_vsro_alexandria.py --vsro-root <VSRO client>`
+(or `SRO_VSRO_ROOT`) copies the city's 36 regions (map files, navmesh, the
+ground tiles they paint), the VSRO tile and object catalogs and the city's
+table rows into `extracted/Alexandria_extracted/`, with a manifest that
+reports where the VSRO catalogs conflict with the native ones. It never
+touches the v1.150 extraction.
+
+`SRO_ALEXANDRIA=1 py -3 scripts/build_alexandria_variant.py --variant-root <folder>`
+then makes a second game root: the native files hard-linked, plus the city's
+regions (6 conflicting tile ids remapped), merged tile and object catalogs, the
+VSRO building and effect files the native tree lacks and the city's navmesh.
+Build it with `SRO_GAME_ROOT=<folder> SRO_GENERATED_ROOT=<folder>/.generated
+pnpm assets build full`. It also adds the gates, region names, music, the
+map (a local page for the city, the world overview widened to the VSRO box,
+minimap tiles) and the 110 regions of the city and the Delta field. The M
+window reads its pages and the overview box from the published
+`worldmap-mapinfo.json`, so a build that ships them shows them and a plain
+v1.150 build is unchanged. NPCs, monsters and the server flag wiring are not
+done yet. After the region set changes, rebuild the outdoor world with
+`pnpm assets build world-outdoor -- --force`: the shared object index is kept
+when it exists.
+
 ## Packs
 
 Small assets are delivered in binary packs (about 50 MiB each) instead of

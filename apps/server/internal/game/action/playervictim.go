@@ -136,6 +136,9 @@ func (rt *Runtime) planPlayerStrike(s *playerStrike,
 		s.quotaMembers = rt.planQuotaMembers(s.division, s.victim, s.now)
 	}
 	s.owner = rt.newPlayerAbnormalOwner(s.division, s.victim, s.now)
+	if !s.linkedShare && s.killer.monster != nil {
+		s.owner.bond = rt.planPetBond(s.division, s.victim, s.now)
+	}
 	s.killer = rt.prepareDeathKiller(s.division, s.victim, s.killer)
 	s.owner.sources = rt.capturePlayerAbnormalSources(s.division, s.victim, s.owner.block, s.records)
 	return true
@@ -163,6 +166,10 @@ func (rt *Runtime) strikePlayerInDoor(s playerStrike) playerStruck {
 		if !s.linkedShare && !formula.Slain {
 			formula = rt.shareLinkedDamageInDoor(s, formula, &out)
 		}
+		// Port-only absorption protects mana as well as HP on a fully warded hit.
+		if !formula.Slain && s.killer.monster != nil && rt.petShieldRecipientAllowed(c) {
+			formula.Damage = rt.absorbPetShield(s.division, enterworld.ObjectIDForCharacter(c), formula.Damage, s.now)
+		}
 		// 58F72F runs dgmp per impact after the wall split, whoever struck;
 		// a ck kill takes the whole HP and redirects nothing.
 		if redirect != 0 && !formula.Slain {
@@ -170,6 +177,9 @@ func (rt *Runtime) strikePlayerInDoor(s playerStrike) playerStruck {
 			formula, spent = combat.RedirectDamageToMP(formula, uint32(remainingMP), redirect)
 			remainingMP -= int64(spent)
 			out.mpSpent += spent
+		}
+		if !formula.Slain && s.owner != nil {
+			formula.Damage = sharePetBond(s.owner.bond, formula.Damage)
 		}
 		out.before = append(out.before, uint32(remaining))
 		debit := int64(vitals.HitDebit(uint32(remaining), formula.Damage))
@@ -229,7 +239,15 @@ func (rt *Runtime) strikePlayerInDoor(s playerStrike) playerStruck {
 	if out.fatal {
 		out.warCombat = rt.prepareGuildWarCombat(s.division, c, s.killer)
 		out.deathEffects, out.deathProgression = rt.settlePlayerDeathInDoor(s.division, c, s.killer, s.now)
+		// Death clears statuses, but the already absorbed bond cost still belongs to this hit.
+		owner := out.owner
 		out.owner = rt.clearPlayerAbnormalInDoor(s.division, c, s.now)
+		if owner != nil && owner.bond != nil {
+			if out.owner == nil {
+				out.owner = owner
+			}
+			out.owner.bond = owner.bond
+		}
 	} else {
 		out.battle = rt.enterBattleState(s.division, c, s.now)
 		rt.endJobActivation(s.division, c)

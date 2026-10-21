@@ -757,6 +757,89 @@ export function createEntities(
 		================
 		*/
 		receive( frame: WireFrame, now = 0 ) {
+			// Port-only Resolve state; exact, bounded packet independent of native animations.
+			if ( frame.opcode === 0x3fb5 ) {
+				const p = frame.payload;
+				if ( p.length !== 10 ) throw Error( "Invalid pet Resolve length" );
+				const v = new DataView( p.buffer, p.byteOffset, p.byteLength );
+				const gid = v.getUint32( 0, true ),
+					stacks = v.getUint8( 4 ),
+					tier = v.getUint8( 5 ),
+					duration = v.getUint32( 6, true );
+				if ( !gid || stacks > 10 || tier > 3 || (stacks > 0 && !tier) || duration > 15000 ) {
+					throw Error( "Invalid pet Resolve state" );
+				}
+				const entity = entities.get( gid );
+				if ( entity ) {
+					samplePose( { ...entity, petResolve: { stacks, tier, atMs: now, untilMs: now + duration } } );
+				}
+				return;
+			}
+			// Port-only Guardian's Bond cue; independent of emotes and native casts.
+			if ( frame.opcode === 0x3fb4 ) {
+				const p = frame.payload;
+				if ( p.length !== 9 ) throw Error( "Invalid pet bond pulse length" );
+				const v = new DataView( p.buffer, p.byteOffset, p.byteLength );
+				const gid = v.getUint32( 0, true ), bear = v.getUint32( 4, true ), kind = v.getUint8( 8 );
+				if ( !gid || !bear || (kind !== 1 && kind !== 2) ) throw Error( "Invalid pet bond pulse" );
+				const entity = entities.get( gid );
+				if ( entity ) {
+					samplePose( {
+						...entity,
+						petBondPulse: {
+							revision: (entity.petBondPulse?.revision ?? 0) + 1,
+							atMs: now,
+							bear,
+							kind
+						}
+					} );
+				}
+				return;
+			}
+			// Port-only retaliation cue; separate from emotes so it cannot interrupt a cast.
+			if ( frame.opcode === 0x3fb3 ) {
+				const p = frame.payload;
+				if ( p.length !== 4 ) throw Error( "Invalid pet counter pulse length" );
+				const gid = new DataView( p.buffer, p.byteOffset, p.byteLength ).getUint32( 0, true );
+				if ( !gid ) throw Error( "Invalid pet counter pulse recipient" );
+				const entity = entities.get( gid );
+				if ( entity ) {
+					samplePose( {
+						...entity,
+						petCounterPulse: { revision: (entity.petCounterPulse?.revision ?? 0) + 1, atMs: now }
+					} );
+				}
+				return;
+			}
+			// Port-only absorption is separate from native health and max-health packets.
+			if ( frame.opcode === 0x3fb2 ) {
+				const p = frame.payload;
+				if ( p.length !== 21 ) throw Error( "Invalid shield state length" );
+				const v = new DataView( p.buffer, p.byteOffset, p.byteLength );
+				const gid = v.getUint32( 0, true ),
+					amount = v.getUint32( 4, true ),
+					maxHp = v.getUint32( 8, true ),
+					duration = v.getUint32( 12, true );
+				if (
+					!gid || !maxHp || amount > Math.floor( maxHp * 1.5 ) || duration > 5000 || p[20]! > 1 ||
+					(p[20] && (amount || duration))
+				) throw Error( "Invalid shield state" );
+				const entity = entities.get( gid );
+				if ( entity ) {
+					samplePose( {
+						...entity,
+						shield: {
+							amount,
+							maxHp,
+							atMs: now,
+							untilMs: now + duration,
+							revision: (entity.shield?.revision ?? 0) + 1,
+							burst: p[20] === 1
+						}
+					} );
+				}
+				return;
+			}
 			receivedAt = now;
 			// Any frame but the dead monster's own drops ends its publication.
 			const followsDeath = dropSource;

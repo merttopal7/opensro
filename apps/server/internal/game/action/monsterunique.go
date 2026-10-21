@@ -198,6 +198,29 @@ func (rt *Runtime) rollUniqueStage(stage int, counts [uniqueStages]UniqueCount) 
 
 /*
 ================
+pharaohGearRate
+
+Port-only, not native. A Pharaoh Tomb elite (grade 6) or unique (grade 8)
+rolls its equipment this many times as often: the owner found the tomb
+bosses' gear too rare to test. The rate rides the monster's reference
+(SRO_PHARAOH_TOMB_GEAR_RATE, read when the tomb loads). Every other monster,
+and a tomb member of any other grade, keeps the native rule (1).
+================
+*/
+func (rt *Runtime) pharaohGearRate(mob monster.Instance) int {
+	rate := int(mob.Ref.PharaohGearRate)
+	if rate <= 1 {
+		return 1
+	}
+	switch mob.Rarity() {
+	case 6, 8:
+		return rate
+	}
+	return 1
+}
+
+/*
+================
 prepareUniqueDrops
 
 The native prepass may exceed the ordinary capacity, notably for Roc. That
@@ -214,6 +237,7 @@ func (rt *Runtime) prepareUniqueDrops(ctx uniqueDropContext) []grounditem.Item {
 	if !ok {
 		return nil
 	}
+	count *= rt.pharaohGearRate(ctx.mob)
 	var drops []grounditem.Item
 	for i := 0; i < count; i++ {
 		item, accepted, accessory := rt.prepareUniqueEquipment(ctx, true)

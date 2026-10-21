@@ -189,17 +189,37 @@ export function createPresentationState() {
 								at: hit.downAt,
 								recoveryMs
 							} );}
-					} else if ( entry.posture?.kind === "emote" && (moving || castByActor.has( entity.gid ) || hit) ) {
+					} else if (
+						entry.posture?.kind === "emote" &&
+						(moving || castByActor.has( entity.gid ) || hit)
+					) {
 						entry.posture = transitionPosture( entry.posture, { kind: "cancel" } );
 					}
 					if ( entity.emote && entry.emoteRevision !== entity.emote.revision ) {
-						const action = emoteRoute(
-							isPlayer,
-							entity.kind === "cos",
-							entity.tidWord ?? 0,
-							entity.emote.action
-						);
+						const roar = entity.kind === "cos" &&
+							/^COS_P_BEAR_/.test( resource.codename ) &&
+							entity.emote.action >= 16 && entity.emote.action <= 18 &&
+							resources.duration( resource.glb, "pet-roar" ) > 0;
+						const action = roar ?
+							null :
+							emoteRoute(
+								isPlayer,
+								entity.kind === "cos",
+								entity.tidWord ?? 0,
+								entity.emote.action
+							);
 						if (
+							roar && !moving && !castByActor.has( entity.gid ) &&
+							entry.posture?.kind !== "down" && entry.posture?.kind !== "recover"
+						) {
+							entry.posture = {
+								kind: "emote",
+								clip: "pet-roar",
+								started: simulationMs === undefined ?
+									seconds :
+									seconds + (entity.emote.atMs - simulationMs) / 1000
+							};
+						} else if (
 							action !== null && !moving && !castByActor.has( entity.gid ) &&
 							resource.clips.includes( `emote${action}` )
 						) {

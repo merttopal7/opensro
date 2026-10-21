@@ -323,7 +323,20 @@ Publish native material, skin and animation contracts with shared texture admiss
 
 export function avatarToGlb( avatar ) {
 	const g = createGltf();
-	const bones = avatar.skeleton.bones;
+	const hasUnboundVertices = avatar.parts.some( ( { mesh } ) =>
+		!mesh.rigid && mesh.boneWeights.some( ( weight, i ) => i % 2 === 0 && weight + mesh.boneWeights[i + 1] === 0 )
+	);
+	// A4EF0E skips 0xff influences; A4F170 then emits palette indices 0/0
+	// for an unbound vertex. Model-space identity is the inferred reserved
+	// palette entry, represented explicitly in glTF without changing a bone.
+	const unboundJoint = avatar.skeleton.bones.length;
+	const bones = hasUnboundVertices ?
+		[ ...avatar.skeleton.bones, {
+			name: "NativeUnbound",
+			parentIndex: -1,
+			local: { q: [ 0, 0, 0, 1 ], t: [ 0, 0, 0 ] }
+		} ] :
+		avatar.skeleton.bones;
 	const N = bones.length;
 	const inPlaceHorizontalRootMotionRoles = readInPlaceHorizontalRootMotionRoles( avatar );
 	const skeletonRootIndices = new Set(
@@ -403,13 +416,14 @@ export function avatarToGlb( avatar ) {
 				Number.isFinite( m.uvs[i * 2 + 1] ) ? m.uvs[i * 2 + 1] : 0
 			);
 			if ( !rigid ) {
+				const unbound = m.boneWeights[i * 2] + m.boneWeights[i * 2 + 1] === 0;
 				grp.joints.push(
-					part.localToGlobal[m.boneIndices[i * 2]],
-					part.localToGlobal[m.boneIndices[i * 2 + 1]],
+					unbound ? unboundJoint : part.localToGlobal[m.boneIndices[i * 2]],
+					unbound ? unboundJoint : part.localToGlobal[m.boneIndices[i * 2 + 1]],
 					0,
 					0
 				);
-				grp.weights.push( m.boneWeights[i * 2], m.boneWeights[i * 2 + 1], 0, 0 );
+				grp.weights.push( unbound ? 1 : m.boneWeights[i * 2], unbound ? 0 : m.boneWeights[i * 2 + 1], 0, 0 );
 			}
 		}
 		for ( let t = 0; t < m.triangleCount; t += 1 ) {
@@ -515,15 +529,18 @@ export function avatarToGlb( avatar ) {
 		if ( texInfo.pngPath && !fs.existsSync( texInfo.pngPath ) ) {
 			throw new Error( `${avatar.name}:${matName}: converted texture is missing at ${texInfo.pngPath}` );
 		}
-		if ( texInfo.pngPath ) {
-			let imageIndex = imageIndexBySourcePath.get( texInfo.pngPath );
+		if ( texInfo.pngPath || texInfo.pngBytes ) {
+			const imageKey = texInfo.pngPath ?? texInfo.pngBytes;
+			let imageIndex = imageIndexBySourcePath.get( imageKey );
 			if ( imageIndex === undefined ) {
-				const texture = readCharacterTexture( texInfo.texturePath, texInfo.pngPath );
+				const texture = texInfo.pngBytes ?
+					{ bytes: texInfo.pngBytes, mime: "image/png" } :
+					readCharacterTexture( texInfo.texturePath, texInfo.pngPath );
 				const imgView = g.addView( texture.bytes );
 				g.json.images = g.json.images ?? [];
 				g.json.images.push( { bufferView: imgView, mimeType: texture.mime } );
 				imageIndex = g.json.images.length - 1;
-				imageIndexBySourcePath.set( texInfo.pngPath, imageIndex );
+				imageIndexBySourcePath.set( imageKey, imageIndex );
 			}
 			g.json.samplers = g.json.samplers ?? [ { magFilter: 9729, minFilter: 9987, wrapS: 10497, wrapT: 10497 } ];
 			g.json.textures = g.json.textures ?? [];
@@ -590,8 +607,16 @@ export function avatarToGlb( avatar ) {
 
 	// One skinned mesh+node per group; the node/mesh NAME carries the slot label so the
 	// runtime can address slot meshes by name after glTF import.
-	g.json.skins.push( { inverseBindMatrices: aIbm, joints: jointNodeIndex, skeleton: jointNodeIndex[0] } );
-	g.json.scenes[0].nodes.push( jointNodeIndex[0] );
+	let skinRoot = jointNodeIndex[0];
+	if ( hasUnboundVertices ) {
+		skinRoot = g.json.nodes.length;
+		g.json.nodes.push( {
+			name: "NativeModelSpace",
+			children: [ jointNodeIndex[0], jointNodeIndex[unboundJoint] ]
+		} );
+	}
+	g.json.skins.push( { inverseBindMatrices: aIbm, joints: jointNodeIndex, skeleton: skinRoot } );
+	g.json.scenes[0].nodes.push( skinRoot );
 	for ( const mg of meshGroups ) {
 		const meshIndex = g.json.meshes.length;
 		g.json.meshes.push( { name: mg.name, primitives: [ mg.primitive ] } );

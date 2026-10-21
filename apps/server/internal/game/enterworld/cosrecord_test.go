@@ -38,3 +38,50 @@ func TestCOSPetRestorationIncludesBehaviorAndSummonSlot(t *testing.T) {
 		}
 	}
 }
+
+/*
+================
+tokenItemRefs
+================
+*/
+type tokenItemRefs map[string]*ItemRef
+
+func (refs tokenItemRefs) ItemRefByCodename(codename string) (*ItemRef, bool) {
+	ref, ok := refs[codename]
+	return ref, ok
+}
+
+func (refs tokenItemRefs) ItemRefByID(id uint32) (*ItemRef, bool) {
+	for _, ref := range refs {
+		if ref.RefObjID == id {
+			return ref, true
+		}
+	}
+	return nil, false
+}
+
+/*
+================
+TestCOSContainerHoldsShopTokensNotGoldHeaps
+
+A grab pet or transport bag holds the shop tokens that share the gold
+group (TID 3.3.5.1); a gold heap (3.3.5.0) never becomes a container item.
+================
+*/
+func TestCOSContainerHoldsShopTokensNotGoldHeaps(t *testing.T) {
+	refs := tokenItemRefs{
+		"ITEM_ETC_SD_TOKEN_02": {RefObjID: 42864, Codename: "ITEM_ETC_SD_TOKEN_02", TypeIDs: [4]int64{3, 3, 5, 1}},
+		"ITEM_ETC_GOLD_01":     {RefObjID: 1, Codename: "ITEM_ETC_GOLD_01", TypeIDs: [4]int64{3, 3, 5, 0}},
+	}
+	cos := &CharacterCOS{GID: 7, RefObjID: 102, Name: "pet", InventorySlot: 14}
+	ref := &CharacterRef{RefObjID: 102, TidWord: 3<<11 | 0x1c6}
+	for codename, admitted := range map[string]bool{"ITEM_ETC_SD_TOKEN_02": true, "ITEM_ETC_GOLD_01": false} {
+		item := refs[codename]
+		cos.Container = &domain.COSContainer{Capacity: 4, Rows: []domain.InventoryRow{
+			{Slot: 0, RefObjID: item.RefObjID, Codename: codename, TypeFlags: item.TypeFlags(), StackCount: 3},
+		}}
+		if _, err := BuildCOSRecord(cos, ref, refs); (err == nil) != admitted {
+			t.Fatalf("%s in a pet bag: err %v, want admitted %v", codename, err, admitted)
+		}
+	}
+}

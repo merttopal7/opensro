@@ -16,6 +16,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { defined } from "../helpers/defined.mjs";
+import { NATIVE_ONLY } from "../helpers/expanded-build.mjs";
 const { createCharacterEffects } = await import( "../../src/engine/runtime/characters/effects/effects.ts" );
 const { createPresentationRandom } = await import( "../../src/engine/runtime/random/random.ts" );
 const { createEffectDecoder } = await import( "../../src/engine/runtime/assets/worker/effects/effects.ts" );
@@ -121,60 +122,68 @@ function fixture( stages = [ stage ], record = {}, detail = 2 ) {
 		}
 	};
 }
-test("arrow catalog exposes the two retail resources and never uses the trail as a projectile fallback", () => {
-	let arrows = 0, weapons = 0;
-	for ( const [id, r] of Object.entries( catalog ) ) {
-		// A Basic_Original alias lends its original's record (917240).
-		if ( raw[id].remapOf !== undefined ) continue;
-		assert.deepEqual( r.arrowEffects, [ raw[id].arrowTrailEffectPath, raw[id].arrowForceEffectPath ] );
-		for ( const s of r.stages ) {
-			if ( s.scripts[0] === "SCT_ARROW" ) {
-				assert.equal( defined( s.script ).kind, "arrow" );
-				arrows++;
-			}
-			if ( s.resource === "weapon" ) weapons++;
-		}
-	}
-	assert.equal( arrows, 666 );
-	assert.equal( weapons, 26 );
-	const decoded = createEffectDecoder().decode(
-		new TextEncoder().encode(
-			JSON.stringify( {
-				1: {
-					arrowTrailEffectPath: "trail.efp",
-					authoredStages: [ {
-						actionType: "AT_MOV_1TAR",
-						startEvent: 1,
-						startOffset: [ 0, 0, 0 ],
-						startKeepRotation: true,
-						startAddHeight: false,
-						targetKeepRotation: true,
-						targetAddHeight: false
-					} ]
+test(
+	"arrow catalog exposes the two retail resources and never uses the trail as a projectile fallback",
+	NATIVE_ONLY,
+	() => {
+		let arrows = 0, weapons = 0;
+		for ( const [id, r] of Object.entries( catalog ) ) {
+			// A Basic_Original alias lends its original's record (917240).
+			if ( raw[id].remapOf !== undefined ) continue;
+			assert.deepEqual( r.arrowEffects, [ raw[id].arrowTrailEffectPath, raw[id].arrowForceEffectPath ] );
+			for ( const s of r.stages ) {
+				if ( s.scripts[0] === "SCT_ARROW" ) {
+					assert.equal( defined( s.script ).kind, "arrow" );
+					arrows++;
 				}
-			} )
-		)
-	);
-	assert.equal( decoded[1].stages[0].resource, null );
-});
-test("all 666 published arrow stages admit, including held arrows, splash and equipped weapon copies", () => {
-	let count = 0;
-	// Aliases share their original's record: count each record once.
-	for ( const record of new Set( Object.values( catalog ) ) ) {
-		for ( const s of record.stages ) {
-			if ( defined( s.script ).kind === "arrow" ) {
-				const f = fixture( [ { ...s, phase: "SHOT", startEvent: 1 } ], {
-					...record,
-					stages: [ { ...s, phase: "SHOT", startEvent: 1 } ]
-				} );
-				assert.equal( f.owner.error(), null, JSON.stringify( s ) );
-				f.owner.dispose();
-				count++;
+				if ( s.resource === "weapon" ) weapons++;
 			}
 		}
+		assert.equal( arrows, 666 );
+		assert.equal( weapons, 26 );
+		const decoded = createEffectDecoder().decode(
+			new TextEncoder().encode(
+				JSON.stringify( {
+					1: {
+						arrowTrailEffectPath: "trail.efp",
+						authoredStages: [ {
+							actionType: "AT_MOV_1TAR",
+							startEvent: 1,
+							startOffset: [ 0, 0, 0 ],
+							startKeepRotation: true,
+							startAddHeight: false,
+							targetKeepRotation: true,
+							targetAddHeight: false
+						} ]
+					}
+				} )
+			)
+		);
+		assert.equal( decoded[1].stages[0].resource, null );
 	}
-	assert.equal( count, 666 );
-});
+);
+test(
+	"all 666 published arrow stages admit, including held arrows, splash and equipped weapon copies",
+	NATIVE_ONLY,
+	() => {
+		let count = 0;
+		// Aliases share their original's record: count each record once.
+		for ( const record of new Set( Object.values( catalog ) ) ) {
+			for ( const s of record.stages ) {
+				if ( defined( s.script ).kind === "arrow" ) {
+					const f = fixture( [ { ...s, phase: "SHOT", startEvent: 1 } ], {
+						...record,
+						stages: [ { ...s, phase: "SHOT", startEvent: 1 } ]
+					} );
+					assert.equal( f.owner.error(), null, JSON.stringify( s ) );
+					f.owner.dispose();
+					count++;
+				}
+			}
+		}
+		assert.equal( count, 666 );
+	}
+);
 test("auxiliary creation order, detail gate and held-arrow fade match original helper execution", () => {
 	assert.equal( reference.binarySha256, "375e868234437e815af8ce9289ddea7ec9144430f4ea24e32988a6d6c9dd108a" );
 	for ( const sample of reference.cases ) {

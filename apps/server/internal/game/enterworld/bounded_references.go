@@ -44,7 +44,7 @@ func (t *TextdataSkills) UseBoundedCache(capacity int) error {
 	t.rows.archive = cache
 	t.rows.hot = nil
 	t.shared = nil
-	sharedSkillParses.release(t.sharedKey)
+	sharedSkillParses.Release(t.sharedKey)
 	return nil
 }
 func (t *TextdataSkills) Close() error {
@@ -81,6 +81,8 @@ func (t *TextdataItems) UseBoundedCache(capacity int) error {
 	t.idKeys = ids
 	t.byCodename = nil
 	t.byID = nil
+	// The record cache now holds the rows; stop pinning the shared parse.
+	sharedItemParses.Release(t.sharedKey)
 	return nil
 }
 func (t *TextdataItems) Close() error {

@@ -28,6 +28,7 @@ import (
 	"opensro.online/server/internal/game/action"
 	"opensro.online/server/internal/game/enterworld"
 	"opensro.online/server/internal/game/tunables"
+	"opensro.online/server/internal/game/world/alexandria"
 	"opensro.online/server/internal/game/world/simulation"
 	"opensro.online/server/internal/game/world/worldarea"
 	"opensro.online/server/internal/gamedata"
@@ -161,6 +162,10 @@ func newGameWorldApplication(
 		dataPaths.BundleRoot,
 		dataPaths.ManifestDigest,
 	)
+	// SRO_ALEXANDRIA (port-only, not native) needs its overlay in the data.
+	if err := alexandria.Check(dataPaths.TextdataDir); err != nil {
+		return nil, fmt.Errorf("game data: %w", err)
+	}
 	authoredAreas, err := worldarea.LoadAuthority(dataPaths.WorldAuthorityDir)
 	if err != nil {
 		return nil, fmt.Errorf("authored world areas: %w", err)

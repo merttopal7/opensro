@@ -146,7 +146,7 @@ The native resources of one item on one body: 870040 pairs EU axes and
 daggers, and a female harp uses its authored _f resource.
 ================
 */
-function equipmentSources( record, female ) {
+export function equipmentSources( record, female ) {
 	const model = record.resolvedModel;
 	if ( !model ) return [];
 	if ( record.tid[2] === WEAPON_TYPE && DUAL_WEAPON_TYPES.has( record.tid[3] ) ) {

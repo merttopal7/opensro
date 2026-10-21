@@ -54,6 +54,12 @@ type TextdataItems struct {
 	// reaches that buildCharacterRef refused: authored data the port cannot
 	// read, which would fail a player's summon (RefusedSummonRows).
 	refusedSummonRows []string
+	// sharedKey names the process-wide parse this loader adopted, and
+	// sharedRows is true while its maps are still that parse's: the first
+	// Apply* call copies them (ownRows), so one loader's shard settings
+	// never reach another loader in the same process.
+	sharedKey  string
+	sharedRows bool
 }
 
 // NewTextdataItems returns a lazy loader over dir (itemdata*.txt +
@@ -182,10 +188,10 @@ func (t *TextdataItems) Len() int {
 
 /*
 ================
-load
+parse
 ================
 */
-func (t *TextdataItems) load() {
+func (t *TextdataItems) parse() {
 	t.byCodename = map[string]*ItemRef{}
 	t.byID = map[uint32]*ItemRef{}
 	defer func() {

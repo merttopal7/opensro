@@ -532,7 +532,7 @@ func (rt *Runtime) commitExperience(
 		return nil, false
 	}
 
-	walk := walkExpCurve(rt.deps.LevelData(), characterLevel(next), coercePoints(next.Experience), expDelta)
+	walk := rt.walkExpCurve(rt.deps.LevelData(), characterLevel(next), coercePoints(next.Experience), expDelta)
 	if !walk.ok {
 		// A level without a curve row cannot be walked on either side of
 		// the wire; refuse the whole grant.
@@ -762,11 +762,11 @@ walkExpCurve is the server's copy of the client's own level walk
 (sub_779620 @0x7797d6..0x779800) over the same shipped curve
 (leveldata column 1 via LevelDataSource.ExpRequired), plus the level
 cap the client-side walk never needed (retail servers simply stopped
-granting at the cap): at LevelCap the experience freezes at
+granting at the cap): at the configured cap the experience freezes at
 requirement-1 so no crossing is ever emitted or walked.
 ==================
 */
-func walkExpCurve(levels enterworld.LevelDataSource, level, exp, delta int64) expWalkResult {
+func (rt *Runtime) walkExpCurve(levels enterworld.LevelDataSource, level, exp, delta int64) expWalkResult {
 	result := expWalkResult{level: level, exp: exp, ok: true}
 	if delta == 0 {
 		return result
@@ -808,7 +808,7 @@ func walkExpCurve(levels enterworld.LevelDataSource, level, exp, delta int64) ex
 			result.exp = total
 			break
 		}
-		if result.level >= CurrentLevelCap() {
+		if result.level >= rt.levelCap() {
 			// Freeze just below the boundary: emitting a crossing the
 			// server refuses to apply would desync the client's walk.
 			result.exp = required - 1

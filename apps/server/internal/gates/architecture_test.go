@@ -60,12 +60,16 @@ func TestCorePackageBoundaries(t *testing.T) {
 	checkPackageImports(t, root, modulePath, "internal/game/abnormal", map[string]bool{
 		modulePath + "/internal/game/paramkeeper": true,
 	}, false)
+	// The Alexandria switch (port-only): a leaf policy the monster catalog
+	// asks before admitting the city's optional field population.
+	checkPackageImports(t, root, modulePath, "internal/game/world/alexandria", nil, false)
 	checkPackageImports(t, root, modulePath, "internal/game/world/monster", map[string]bool{
-		modulePath + "/internal/domain":           true,
-		modulePath + "/internal/game/world":       true,
-		modulePath + "/internal/data/texttable":   true,
-		modulePath + "/internal/game/abnormal":    true,
-		modulePath + "/internal/game/paramkeeper": true,
+		modulePath + "/internal/domain":                true,
+		modulePath + "/internal/game/world":            true,
+		modulePath + "/internal/game/world/alexandria": true,
+		modulePath + "/internal/data/texttable":        true,
+		modulePath + "/internal/game/abnormal":         true,
+		modulePath + "/internal/game/paramkeeper":      true,
 	}, false)
 	checkPackageImports(t, root, modulePath, "internal/game/item/wire", map[string]bool{
 		modulePath + "/internal/domain": true,

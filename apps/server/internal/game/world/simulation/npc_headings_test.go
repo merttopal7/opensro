@@ -13,11 +13,40 @@ package simulation
 
 import (
 	"encoding/binary"
+	"opensro.online/server/internal/testsupport/tier"
 	"testing"
 
 	"opensro.online/server/internal/testsupport/gamedatatest"
 	"opensro.online/server/internal/testsupport/licensed"
 )
+
+/*
+================
+TestAlexandriaNPCHeadingsUseAuthoredPlacements
+================
+*/
+func TestAlexandriaNPCHeadingsUseAuthoredPlacements(t *testing.T) {
+	for _, row := range []struct {
+		code    string
+		region  uint16
+		x, y, z float64
+		heading uint16
+	}{
+		{"NPC_SD_T_AREA_WAREHOUSE2", 23603, 462.17001, 1530.2, 240.59, 19842},
+		{"NPC_SD_T_AREA_ARMOR", 23602, 639.19, 1364.63, 87.459999, 61530},
+		{"NPC_SD_M_AREA_ARMOR", 23087, 1731.92, 863.31, 875.04999, 7827},
+		{"NPC_SD_T_AREA_SMITH", 23346, 648.39001, 1310.96, 1730.5, 0},
+		{"NPC_SD_M_AREA_WATERMAN_2", 24111, 1470.21, 545, 563.01001, 27670},
+		{"NPC_SD_M_AREA_WATERMAN_2", 24112, 1689.52, 519.32001, 157.02, 33131},
+	} {
+		if got, found := npcPlacementHeading(row.code, row.region, row.x, row.y, row.z); !found || got != row.heading {
+			t.Fatalf("%s heading=%d found=%v, want=%d", row.code, got, found, row.heading)
+		}
+	}
+	if _, found := npcPlacementHeading("NPC_SD_T_AREA_ARMOR", 23346, 708.39001, 1310.96, 1730.5); found {
+		t.Fatal("removed inferred Viviana position inherited an authored heading")
+	}
+}
 
 /*
 ================
@@ -51,6 +80,7 @@ TestPublishedNPCHeadingCoverage
 ================
 */
 func TestPublishedNPCHeadingCoverage(t *testing.T) {
+	tier.Long(t, "every published NPC placement has a heading")
 	licensed.RequireGameData(t)
 	dir := gamedatatest.TextdataDir(t)
 	roster := LoadNpcWorldRoster(dir)

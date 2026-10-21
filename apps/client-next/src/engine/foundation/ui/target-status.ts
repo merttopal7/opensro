@@ -25,7 +25,14 @@ function monsterGrade( grade: number ) {
 		3: [ "unique", "UIIT_STT_MOB_UNIQUE", 1 ],
 		4: [ "giant", "UIIT_STT_MOB_GIANT", 20 ],
 		5: [ "titan", "UIIT_STT_MOB_TITAN", 100 ],
-		6: [ "elite", "UIIT_STT_MOB_ELITE", 4 ]
+		6: [ "elite", "UIIT_STT_MOB_ELITE", 4 ],
+		// Port-only, not native: the optional source population classifies
+		// Apis and the tomb uniques as grade 8 (unique). Native data has no
+		// grade 8 (its monsters are grades 0 and 3, plus the nest grades 1, 4,
+		// 5 and 6), so this entry is unreachable on a native build. Reuse the
+		// authored unique title and icon; without an entry the maximum HP is
+		// unknown and the gauge is not drawn.
+		8: [ "unique", "UIIT_STT_MOB_UNIQUE", 1 ]
 	};
 	return grades[grade];
 }

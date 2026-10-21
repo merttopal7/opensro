@@ -171,6 +171,8 @@ type Runtime struct {
 	NowMs func() int64
 	// Growth is the closed-beta rate switch (growth.go); zero is native.
 	Growth GrowthRates
+	// LevelLimit is set at startup; zero keeps the native cap (levelcap.go).
+	LevelLimit int64
 	// MasteryTotalOverride is the beta budget; zero keeps native race rules.
 	MasteryTotalOverride int64
 }

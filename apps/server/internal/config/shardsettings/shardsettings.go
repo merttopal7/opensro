@@ -19,7 +19,13 @@ package shardsettings
 
 import "strings"
 
-// Source says who fills a setting's job variable.
+/*
+================
+Source
+
+Who fills a setting's job variable.
+================
+*/
 type Source int
 
 const (
@@ -49,9 +55,21 @@ type Setting struct {
 
 // Settings is the table, in the job file's order.
 var Settings = []Setting{
+	{Env: "SRO_ATTACK_PET_EXPANSION", NomadVar: "attack_pet_expansion", Default: "off"},
 	{Env: "SRO_BETA_STARTER_KIT", NomadVar: "beta_starter_kit", Default: "on"},
 	{Env: "SRO_BETA_PLAYER_MAP", NomadVar: "beta_player_map", Default: "on"},
 	{Env: "SRO_BETA_MASTERY", NomadVar: "beta_mastery", Default: "on", Catalogue: true, Source: Built},
+	// Port-only, not native: optional expansion; deployments stay at 90.
+	{Env: "SRO_LEVEL_CAP", NomadVar: "level_cap", Default: "off", Catalogue: true},
+	// Port-only, not native: database-authored Alexandria field population.
+	{Env: "SRO_CAP110_MONSTERS", NomadVar: "cap110_monsters", Default: "off", Catalogue: true},
+	// Port-only, not native: the Pharaoh Tomb 1-3 population and gates. Needs
+	// SRO_CAP110_MONSTERS (its equipment drops).
+	{Env: "SRO_PHARAOH_TOMB", NomadVar: "pharaoh_tomb", Default: "off", Catalogue: true},
+	// Port-only, not native: a Pharaoh Tomb elite or unique rolls equipment this
+	// many times as often (1 is native; 2 to 20). Server only: the site's drop
+	// lists describe the native rule.
+	{Env: "SRO_PHARAOH_TOMB_GEAR_RATE", NomadVar: "pharaoh_tomb_gear_rate", Default: "1"},
 	{Env: "SRO_BETA_SILK", NomadVar: "beta_silk", Default: "50"},
 	// Grab and growth pets at four fifths of their run speed (#320): never
 	// deployed, so the deployment default stays native.
@@ -180,10 +198,16 @@ var Settings = []Setting{
 	// Owner, 2026-10-13 (F7): Lucky Powder stacks to 500; 2026-10-14:
 	// arrows and bolts stack to 2500. "off" is native.
 	{Env: "SRO_STACK_SIZES", NomadVar: "stack_sizes", Default: "arrow=2500,bolt=2500,luckypowder=500", Source: Built},
-	// Owner, 2026-10-17: Qin-Shi Emperor Tomb Floor 1-4 monsters, skills
-	// and walk-in portals (port-only, not native: v1.150 shipped Tomb visual
-	// assets before the Legend IV server tables). "off" is native.
-	{Env: "SRO_QINSHI_TOMB", NomadVar: "qinshi_tomb", Default: "off"},
+	// Owner, 2026-10-17: Qin-Shi Emperor Tomb monsters, skills and walk-in
+	// portals (port-only, not native: v1.150 shipped Tomb visual assets
+	// before the Legend IV server tables); opened in the shard defaults
+	// 2026-10-21 (GH #1013). "off" is native.
+	{Env: "SRO_QINSHI_TOMB", NomadVar: "qinshi_tomb", Default: "on", Catalogue: true},
+	// The Alexandria city of a build_alexandria_variant.py game root: its
+	// regions, gates and NPCs (port-only, not native; internal/game/world/
+	// alexandria). "off" is native and hides them from a variant's data;
+	// the catalogue's NPC list follows it.
+	{Env: "SRO_ALEXANDRIA", NomadVar: "alexandria", Default: "off", Catalogue: true},
 }
 
 // NotSettings are the job's other SRO_ variables: what a deployment

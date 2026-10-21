@@ -137,6 +137,27 @@ test("helper lifetime survives casts, slow assets and movement; clears on flag, 
 	assert.deepEqual( step( 17 ), [] );
 });
 
+test("repeated static rotation keeps the last authored matrix", () => {
+	const catalog = JSON.parse( programs ), root = catalog.effects["system/system_helpermark.efp"].root;
+	const first = root.renderProgram[0];
+	// Use hit_4_cold_hit_e's flags-2 schedule and a later overwrite without
+	// requiring that effect to be reachable in the native-only publication.
+	Object.assign( first, { flags: 2, start: 0, step: 1, end: 1 } );
+	first.parameter.left = [ -90, 0, 0 ];
+	const last = structuredClone( first );
+	last.flags = 3;
+	last.parameter.left = [ 0, 30, 0 ];
+	root.renderProgram.splice( 1, 0, last );
+	const { model } = createEffectPrograms().decode( encode( catalog ), "system/system_helpermark.efp" );
+	const transform = model.nodes.find( node => node.name === "helpermark:rotation" );
+	assert.ok( transform?.matrix );
+	const cosine = Math.cos( Math.PI / 6 );
+	for ( const [index, expected] of [ [ 0, cosine ], [ 2, .5 ], [ 5, 1 ], [ 6, 0 ], [ 8, -.5 ], [ 10, cosine ] ] ) {
+		assert.ok( Math.abs( transform.matrix[index] - expected ) < 1e-6, `matrix component ${index}` );
+	}
+	assert.ok( model.clips[0].channels.every( channel => !model.nodes[channel.node].matrix ) );
+});
+
 test("static rotation coexists with animated scale and unsupported timing stays explicit", () => {
 	const catalog = JSON.parse( programs ), root = catalog.effects["system/system_helpermark.efp"].root;
 	// RotVector.left is authored degrees; right is native conversion scratch.

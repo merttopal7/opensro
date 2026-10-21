@@ -20,6 +20,7 @@ const { createPresentationRandom } = await import( "../../src/engine/runtime/ran
 const { createEffectPrograms } = await import( "../../src/engine/runtime/assets/worker/effects/program/program.ts" );
 const { createEffectDecoder } = await import( "../../src/engine/runtime/assets/worker/effects/effects.ts" );
 const { createCharacterEffects } = await import( "../../src/engine/runtime/characters/effects/effects.ts" );
+const { createCameraScripts } = await import( "../../src/engine/runtime/world/camera/camera.ts" );
 const { nativeHeadingYaw } = await import( "../../src/engine/foundation/math/angles.ts" );
 const encode = value => new TextEncoder().encode( JSON.stringify( value ) );
 function catalog() {
@@ -1616,4 +1617,367 @@ test("AT_TARGET_F shot stages anchor on the target exactly like AT_TARGET", () =
 	}
 	assert.deepEqual( born.AT_TARGET_F, born.AT_TARGET );
 	assert.equal( born.AT_TARGET_F.x, 40 );
+});
+
+/*
+================
+roarEffects
+
+An effect owner whose catalog and model manifest load empty, so only the
+attack-pet roar controller draws. Every model counts as ready.
+================
+*/
+function roarEffects( play = _event => {} ) {
+	let id = 0;
+	const jobs = new Map();
+	return createCharacterEffects(
+		{
+			available: () => 4,
+			progress: () => null,
+			health: () => ({ phase: "running" }),
+			install() {},
+			textureFeatures() {},
+			dispose() {},
+			request( url, limit, decode ) {
+				jobs.set(
+					++id,
+					decode === "effects" ?
+						{ kind: "effects", catalog: {} } :
+						{ kind: "bytes", buffer: encode( { format: "sro-skill-stage-models", models: {} } ).buffer }
+				);
+				return id;
+			},
+			take( id ) {
+				const result = jobs.get( id );
+				jobs.delete( id );
+				return result;
+			},
+			cancel( id ) {
+				jobs.delete( id );
+			}
+		},
+		"http://localhost",
+		play,
+		createPresentationRandom( 1 )
+	);
+}
+test("challenging roar III glows brighter for one second, then releases a 30 m shockwave", () => {
+	const ROAR_AURA = "/assets/effects/challenging-roar-aura";
+	const ROAR_SHOCKWAVE = "/assets/effects/challenging-roar-shockwave";
+	const effects = roarEffects();
+	const bear = {
+			gid: 7,
+			refObjId: 7,
+			name: "Bear",
+			kind: "cos",
+			regionId: 0x8001,
+			x: 0,
+			y: 0,
+			z: 0,
+			heading: 0,
+			emote: { action: 18, revision: 1, atMs: 0 }
+		},
+		near = { gid: 8, refObjId: 8, name: "Near", kind: "monster", regionId: 0x8001, x: 240, y: 0, z: 0, heading: 0 },
+		far = { gid: 9, refObjId: 9, name: "Far", kind: "monster", regionId: 0x8001, x: 400, y: 0, z: 0, heading: 0 },
+		gameplay = { casts: [] };
+	const step = now => effects.step( [ bear, near, far ], gameplay, now, () => true, () => 1, [] );
+	const aura = actors => actors.find( actor => actor.model === ROAR_AURA && actor.attachment?.root );
+	const waves = actors => actors.filter( actor => actor.model === ROAR_SHOCKWAVE );
+	// The roar clock starts on the first frame that sees the emote.
+	step( 0 );
+	let previousLight = 0, previousOpacity = 0, previousScale = 0;
+	for ( const now of [ 0.2, 0.5, 0.8, 0.95 ] ) {
+		const actors = step( now );
+		const glow = defined( aura( actors ) );
+		const light = defined( effects.appearance( bear.gid ).pointLight );
+		assert.ok( light.diffuse[0] > previousLight, `light brightens at ${now}s` );
+		assert.ok( glow.opacity > previousOpacity, `aura brightens at ${now}s` );
+		assert.ok( glow.scale > previousScale, `aura swells at ${now}s` );
+		assert.equal( waves( actors ).length, 0, "no shockwave before one second" );
+		previousLight = light.diffuse[0];
+		previousOpacity = glow.opacity;
+		previousScale = glow.scale;
+	}
+	effects.takeCameraScripts();
+	// Release at one second: the camera shakes once and the rings start.
+	assert.ok( waves( step( 1.0 ) ).length > 0 );
+	const shake = effects.takeCameraScripts();
+	assert.equal( shake.length, 1 );
+	const camera = createCameraScripts( createPresentationRandom( 1 ) );
+	assert.doesNotThrow( () => camera.step( 1000, shake ), "roar shake must satisfy the camera event contract" );
+	camera.dispose();
+	// Near the end of its expansion the ring approaches 300 units (30 m).
+	const late = waves( step( 1.88 ) );
+	const widest = Math.max( ...late.map( actor => actor.scale ) );
+	assert.ok( widest > 290 && widest <= 300, `primary ring reaches 30 m (${widest})` );
+	// Visuals do not guess which monsters the server actually taunted.
+	assert.ok( step( 1.9 ).every( actor => actor.model === ROAR_AURA || actor.model === ROAR_SHOCKWAVE ) );
+	// The sequence ends and leaves the bear's appearance untouched.
+	assert.equal( step( 2.4 ).filter( actor => actor.model === ROAR_SHOCKWAVE ).length, 0 );
+	assert.equal( effects.appearance( bear.gid ).pointLight, undefined );
+	assert.equal( effects.appearance( bear.gid ).scale, 1 );
+	assert.equal( step( 5 ).length, 0, "the persistent emote must not replay the finished roar" );
+	assert.equal( effects.takeCameraScripts().length, 0, "finished roars must not shake the camera again" );
+	assert.equal( effects.error(), null );
+	effects.dispose();
+});
+
+test("iron hide draws a 5 s barrier dome on bear and players, then detonates an 8 m burst on tier III expiry", () => {
+	const SHIELD_DOME = "/assets/effects/iron-hide-shield";
+	const SHOCKWAVE = "/assets/effects/challenging-roar-shockwave";
+	const effects = roarEffects();
+	const bear = {
+			gid: 10,
+			refObjId: 10,
+			name: "Bear",
+			kind: "cos",
+			regionId: 0x8001,
+			x: 0,
+			y: 0,
+			z: 0,
+			heading: 0,
+			shield: { amount: 400, maxHp: 1000, atMs: 0, untilMs: 5000, revision: 1, burst: false }
+		},
+		owner = {
+			gid: 11,
+			refObjId: 11,
+			name: "Owner",
+			kind: "local-player",
+			regionId: 0x8001,
+			x: 20,
+			y: 0,
+			z: 0,
+			heading: 0,
+			shield: { amount: 600, maxHp: 1200, atMs: 0, untilMs: 5000, revision: 1, burst: false }
+		},
+		gameplay = {
+			casts: [],
+			localGid: 11,
+			pose: {
+				...owner,
+				angle: 0,
+				shield: { amount: 0, maxHp: 1200, atMs: -1000, untilMs: -1000, revision: 99, burst: false }
+			}
+		};
+	const step = now => effects.step( [ bear, owner ], gameplay, now, () => true, () => 1, [] );
+	const activeActors = step( 0.2 );
+	assert.equal( activeActors.filter( a => a.model === SHIELD_DOME && a.pose.x === bear.x ).length, 2 );
+	assert.equal( activeActors.filter( a => a.model === SHIELD_DOME && a.pose.x === owner.x ).length, 2 );
+	assert.ok(
+		activeActors.every( actor => actor.attachment === undefined ),
+		"world-size wards must not inherit character root transforms"
+	);
+	assert.ok( effects.appearance( owner.gid ).pointLight );
+	// Periodic 500 ms server updates increment revision without resetting the barrier animation clock.
+	owner.shield = { amount: 500, maxHp: 1200, atMs: 500, untilMs: 5000, revision: 2, burst: false };
+	const midActors = step( 0.7 ).filter( a => a.model === SHIELD_DOME && a.pose.x === owner.x );
+	assert.equal( midActors.length, 2 );
+	assert.ok( Math.abs( midActors[0].time - 0.5 ) < 1e-6, "periodic shield sync must not reset animation age" );
+	gameplay.pose.x = 80;
+	const moved = step( 1.0 ).filter( a => a.model === SHIELD_DOME );
+	assert.equal(
+		moved.filter( a => a.pose.x === 80 ).length,
+		2,
+		"owner ward follows live movement independently of bear and wire pose"
+	);
+	assert.equal( moved.filter( a => a.pose.x === 0 ).length, 2 );
+	gameplay.pose.x = 20;
+	// At t = 5.0 s, Tier III shield expires with remaining absorption and bursts (8 m = 80 units).
+	bear.shield = { amount: 0, maxHp: 1000, atMs: 5000, untilMs: 5000, revision: 2, burst: true };
+	owner.shield = { amount: 0, maxHp: 1200, atMs: 5000, untilMs: 5000, revision: 3, burst: true };
+	const burstStart = step( 5.0 );
+	assert.ok( burstStart.some( a => a.model === SHOCKWAVE && a.pose.x === owner.x ) );
+	assert.ok(
+		burstStart.some( a => a.model === SHOCKWAVE && a.pose.x === bear.x ),
+		"bear explosion is anchored to its own position"
+	);
+	assert.ok( effects.appearance( owner.gid ).pointLight );
+	const shieldShake = effects.takeCameraScripts();
+	assert.equal( shieldShake.length, 2 );
+	const shieldCamera = createCameraScripts( createPresentationRandom( 1 ) );
+	assert.doesNotThrow( () => shieldCamera.step( 5000, shieldShake ) );
+	shieldCamera.dispose();
+	assert.ok(
+		activeActors.every( actor => (actor.opacity ?? 1) <= 0.20 ),
+		"barriers must not obscure their characters"
+	);
+	const burstLate = step( 5.72 ).filter( a => a.model === SHOCKWAVE && a.pose.x === owner.x );
+	const maxScale = Math.max( ...burstLate.map( a => a.scale ) );
+	assert.ok( maxScale > 75 && maxScale <= 80, `tier III shield burst reaches 8 m (${maxScale})` );
+	assert.equal( step( 6.0 ).length, 0 );
+	owner.shield = { amount: 600, maxHp: 1200, atMs: 8000, untilMs: 13000, revision: 4, burst: false };
+	assert.equal(
+		step( 8.0 ).filter( a => a.model === SHIELD_DOME ).length,
+		2,
+		"a new cast rearms after a finished burst"
+	);
+	owner.shield = { amount: 0, maxHp: 1200, atMs: 13000, untilMs: 13000, revision: 5, burst: true };
+	assert.ok(
+		step( 13.0 ).some( a => a.model === SHOCKWAVE && a.pose.x === owner.x ),
+		"subsequent casts burst again"
+	);
+	assert.equal( step( 14.0 ).length, 0 );
+	effects.dispose();
+});
+
+test("pet skill audio is positional, once per cast and synchronized to the roar release", () => {
+	const played = [], effects = roarEffects( event => played.push( event ) );
+	const bear = {
+		gid: 7,
+		refObjId: 7,
+		name: "Bear",
+		kind: "cos",
+		regionId: 0x8001,
+		x: 10,
+		y: 5,
+		z: 20,
+		heading: 0,
+		emote: { action: 18, revision: 1, atMs: 0 },
+		shield: /** @type {import("../../src/engine/contracts/world.ts").EntityState["shield"]} */ (undefined)
+	};
+	const step = now => effects.step( [ bear ], { casts: [] }, now, () => true, () => 1, [] );
+	step( 0 );
+	step( .9 );
+	assert.equal( played.length, 0 );
+	step( 1 );
+	step( 1.1 );
+	assert.equal( played.length, 1 );
+	assert.match( played[0].path, /cos_bear2_shout1.wav$/ );
+	assert.equal( played[0].x, 1930 );
+	assert.equal( played[0].y, 5 );
+	assert.equal( played[0].z, 245780 );
+	bear.shield = { amount: 400, maxHp: 1000, atMs: 2000, untilMs: 7000, revision: 1, burst: false };
+	step( 2 );
+	step( 2.1 );
+	bear.shield = { ...bear.shield, amount: 300, atMs: 2500, revision: 2 };
+	step( 2.5 );
+	step( 7.1 );
+	step( 7.2 );
+	assert.equal( played.length, 2, "partial absorption, expiry and stale snapshots must not replay the ward sound" );
+	assert.match( played[1].path, /usk_warrior_guard_phyfence_a.wav$/ );
+	assert.notEqual( played[0].id, played[1].id );
+	bear.shield = { amount: 400, maxHp: 1000, atMs: 8000, untilMs: 13000, revision: 3, burst: false };
+	step( 8 );
+	assert.equal( played.length, 3, "the next accepted shield cast sounds again" );
+	bear.shield = { amount: 0, maxHp: 1000, atMs: 13000, untilMs: 13000, revision: 4, burst: true };
+	step( 13 );
+	step( 13.1 );
+	step( 14 );
+	assert.equal( played.length, 4, "expiry plays one explosion sound, never one per frame" );
+	assert.match( played[3].path, /usk_warlock_blood_explosion_bomb.wav$/ );
+	assert.equal( played[3].x, 1930 );
+	assert.ok( played[3].gain < played[1].gain, "simultaneous recipient bursts use a softer mix" );
+	effects.dispose();
+});
+
+test("retaliation III draws one faint 8m ground ripple without sound or camera shake", () => {
+	const played = [], effects = roarEffects( event => played.push( event ) );
+	const owner = {
+		gid: 11,
+		refObjId: 11,
+		name: "Owner",
+		kind: "local-player",
+		regionId: 0x8001,
+		x: 20,
+		y: 0,
+		z: 30,
+		heading: 0,
+		petCounterPulse: { revision: 1, atMs: 0 }
+	};
+	const step = now => effects.step( [ owner ], null, now, () => true, () => 1, [] );
+	const ring = defined( step( 0 )[0] );
+	assert.equal( ring.model, "/assets/effects/pet-counter-ripple" );
+	assert.equal( ring.opacity, 0 );
+	const peak = defined( step( .275 )[0] );
+	assert.ok( defined( peak.opacity ) > 0 && defined( peak.opacity ) <= .22 );
+	owner.x = 100;
+	const late = defined( step( .52 )[0] );
+	assert.equal( late.gid, ring.gid );
+	assert.equal( late.pose.x, 20, "pulse stays at its release position" );
+	assert.ok( late.scale > 79 && late.scale <= 80 );
+	assert.ok( defined( late.opacity ) < defined( peak.opacity ) );
+	assert.equal( step( .6 ).length, 0 );
+	assert.equal( step( 2 ).length, 0, "finished pulses never replay" );
+	assert.equal( played.length, 0 );
+	assert.equal( effects.takeCameraScripts().length, 0 );
+	owner.petCounterPulse = { revision: 2, atMs: 2100 };
+	assert.notEqual( defined( step( 2.1 )[0] ).gid, ring.gid );
+	effects.dispose();
+});
+
+/*
+================
+Guardian's Bond visual and audio lifecycle
+================
+*/
+test("Guardian recovery follows a stationary recipient immediately and never replays sound", () => {
+	const played = [], effects = roarEffects( event => played.push( event ) );
+	const owner = {
+		gid: 11,
+		refObjId: 11,
+		name: "Owner",
+		kind: "local-player",
+		regionId: 0x8001,
+		x: 20,
+		y: 0,
+		z: 30,
+		heading: 0,
+		petBondPulse: { revision: 1, atMs: 0, bear: 12, kind: 2 }
+	};
+	const step = now => effects.step( [ owner ], null, now, () => true, () => 1, [] );
+	const first = defined( step( 0 )[0] );
+	assert.equal( first.model, "/assets/effects/iron-hide-shield" );
+	const peak = defined( step( .75 )[0] );
+	assert.ok( defined( peak.opacity ) > 0 );
+	assert.equal( peak.pose.x, 20 );
+	assert.ok( peak.pose.y > 0 );
+	assert.match( played[0].path, /usk_cleric_rebirth_target_a.wav$/ );
+	step( 1 );
+	step( 1.6 );
+	step( 2 );
+	assert.equal( played.length, 1 );
+	assert.equal( step( 2.1 ).length, 0 );
+	owner.x = 25;
+	owner.petBondPulse = { revision: 2, atMs: 2200, bear: 12, kind: 1 };
+	assert.equal( defined( step( 2.2 )[0] ).pose.x, 25 );
+	assert.match( played[1].path, /usk_cleric_heal_target_a.wav$/ );
+	owner.petBondPulse = { revision: 3, atMs: 2300, bear: 12, kind: 1 };
+	step( 2.3 );
+	assert.equal( played.length, 2, "rapid damage ticks do not spam the healing sound" );
+	assert.equal( effects.takeCameraScripts().length, 0 );
+	effects.dispose();
+});
+
+/*
+================
+Unbroken Spirit presentation
+================
+*/
+test("Resolve ring remains subtle, follows a stationary bear and expires", () => {
+	const effects = roarEffects();
+	const bear = {
+		gid: 77,
+		kind: "cos",
+		regionId: 257,
+		x: 10,
+		y: 2,
+		z: 30,
+		heading: 0,
+		petResolve: { stacks: 10, tier: 3, atMs: 0, untilMs: 15000 }
+	};
+	const entities = [ bear ];
+	const ring = effects.step( entities, { casts: [] }, 1, () => true, () => 1, [] ).find( actor =>
+		actor.model === "/assets/effects/pet-counter-ripple"
+	);
+	assert.ok( ring );
+	assert.equal( ring.pose.x, 10 );
+	assert.ok( ring.opacity > 0 && ring.opacity < .11 );
+	assert.equal( ring.pickable, false );
+	assert.equal(
+		effects.step( entities, { casts: [] }, 15, () => true, () => 1, [] ).filter( actor =>
+			actor.model === "/assets/effects/pet-counter-ripple"
+		).length,
+		0
+	);
+	effects.dispose();
 });

@@ -22,6 +22,7 @@ import (
 	"sync/atomic"
 
 	log "github.com/sirupsen/logrus"
+	"opensro.online/server/internal/game/world/alexandria"
 	"opensro.online/server/internal/game/world/simulation"
 )
 
@@ -75,6 +76,9 @@ type WaterValidator struct {
 	// scans against this brute-force reference. Set before first use;
 	// production never sets it.
 	scanEveryPlacement bool
+	// hidden names the Alexandria regions the catalog drops while
+	// SRO_ALEXANDRIA is off (HideAlexandria). Set before first use.
+	hidden *alexandria.Overlay
 	// catalogLoaded marks the one-shot catalog load, success OR failure, so
 	// a missing catalog is a cached negative rather than a re-read per cold
 	// region (all caches here treat nil as a known-unloadable negative).
@@ -153,6 +157,19 @@ func NewAuthorityValidator(worldAuthorityDir string) *WaterValidator {
 		"catalog.json",
 		filepath.Join("dungeon", "dungeon-resources.json"),
 	)
+}
+
+/*
+================
+HideAlexandria
+
+Port-only, not native: drops the overlay's regions from the catalog, so
+movement, spawn placement and preload treat them as a native build does,
+as regions that do not exist. Called once at boot, before first use.
+================
+*/
+func (v *WaterValidator) HideAlexandria(hidden *alexandria.Overlay) {
+	v.hidden = hidden
 }
 
 /*

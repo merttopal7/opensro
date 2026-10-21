@@ -13,6 +13,7 @@ import "../helpers/native-source-loader.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readPublishedAssetBytesSync } from "../../../../scripts/lib/publishedAsset.mjs";
+import { NATIVE_ONLY } from "../helpers/expanded-build.mjs";
 const { skillMotionRole } = await import( "../../src/engine/foundation/animation/skill-motion.ts" );
 const { advanceAction, actionLayers } = await import( "../../src/engine/foundation/animation/action-schedule.ts" );
 
@@ -27,7 +28,7 @@ function asset( name ) {
 	);
 }
 
-test("every authored CH/EU player phase resolves and follows its native installation kind", () => {
+test( "every authored CH/EU player phase resolves and follows its native installation kind", NATIVE_ONLY, () => {
 	const models = asset( "/assets/anim/manifest.json" ).models;
 	const records = asset( "/assets/skill/effectRecords.json" );
 	const unique = [ new Map(), new Map(), new Map() ];
@@ -73,4 +74,4 @@ test("every authored CH/EU player phase resolves and follows its native installa
 			}
 		}
 	}
-});
+} );

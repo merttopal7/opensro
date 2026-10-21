@@ -10,6 +10,7 @@ reservation and grant validation. Simulation time owns every retry deadline.
 ===========================================================================
 */
 import type { CosRecord } from "@/engine/contracts/gameplay";
+import { isGoldHeapType } from "@/engine/foundation/gameplay/ground-item";
 import type { WireFrame } from "@/engine/contracts/network";
 import type { EntityState, WorldEvent } from "@/engine/contracts/world";
 import { groundItemDistance } from "@/engine/foundation/gameplay/ground-item";
@@ -61,7 +62,7 @@ use the same RefObj type bits as the shared ground-item decoder.
 */
 function pickupCategory( type: number ): number {
 	if ( (type & 0x60) === 0x60 && (type & 0x780) === 0x400 ) return 0;
-	if ( (type & 0x60) === 0x60 && (type & 0x780) === 0x280 ) return PICKUP_GOLD;
+	if ( isGoldHeapType( type ) ) return PICKUP_GOLD;
 	return (type & 0x60) === 0x20 ? PICKUP_EQUIPMENT : PICKUP_OTHER;
 }
 

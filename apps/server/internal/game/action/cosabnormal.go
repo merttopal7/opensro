@@ -201,6 +201,7 @@ func (o *cosAbnormalOwner) commit() {
 	}
 	if o.fatal || o.pet.CurrentHP == 0 {
 		pet := o.pet
+		pet.ResolveStacks = 0
 		if o.aliveBefore && !o.died {
 			o.died = true
 			o.rt.cancelCompanionCasts(o.division, o.c, pet.GID)
@@ -431,6 +432,9 @@ func (o *cosAbnormalOwner) Hit(source uint32, credited bool, damage uint32, reas
 	// A vanished/uncredited source is passed as null and skips that branch.
 	if credited && enterworld.CharacterAlive(o.c) {
 		o.public = append(o.public, o.rt.enterBattleState(o.division, o.c, o.now)...)
+	}
+	if o.sources[source].killer.monster != nil && o.rt.petShieldRecipientAllowed(o.c) {
+		damage = o.rt.absorbPetShield(o.division, pet.GID, damage, o.now)
 	}
 	pet.CurrentHP -= vitals.HitDebit(pet.CurrentHP, damage)
 	o.hits = append(o.hits, abnormalHit{source: source, credited: credited, damage: damage, reason: reason})

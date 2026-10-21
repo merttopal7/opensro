@@ -16,6 +16,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { defined } from "../helpers/defined.mjs";
+import { NATIVE_ONLY } from "../helpers/expanded-build.mjs";
 const { travelMode, resetTravelRegion, gateRequest } = await import( "../../src/engine/foundation/gameplay/travel.ts" );
 const { travelLoadingQuads } = await import( "../../src/engine/foundation/ui/mission-loading.ts" );
 const { createWorldCore } = await import( "../../src/engine/runtime/simulation/worker/session/world/core.ts" );
@@ -26,7 +27,7 @@ const { decodePortalCatalog, portalMenu, portalNotice } = await import(
 const { interactionApproach, interactionApproachTransition } = await import(
 	"../../src/engine/foundation/gameplay/interaction-approach.ts"
 );
-test("primary portal menu resolves selected reference and authored destination IDs", () => {
+test( "primary portal menu resolves selected reference and authored destination IDs", NATIVE_ONLY, () => {
 	const raw = JSON.parse( readFileSync( CLIENT_PUBLIC_ROOT + "/assets/data/teleportData.json", "utf8" ) ),
 		catalog = decodePortalCatalog( raw );
 	assert.equal( catalog.links.length, 85 );
@@ -48,7 +49,7 @@ test("primary portal menu resolves selected reference and authored destination I
 		() => decodePortalCatalog( { ...raw, linkRows: [ { sourceId: 1, destinationId: 0xffffff, fee: 0 } ] } ),
 		/Unresolved/
 	);
-});
+} );
 test("portal refusal uses native quest/transport notices and strict reply framing", () => {
 	assert.equal(
 		defined( portalNotice( 0xb495, Uint8Array.of( 2, 0x17 ) ) ).key,

@@ -61,9 +61,10 @@ func BuildCOSRecord(cos *CharacterCOS, ref *CharacterRef, items ItemRefSource) (
 			if row.TypeFlags&0x60 != 0x20 && row.TypeFlags&0x60 != 0x60 && !wire.IsCosSummoner(row.TypeFlags) && !wire.IsMonsterCapsule(row.TypeFlags) {
 				return nil, fmt.Errorf("unsupported COS item body")
 			}
-			group := row.TypeFlags & 0x780
-			if row.TypeFlags&0x60 == 0x60 && group == 0x280 {
-				return nil, fmt.Errorf("COS item requires a wider durable body")
+			// A gold heap is never a container item; the shop tokens in its
+			// group are, and ItemBody carries their u32 amount.
+			if wire.IsGoldHeap(row.TypeFlags) {
+				return nil, fmt.Errorf("COS container cannot hold a gold heap")
 			}
 			seen[row.Slot] = true
 			body := BuildItemBody(InventoryWireItems([]InventoryRow{row})[0])

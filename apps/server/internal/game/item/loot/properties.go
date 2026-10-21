@@ -88,21 +88,37 @@ func loadProperties() propertyCatalog {
 	if err := json.Unmarshal(propertiesJSON, &c); err != nil {
 		panic(err)
 	}
+	result, err := compileProperties(c)
+	if err != nil {
+		panic(err)
+	}
+	return result
+}
+
+/*
+================
+compileProperties
+
+The same validation serves embedded native data and optional runtime input.
+Only the embedded wrapper may panic on invalid compiled-in data.
+================
+*/
+func compileProperties(c propertyCatalog) (propertyCatalog, error) {
 	c.pools = make(map[string][]propertyOption, len(c.Items))
 	for _, option := range c.Magic {
 		if !probabilityValid(option.Probability) || option.ID == 0 {
-			panic("invalid loot magic option")
+			return propertyCatalog{}, fmt.Errorf("invalid loot magic option")
 		}
 		if option.Name == "MATTR_NOT_REPARABLE" && option.Degree == 1 {
 			c.nonRepair = option
 		}
 	}
 	if c.nonRepair.ID == 0 || c.nonRepair.Params[0] != 6 {
-		panic("missing constant nonrepair option")
+		return propertyCatalog{}, fmt.Errorf("missing constant nonrepair option")
 	}
 	for code, item := range c.Items {
 		if item.MaxMagic < 0 || item.MaxMagic > 12 || item.Class <= 0 {
-			panic("invalid loot equipment property reference: " + code)
+			return propertyCatalog{}, fmt.Errorf("invalid loot equipment property reference: %s", code)
 		}
 		for _, assignment := range c.Assignments {
 			if assignment.Country != item.Country || assignment.Type3 != item.Type[2] || assignment.Type4 != item.Type[3] {
@@ -120,7 +136,7 @@ func loadProperties() propertyCatalog {
 			}
 		}
 	}
-	return c
+	return c, nil
 }
 
 /*

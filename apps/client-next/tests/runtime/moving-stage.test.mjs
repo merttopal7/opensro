@@ -16,6 +16,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { defined } from "../helpers/defined.mjs";
+import { NATIVE_ONLY } from "../helpers/expanded-build.mjs";
 const { movingTargets, radialDestination, stepMoving } = await import(
 	"../../src/engine/foundation/animation/moving-stage.ts"
 );
@@ -285,7 +286,7 @@ test("zero fade sentinel stops emission; negative sentinel removes the entire re
 		f.owner.dispose();
 	}
 });
-test("published 88 plain splash and 96 radial stages admit; arrow scripts admit", () => {
+test( "published 88 plain splash and 96 radial stages admit; arrow scripts admit", NATIVE_ONLY, () => {
 	const raw = JSON.parse( readFileSync( CLIENT_PUBLIC_ROOT + "/assets/skill/effectRecords.json", "utf8" ) ),
 		catalog = createEffectDecoder().decode( new TextEncoder().encode( JSON.stringify( raw ) ) );
 	let splash = 0, option = 0;
@@ -307,4 +308,4 @@ test("published 88 plain splash and 96 radial stages admit; arrow scripts admit"
 	const blocked = fixture( [ { ...stage, scripts: [ "SCT_ARROW" ] } ] );
 	assert.equal( blocked.owner.error(), null );
 	blocked.owner.dispose();
-});
+} );

@@ -68,11 +68,24 @@ type petSession struct {
 	pickupDeadline int64
 	pickupCommand  bool
 	public         []wire.Frame
+	// trained is the attack-pet expansion's unsaved combat memory
+	// (pettrained.go): attack counter and running self buffs.
+	counterView [8]byte
+	counterSent bool
+	trained     petTrainedRuntime
+	// bond's spent budget is read by planPetBond and written by
+	// commitPetBond under rt.petMu: concurrent victim hits in one
+	// division share the bear's budget (checklist item 5).
+	bond petBondRuntime
+	roar *petRoarCast
 	// combat is the attack pet's BATTLE state (petcombat.go); nil follows.
 	combat *petCombatIntent
 	// others holds kill-settlement frames for other characters (a party's
 	// shared experience), drained with public by advancePets.
 	others []RecipientFrames
+	// routed holds pre-routed division frames (a bond revival's peer set
+	// broadcast except its revived target), drained with others.
+	routed []simulation.DivisionFrames
 }
 
 // BindPetSession admits a logical authenticated owner, not every character in
@@ -157,6 +170,7 @@ advancePets
 ================
 */
 func (rt *Runtime) advancePets(nowMs int64) []simulation.DivisionFrames {
+	shieldFrames := rt.advancePetShields(nowMs)
 	rt.petMu.Lock()
 	keys := make([]petOwnerKey, 0, len(rt.petSessions))
 	for key, state := range rt.petSessions {
@@ -177,7 +191,7 @@ func (rt *Runtime) advancePets(nowMs int64) []simulation.DivisionFrames {
 	var out []simulation.DivisionFrames
 	var tethers map[string]simulation.Tether
 	for _, key := range keys {
-		characterID, frames, public, others, tetherKey, tether := rt.advancePetInDivision(key, nowMs)
+		characterID, frames, public, others, routed, tetherKey, tether := rt.advancePetInDivision(key, nowMs)
 		if tether != nil {
 			if tethers == nil {
 				tethers = make(map[string]simulation.Tether)
@@ -187,6 +201,7 @@ func (rt *Runtime) advancePets(nowMs int64) []simulation.DivisionFrames {
 		for _, other := range others {
 			out = append(out, simulation.DivisionFrames{DivisionID: key.division, OnlyCharacterID: other.CharacterID, Frames: simFrames(other.Frames)})
 		}
+		out = append(out, routed...)
 		// The pet is the source: its own viewers see what it does
 		// (CGObj_SendPacketToNearbySessions 484D90 on the COS object), the
 		// same audience its queued B505 closes reach. Routed by the owner, a
@@ -202,7 +217,7 @@ func (rt *Runtime) advancePets(nowMs int64) []simulation.DivisionFrames {
 	if rt.Worlds != nil {
 		rt.Worlds.ReplaceTethers(tethers)
 	}
-	return out
+	return append(shieldFrames, out...)
 }
 
 /*
@@ -210,16 +225,30 @@ func (rt *Runtime) advancePets(nowMs int64) []simulation.DivisionFrames {
 advancePetInDivision
 ================
 */
-func (rt *Runtime) advancePetInDivision(key petOwnerKey, nowMs int64) (int64, []simulation.Frame, []wire.Frame, []RecipientFrames, string, *simulation.Tether) {
+func (rt *Runtime) advancePetInDivision(key petOwnerKey, nowMs int64) (int64, []simulation.Frame, []wire.Frame, []RecipientFrames, []simulation.DivisionFrames, string, *simulation.Tether) {
 	unlock := rt.lockDivision(key.division)
 	defer unlock()
-	frames := rt.advancePetSatiety(key, nowMs)
+	frames := rt.advancePetSpirit(key, nowMs)
+	frames = append(frames, rt.advancePetBond(key, rt.petSessionFor(key.division, key.name, key.gid), nowMs)...)
+	frames = append(frames, rt.advancePetSatiety(key, nowMs)...)
 	frames = append(frames, rt.advancePet(key, nowMs)...)
 	rt.petMu.Lock()
 	state := rt.petSessions[key]
 	rt.petMu.Unlock()
 	if state == nil {
-		return 0, frames, nil, nil, "", nil
+		return 0, frames, nil, nil, nil, "", nil
+	}
+	if rt.AttackPetExpansion {
+		var counter wire.Frame
+		rt.deps.Read(key.division, func() { counter = petSkillCounterFrame(state, key.gid) })
+		if len(counter.Payload) > 0 {
+			var view [8]byte
+			copy(view[:], counter.Payload)
+			if !state.counterSent || view != state.counterView {
+				frames = append(frames, simFrames([]wire.Frame{counter})...)
+				state.counterView, state.counterSent = view, true
+			}
+		}
 	}
 	characterID := state.character.ID
 	var tetherKey string
@@ -229,9 +258,9 @@ func (rt *Runtime) advancePetInDivision(key petOwnerKey, nowMs int64) (int64, []
 		copied := *state.tether
 		tether = &copied
 	}
-	public, others := state.public, state.others
-	state.public, state.others = nil, nil
-	return characterID, frames, public, others, tetherKey, tether
+	public, others, routed := state.public, state.others, state.routed
+	state.public, state.others, state.routed = nil, nil, nil
+	return characterID, frames, public, others, routed, tetherKey, tether
 }
 
 /*
@@ -312,6 +341,7 @@ func (rt *Runtime) advancePet(key petOwnerKey, nowMs int64) (output []simulation
 		}
 	})
 	if snapshot == nil {
+		state.roar = nil
 		rt.cancelPetCombat(key, state, nowMs)
 		state.follower = nil
 		return nil
@@ -319,6 +349,7 @@ func (rt *Runtime) advancePet(key petOwnerKey, nowMs int64) (output []simulation
 	cos := snapshot.CompanionByGID(key.gid)
 	refs, ok := rt.deps.ItemReferences().(enterworld.CharacterRefSource)
 	if !ok || snapshot.DeletePending || enterworld.CurrentHP(snapshot) == 0 || cos == nil || !cos.Summoned || cos.Mounted || cos.CurrentHP == 0 {
+		state.roar = nil
 		// An unsummoned, dead or mounted pet leaves BATTLE; a later summon
 		// must not resume an old fight.
 		rt.cancelPetCombat(key, state, nowMs)
@@ -326,11 +357,16 @@ func (rt *Runtime) advancePet(key petOwnerKey, nowMs int64) (output []simulation
 			return nil
 		}
 		frames := state.follower.Stop(nowMs)
-		state.follower = nil
+		// Port-only: a living guardian must keep its real anchor while awaiting its owner's revival timer.
+		_, _, _, _, guardian := rt.bondSource(key, state)
+		if !guardian || enterworld.CurrentHP(snapshot) != 0 {
+			state.follower = nil
+		}
 		return frames
 	}
 	ref, found := refs.CharacterRefByCodename(cos.Codename)
 	if !found || ref == nil || ref.RefObjID != cos.RefObjID || ref.TidWord&0x7fe != 0x1c6 || !rt.companionFollows(ref.TidWord) {
+		state.roar = nil
 		state.follower = nil
 		if found && ref != nil && ref.RefObjID == cos.RefObjID && isVehicleCOS(ref.TidWord) {
 			// 4FD720: the first primary actor is a vehicle (CGObj_IsVehicleCOS
@@ -359,12 +395,14 @@ func (rt *Runtime) advancePet(key petOwnerKey, nowMs int64) (output []simulation
 		return rt.answerPetStuck(key, state, snapshot, cos, ref.TidWord, nowMs)
 	}
 	if state.displacement != nil {
+		state.roar = nil
 		if nowMs < state.displacement.untilMs {
 			return state.follower.Stop(nowMs)
 		}
 		state.displacement = nil
 	}
 	if rt.companionMovementBlocked(key.division, snapshot, cos) {
+		state.roar = nil
 		rt.cancelPetCombat(key, state, nowMs)
 		return state.follower.Stop(nowMs)
 	}
@@ -378,6 +416,9 @@ func (rt *Runtime) advancePet(key petOwnerKey, nowMs int64) (output []simulation
 		constraint = func(from, to simulation.Spawn) (simulation.Spawn, *simulation.MoveError) {
 			return rt.ConstrainMovement(snapshot.Name, from, to)
 		}
+	}
+	if rt.advancePetRoar(petCombatStep{key: key, state: state, snapshot: snapshot, pet: cos, ref: ref, nowMs: nowMs}) {
+		return state.follower.Stop(nowMs)
 	}
 	if frames, handled := rt.advancePetCombat(petCombatStep{key: key, state: state, snapshot: snapshot,
 		pet: cos, ref: ref, run: run, constraint: constraint, nowMs: nowMs}); handled {

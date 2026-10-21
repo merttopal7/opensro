@@ -22,6 +22,7 @@ import {
 	parsePackHeader,
 	storedMemberBytes
 } from "../../../../scripts/build/shared/packFormat.mjs";
+import { PORT_PET_DROP_MODEL } from "../../../../scripts/build/shared/portItemRows.mjs";
 import { equipmentModelFiles, hwanModelFiles } from "../../../../scripts/build/assetPackOwnership.mjs";
 import { joinedNpcManifest } from "../../../../scripts/build/shared/npcManifest.mjs";
 
@@ -127,7 +128,8 @@ test("every authored item drop passes the production model decoder", () => {
 	const manifest = readPublishedAssetJsonSync( "/assets/itemdrop/manifest.json", publicRoot );
 	const decoder = createModelDecoder();
 	const entries = Object.values( manifest.models );
-	assert.equal( entries.length, 38 );
+	assert.equal( Object.keys( manifest.models ).filter( key => key !== PORT_PET_DROP_MODEL ).length, 38 );
+	assert.ok( manifest.models[PORT_PET_DROP_MODEL], "owned pet prop published beside native drops" );
 	for ( const row of entries ) {
 		const model = decoder.character( decoder.decode( readPublishedAssetBytesSync( row.glb, publicRoot ) ) );
 		assert.ok( model.primitives.length, row.glb );

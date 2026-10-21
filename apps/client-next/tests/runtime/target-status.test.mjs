@@ -64,6 +64,17 @@ test("retail difficulty thresholds and monster HP grade/party multipliers", () =
 	}
 	assert.equal( monsterMaximumHp( { ...entity, rarity: 2 } ), undefined );
 });
+test("grade 8 (imported uniques) gets the unique title and a gauge; unlisted grades still get none", () => {
+	const apis = { ...entity, name: "Apis", level: 103, maxHp: 21068995, rarity: 8 };
+	assert.equal( monsterMaximumHp( apis ), 21068995 );
+	for ( const [hp, expected] of [ [ apis.maxHp, 1 ], [ apis.maxHp / 2, .5 ], [ 0, 0 ] ] ) {
+		const output = defined( targetStatus( layouts, apis, 110, hp, k => k, s => s.length * 6, "" ) );
+		const gauge = defined( output.images.find( image => image.node.name.includes( "HPGAUGE" ) ) );
+		assert.equal( gauge.fraction, expected );
+		assert.ok( output.gradeIcon.endsWith( "tw_icon_unique.png" ) );
+	}
+	assert.equal( monsterMaximumHp( { ...entity, rarity: 2 } ), undefined );
+});
 test("all supported target families use exclusive authored layouts and native width changes", () => {
 	const monster = render( entity );
 	assert.equal( defined( monster ).height, 78 );

@@ -14,7 +14,7 @@ import { CLIENT_PUBLIC_ROOT } from "../../../../scripts/lib/generatedRoot.mjs";
 import "../helpers/native-source-loader.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import fc from "fast-check";
 import { defined } from "../helpers/defined.mjs";
 const { frameRing, frameParts } = await import( "../../src/engine/foundation/ui/frame-ring.ts" );
@@ -108,6 +108,10 @@ test("new published popup resources prepare automatically without a runtime file
 		*/
 		request( url ) {
 			const path = decodeURIComponent( new URL( url ).pathname );
+			if ( !existsSync( CLIENT_PUBLIC_ROOT + path ) ) {
+				jobs.set( ++serial, { kind: "error", id: serial, error: "absent", absent: true } );
+				return serial;
+			}
 			if ( !path.endsWith( ".json" ) ) {
 				const bytes = readFileSync( CLIENT_PUBLIC_ROOT + path );
 				jobs.set( ++serial, {

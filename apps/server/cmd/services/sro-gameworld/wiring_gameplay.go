@@ -14,6 +14,7 @@ package main
 import (
 	"fmt"
 	log "github.com/sirupsen/logrus"
+	worldgeom "opensro.online/server/internal/game/world"
 	"time"
 
 	"opensro.online/server/internal/cluster/shard"
@@ -41,6 +42,8 @@ import (
 	"opensro.online/server/internal/game/social/party"
 	"opensro.online/server/internal/game/social/union"
 	"opensro.online/server/internal/game/tunables"
+	"opensro.online/server/internal/game/world/alexandria"
+	"opensro.online/server/internal/game/world/monster"
 	"opensro.online/server/internal/game/world/movement"
 	"opensro.online/server/internal/game/world/simulation"
 	"opensro.online/server/internal/game/world/worldarea"
@@ -101,6 +104,9 @@ func newGameplayPlane(
 		return nil, err
 	}
 	items := action.NewRuntime(deps, deps.MonsterState)
+	if err := loadPetGearPolicy(items, authorityStore); err != nil {
+		return nil, err
+	}
 	items.CaptureCharacterFrames = func(division, name string) func([]wire.Frame) {
 		return captureCharacterFrames(ts.Hub, division, name)
 	}
@@ -115,6 +121,13 @@ func newGameplayPlane(
 	}
 	deps.PlayerBaseStats = func(character *enterworld.Character) (wire.BaseStats, error) {
 		return items.PlayerBaseStats(ownedShard.ID, character)
+	}
+	// SRO_QINSHI_TOMB (port-only, not native): the tomb's later-data doors
+	// and spawns join at catalog load; unset is the sealed native tomb.
+	// The catalog loaders read the flag themselves (world/monster); this
+	// line only leaves the operator a boot record.
+	if monster.QinShiTombFromEnv() {
+		log.Infof("portals: Qin-Shi Tomb ON (%s): the door by Jangan admits level 70 and above", monster.EnvQinShiTomb)
 	}
 	if err := items.ConfigurePortals(devPaths.TextdataDir); err != nil {
 		return nil, fmt.Errorf("portal catalogue: %w", err)
@@ -242,10 +255,22 @@ func newGameplayPlane(
 	appendGroundObjectRows(deps, items)
 
 	water := movement.NewAuthorityValidator(worldAuthorityDir)
+	// Port-only, not native: Alexandria's regions exist only with SRO_ALEXANDRIA.
+	hiddenAlexandria, err := alexandria.Hidden(devPaths.TextdataDir)
+	if err != nil {
+		return nil, err
+	}
+	water.HideAlexandria(hiddenAlexandria)
 	if err := water.ValidateSecurityAssets(); err != nil {
 		return nil, err
 	}
 	water.SetClosedObjectRescue(movement.ClosedObjectRescueFromEnv())
+	// Native dungeon interest is the 3x3 message-block neighbourhood of each
+	// dungeon's DOF grid (worldgeom dungeon_grid.go). Installed before the
+	// first session so every interest query sees the same table.
+	dungeonGrids := water.DungeonMessageGrids()
+	worldgeom.InstallDungeonMessageGrids(dungeonGrids)
+	log.Infof("world: dungeon message grids installed for %d dungeon region(s)", len(dungeonGrids))
 	navigationStarted := time.Now()
 	navigationRegions, err := water.PreloadOutdoorNavigation()
 	if err != nil {
@@ -666,11 +691,15 @@ func (game *gameplayPlane) register(hub *transport.Hub, loadQuests questDefiniti
 		log.Infof("storage: quick moves auto-stack ON (%s)", action.EnvStorageAutoStack)
 	}
 	stats := progression.NewRuntime(game.deps)
+	if err = applyLevelCap(stats); err != nil {
+		return err
+	}
 	stats.MasteryTotalOverride = masteryOverride
 	if masteryOverride != 0 {
 		log.Infof("progression: beta total mastery allowance %d for both races (%s)", masteryOverride, progression.EnvBetaMastery)
 	}
 	stats.Growth = progression.BetaGrowthFromEnv()
+	game.items.AttackPetExpansion = companion.AttackPetExpansionEnabled()
 	if stats.Growth.Enabled {
 		log.Infof("progression: beta growth ON (%s): every level at the level-%d kill pace, skill EXP at that pace x%d, drop passes x%d (at most %d ordinary items a kill, 0 = no cap), gold x%d, rare (SoX) x%d", progression.EnvBetaGrowth, progression.BetaReferenceLevel, stats.Growth.SkillExpRate, stats.Growth.DropRate, stats.Growth.DropCap, stats.Growth.GoldRate, stats.Growth.RareRate)
 		game.items.DropPassRate = stats.Growth.DropRate
@@ -930,68 +959,4 @@ func (game *gameplayPlane) register(hub *transport.Hub, loadQuests questDefiniti
 	game.items.SpendHonorPoints = game.mentorInvites.SpendHonorPoints
 	game.mentorInvites.Register(hub)
 	return nil
-}
-
-/*
-================
-captureCharacterFrames
-
-The sessions bound to one character name (captureSessionFrames).
-================
-*/
-func captureCharacterFrames(hub *transport.Hub, division, name string) func([]wire.Frame) {
-	return captureSessionFrames(hub.CharacterSessions(division, name))
-}
-
-/*
-================
-captureObjectFrames
-
-The sessions bound to one player object id (captureSessionFrames).
-================
-*/
-func captureObjectFrames(hub *transport.Hub, division string, gid uint32) func([]wire.Frame) {
-	var sessions []*transport.Session
-	for _, session := range hub.SessionsInDivision(division) {
-		if bound, ok := session.CharacterObjectID(); ok && bound == gid {
-			sessions = append(sessions, session)
-		}
-	}
-	return captureSessionFrames(sessions)
-}
-
-/*
-================
-captureSessionFrames
-
-Capture is read-only under the action division lock. The returned delivery
-runs outside that lock so queue failure can synchronously retire gameplay.
-================
-*/
-func captureSessionFrames(sessions []*transport.Session) func([]wire.Frame) {
-	type recipient struct {
-		session  *transport.Session
-		revision uint64
-	}
-	var recipients []recipient
-	for _, session := range sessions {
-		revision, valid := session.SceneReceiptRevision()
-		if valid {
-			recipients = append(recipients, recipient{session: session, revision: revision})
-		}
-	}
-	if len(recipients) == 0 {
-		return nil
-	}
-	return func(frames []wire.Frame) {
-		batch := make([]transport.Frame, len(frames))
-		for i, frame := range frames {
-			batch[i] = transport.Frame{Opcode: frame.Opcode, Payload: frame.Payload, Current: frame.Current, Scope: transport.ScopeChanges(frame.Scope)}
-		}
-		for _, recipient := range recipients {
-			if err := recipient.session.SendSceneReceiptBatch(recipient.revision, batch); err != nil {
-				log.WithError(err).WithField("session", recipient.session.ID).Debug("action: captured private receipt refused")
-			}
-		}
-	}
 }

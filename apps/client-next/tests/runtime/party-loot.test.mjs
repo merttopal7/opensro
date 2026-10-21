@@ -12,11 +12,11 @@ import "../helpers/native-source-loader.mjs";
 const { partyLootNotice } = await import( "../../src/engine/foundation/gameplay/party-loot.ts" );
 
 // Expendable (class 0xC, category 0x60); gold is group 0x280.
-const GOLD = 0xc | 0x60 | 0x280, POTION = 0xc | 0x60 | 0x080, BLADE = 0x0c00;
+const GOLD = 0xc | 0x60 | 0x280, POTION = 0xc | 0x60 | 0x080, BLADE = 0x0c00, SD_TOKEN = GOLD | 0x800;
 const items = new Map( [ [ 1, { typeFlags: GOLD, name: "Gold" } ], [ 2, { typeFlags: POTION, name: "HP Potion" } ], [
 	3,
 	{ typeFlags: BLADE, name: "Blade" }
-] ] );
+], [ 4, { typeFlags: SD_TOKEN, name: "Silver Coin" } ] ] );
 const context = {
 	item: id => items.get( id ),
 	memberName: gid => gid === 77 ? "Friend" : gid === 5 ? "Me" : undefined,
@@ -58,4 +58,11 @@ test("equipment carries a one-byte amount and an unknown item is refused", () =>
 	assert.deepEqual( partyLootNotice( frame( 77, 3, [ 1 ] ), context ).arguments, [ "Blade", "1", "Friend" ] );
 	assert.throws( () => partyLootNotice( frame( 77, 3, [ 1, 0 ] ), context ), /length/ );
 	assert.throws( () => partyLootNotice( frame( 77, 9, [ 1 ] ), context ), /unknown item/ );
+});
+
+test("a shared shop token keeps the group's u32 amount but reads as an item, not gold", () => {
+	const notice = partyLootNotice( frame( 77, 4, [ 2, 0, 0, 0 ] ), context );
+	assert.equal( notice.key, "UIIT_MSG_PARTYGET_ITEM_EXPENDABLE" );
+	assert.deepEqual( notice.arguments, [ "Silver Coin", "2", "Friend" ] );
+	assert.throws( () => partyLootNotice( frame( 77, 4, [ 2, 0 ] ), context ), /length/ );
 });

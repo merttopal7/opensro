@@ -30,7 +30,7 @@ import {
 } from "./assets/copyTerrainTileImages.mjs";
 import { copyReferencedWaterImages, resolveWaterTextures } from "./assets/copyWaterImages.mjs";
 import { OUTDOOR_WORLD_REGION_CATALOG_PUBLIC_PATH, overlayWorldRegionCatalog } from "./buildWorldRegionCatalog.mjs";
-import { publicPathToFile } from "../shared/assetPaths.mjs";
+import { normalizeAssetPath, publicPathToFile } from "../shared/assetPaths.mjs";
 import { mapWithConcurrency } from "../shared/asyncUtils.mjs";
 import { sha256Hex } from "../shared/hash.mjs";
 import { refreshPrecompressedSidecars } from "../generatedManifestSidecars.mjs";
@@ -573,17 +573,6 @@ buildOutdoorSharedObjectResources
 ================
 */
 async function buildOutdoorSharedObjectResources( options ) {
-	if ( !options.force && (await exists( OUTDOOR_WORLD_OBJECT_INDEX_PATH )) ) {
-		const index = JSON.parse( await readFile( OUTDOOR_WORLD_OBJECT_INDEX_PATH, "utf8" ) );
-		validateObjectResourceIndex( index );
-		// The kept index claims the meshes and textures it names.
-		await claimKeptOutput( OUTDOOR_WORLD_OBJECT_INDEX_PATH );
-		return {
-			index,
-			collisionResources: collisionResourcesFromIndex( index )
-		};
-	}
-
 	const objectInfoPath = path.join( options.extractedRoot, "Map_extracted", "object.ifo" );
 	const objectInfo = await readJmxMapObjectInfo( objectInfoPath );
 	const usage = await collectOutdoorObjectUsage( options.sectors, {
@@ -604,9 +593,20 @@ async function buildOutdoorSharedObjectResources( options ) {
 		return {
 			objectId,
 			flags: entry.flags,
-			sourcePath: entry.sourcePath
+			sourcePath: entry.sourcePath,
+			placementCount: usage.placementCountsByObjectId.get( objectId )
 		};
 	} );
+	if ( !options.force && (await exists( OUTDOOR_WORLD_OBJECT_INDEX_PATH )) ) {
+		const index = JSON.parse( await readFile( OUTDOOR_WORLD_OBJECT_INDEX_PATH, "utf8" ) );
+		validateObjectResourceIndex( index );
+		// Code stamps cannot notice added source sectors. Check their complete
+		// object usage before trusting a shared index from an earlier region set.
+		if ( outdoorObjectIndexMatchesDefinitions( index, objectDefinitions ) ) {
+			await claimKeptOutput( OUTDOOR_WORLD_OBJECT_INDEX_PATH );
+			return { index, collisionResources: collisionResourcesFromIndex( index ) };
+		}
+	}
 	const resources = await buildTitleSectorObjectResources( {
 		area: OUTDOOR_WORLD_AREA,
 		extractedRoot: options.extractedRoot,
@@ -670,6 +670,28 @@ async function buildOutdoorSharedObjectResources( options ) {
 			meshes: collisionMeshes
 		}
 	};
+}
+
+/*
+================
+outdoorObjectIndexMatchesDefinitions
+
+A retained resource index must describe every currently used object, with
+the same catalog identity and placement count. Added regions can introduce
+objects without changing any builder code or the existing index's shape.
+================
+*/
+export function outdoorObjectIndexMatchesDefinitions( index, definitions ) {
+	const resources = new Map( index.bsr.map( ( resource ) => [ resource.objectId, resource ] ) );
+	// The same count both ways: an index that still holds the objects of sectors
+	// since removed is as stale as one missing a new object.
+	return resources.size === index.bsr.length && resources.size === definitions.length &&
+		definitions.every( ( definition ) => {
+			const resource = resources.get( definition.objectId );
+			return resource !== undefined && resource.objectFlags === definition.flags &&
+				resource.placementCount === definition.placementCount &&
+				normalizeAssetPath( resource.sourcePath ) === normalizeAssetPath( definition.sourcePath );
+		} );
 }
 
 /*

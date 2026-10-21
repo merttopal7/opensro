@@ -187,3 +187,25 @@ test("ordinary object methods do not crash capability checking", () => {
 		assert.deepEqual( verifyCapabilities( dir ), [] );
 	} );
 });
+
+/*
+================
+Readonly data tables cannot hide executable module state.
+================
+*/
+test("admit readonly literal tables but reject mutable or executable tables", () => {
+	withFixture(
+		{ file: SESSION, code: "\nconst rows = [{id: 1, values: [-1, true, null]}] as const;" },
+		dir => assert.deepEqual( verifyOwnership( dir ), [] )
+	);
+	for (
+		const code of [
+			"\nconst rows = [1];",
+			"\nconst rows = [new Map()] as const;",
+			"\nconst rows = [cache] as const;",
+			"\nconst rows = {...cache} as const;"
+		]
+	) {
+		rejects( { file: SESSION, code }, verifyOwnership, "shared module state" );
+	}
+});

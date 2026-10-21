@@ -169,11 +169,6 @@ export const EXPERIMENTAL_TABS: readonly {
 			label: "Smooth camera",
 			description: "Ease small camera jumps and the return from a wall."
 		}, {
-			key: "greyDisabledTabs",
-			id: "experimental-grey-disabled-tabs",
-			label: "Grey disabled tabs",
-			description: "Dim a window tab you cannot use."
-		}, {
 			key: "vHidesCompanions",
 			id: "experimental-v-hides-companions",
 			label: "V hides pets and transports",
@@ -224,6 +219,11 @@ export const EXPERIMENTAL_TABS: readonly {
 			label: "Developer diagnostics",
 			description: "Show a diagnostics icon beside FPS."
 		}, {
+			key: "greyDisabledTabs",
+			id: "experimental-grey-disabled-tabs",
+			label: "Grey disabled tabs",
+			description: "Dim a window tab you cannot use."
+		}, {
 			key: "fitWindowLabels",
 			id: "experimental-fit-window-labels",
 			label: "Fit window labels",
@@ -238,11 +238,26 @@ export const EXPERIMENTAL_TABS: readonly {
 			id: "experimental-confirm-guild-ban",
 			label: "Confirm guild ban",
 			description: "Ask before Withdraw bans a guild member."
+		} ]
+	},
+	{
+		title: "Pets",
+		section: "Attack pets",
+		rows: [ {
+			key: "attackPetTraining",
+			id: "experimental-attack-pet-training",
+			label: "Attack-pet training",
+			description: "Pet skills and gear; requires server opt-in."
 		}, {
 			key: "petClickOpensWindow",
 			id: "experimental-pet-click-opens-window",
 			label: "Pet panel opens window",
 			description: "Click a pet panel to open its window."
+		}, {
+			key: "expandedWorldMap",
+			id: "experimental-expanded-world-map",
+			label: "Expanded world map",
+			description: "Show extra town pages and wider overview."
 		} ]
 	}
 ];

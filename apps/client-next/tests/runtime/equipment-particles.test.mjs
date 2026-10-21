@@ -10,6 +10,7 @@ modules the client ships, not a per-test bundle.
 ===========================================================================
 */
 import "../helpers/native-source-loader.mjs";
+import { NATIVE_ONLY } from "../helpers/expanded-build.mjs";
 import { pathToFileURL as sourceFileUrl } from "node:url";
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -286,7 +287,7 @@ its own auxiliary handle: the set rides that handle, whose "stand" track
 turns the crystal bones the particles sit on.
 ================
 */
-test("every equipment ambient set is published with its garment and reachable programs", () => {
+test( "every equipment ambient set is published with its garment and reachable programs", NATIVE_ONLY, () => {
 	const roster = readPublishedAssetJsonSync( "/assets/char/roster.json", publicRoot ),
 		programs = readPublishedAssetJsonSync( "/assets/effects/programs.json", publicRoot ),
 		ambient = equipmentAmbientParticles(),
@@ -335,4 +336,4 @@ test("every equipment ambient set is published with its garment and reachable pr
 		}
 	}
 	assert.ok( branches >= 18 && animated >= 18, branches + " rigid, " + animated + " animated" );
-});
+} );

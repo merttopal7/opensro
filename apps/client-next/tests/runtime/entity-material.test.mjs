@@ -18,6 +18,7 @@ import { publicRoot } from "../../../../scripts/build/world/paths.mjs";
 import { loadDataAsset } from "../../../../scripts/build/shared/jmxAssetIO.mjs";
 import { parseCharacterBsr } from "../../../../scripts/build/char/formats.mjs";
 import { entityMaterialMetadata } from "../../../../scripts/build/char/entityMaterialMetadata.mjs";
+import { PORT_PET_DROP_MODEL } from "../../../../scripts/build/shared/portItemRows.mjs";
 import { npcManifestModels } from "../../../../scripts/build/shared/npcManifest.mjs";
 async function load( file ) {
 	return import( sourceFileUrl( file ).href );
@@ -36,6 +37,7 @@ test("every original entity material modifier binds through GLB publication and 
 				npcManifestModels( readPublishedAssetJsonSync( "/assets/" + domain + "/manifest.json", publicRoot ) )
 			)
 		) {
+			if ( domain === "itemdrop" && key === PORT_PET_DROP_MODEL ) continue; // Owned procedural asset has no native BSR.
 			if ( seen.has( row.glb ) ) continue;
 			seen.add( row.glb );
 			const source = row.bsr ?? "res/" + key,

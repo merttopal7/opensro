@@ -16,6 +16,9 @@ import path from "node:path";
 import { collectOutdoorWorldFiles } from "./build/assetPackGroups.mjs";
 import { ASSET_PACK_VERSION, buildAssetPacks } from "./build/assetPacks.mjs";
 import { optimizeJsonAssets } from "./build/jsonAssetCompression.mjs";
+import { buildEffectProgramsAsset } from "./build/effects/buildEffectPrograms.mjs";
+import { LOOSE_FAMILIES } from "./build/families/looseFamilies.mjs";
+import { publishLooseFamily } from "./build/shared/looseFamilyPublication.mjs";
 import { publishBytesAtomically } from "./build/shared/atomicPublish.mjs";
 import {
 	PACK_INDEX_PATH,
@@ -38,6 +41,20 @@ const DEFAULT_OUTDOOR_TARGET_BYTES = 8 * 1024 * 1024;
 const timed = timedStep( "outdoor-refresh" );
 
 await withGeneratedAssetsLock( "outdoor asset-pack refresh", async () => {
+	// New scenery BSRs can introduce particle programs. Publish their complete
+	// dependency closure before exposing the outdoor index that references them.
+	const programs = await timed( "scenery effect programs", () => buildEffectProgramsAsset() );
+	if ( programs.written ) {
+		const family = LOOSE_FAMILIES.effect;
+		const output = await family.produce();
+		await timed( "scenery effect packs", () =>
+			publishLooseFamily( {
+				name: family.packFolder,
+				owner: "effect",
+				files: output.files,
+				defaultGroup: family.defaultGroup
+			} ) );
+	}
 	// Only gzip is consumed by fetchJson's pack path. Keep this focused refresh
 	// cheap; a full production resource build still emits every encoding.
 	const compression = await timed( "JSON sidecar freshness", () =>

@@ -201,6 +201,27 @@ import { fitUiGroup } from "@/engine/foundation/ui/layout";
 import { createExperimentalHud, EXPERIMENTAL_TABS } from "./hud/experimental-hud";
 import { renderScales, type ExperimentalOptions } from "@/engine/foundation/ui/experimental-options";
 import {
+	PET_GEAR_SLOTS,
+	PET_TRAINING_OP,
+	petRowCooldown,
+	petCooldownQuads,
+	petRows,
+	petSkillHelp,
+	petSkillDesign,
+	petReference,
+	petAbilities,
+	petSkillTooltip
+} from "@/engine/foundation/ui/pet-training";
+import {
+	PET_SKILL_ATLAS,
+	petSkillIcon,
+	petSkillIconUV,
+	petSkillStack,
+	petStackQuads,
+	petRowHelp
+} from "@/engine/foundation/ui/pet-skill-icons";
+import { DOLL2_TEXTURE } from "@/engine/foundation/ui/ui";
+import {
 	rememberedWindows,
 	type RememberedWindow,
 	type WindowPositions
@@ -436,6 +457,7 @@ import {
 } from "@/engine/foundation/gameplay/party-matching";
 import { createSkillGauge, createGaugePresentation } from "./hud/progression-bars";
 import { experienceBar, EXPERIENCE_BAR, gaugeFill } from "@/engine/foundation/ui/progression-bars";
+import { shieldGauge, shieldGaugeFill } from "@/engine/foundation/ui/shield-gauge";
 import { createRegionBanner } from "./hud/region-banner";
 import { regionBannerQuads } from "@/engine/foundation/ui/region-banner";
 import { buffTooltip } from "@/engine/foundation/ui/buff-tooltip";
@@ -626,7 +648,8 @@ import {
 	quickSlotDrag,
 	quickSlotDrop,
 	HELPER_ACTION_ID,
-	TRACE_ACTION_ID
+	TRACE_ACTION_ID,
+	PET_SKILL_SHORTCUT_BASE
 } from "@/engine/foundation/gameplay/quickslots";
 import { itemActivation } from "@/engine/foundation/gameplay/item-activation";
 import { createIconPaths } from "@/engine/foundation/ui/icon";
@@ -1407,7 +1430,9 @@ export function createUi(
 		partyOptions = 4;
 	// The nickname box 0x17 asks about (5E35E0): the member and the nickname.
 	let grantAsk: { readonly id: number; readonly member: string; readonly name: string; } | null = null;
-	let goldAmount = "", confirmDrop = "", goldDialog: false | "drop" | "deposit" | "withdraw" = false;
+	let goldAmount = "",
+		confirmDrop = "",
+		goldDialog: false | "drop" | "deposit" | "withdraw" | "exchange" = false;
 	let groundDrop: { slot: number; refObjId: number; } | null = null;
 	let splitStack: { slot: number; refObjId: number; quantity: number; } | null = null, splitAmount = "1";
 	let shopOpenRequest: { gid: number; tab: number; revision: number; } | null = null;
@@ -1422,6 +1447,8 @@ export function createUi(
 	let shopPosition: readonly [number, number] | null = null;
 	let cosTab = 1,
 		cosDraft = 0,
+		// The wolf whose training state this window last asked for (port-only).
+		petTrainingAskedRef = 0,
 		cosBoundGid = 0,
 		cosBoundMode: number | undefined,
 		guildDialog = "",
@@ -1885,6 +1912,7 @@ export function createUi(
 			beginnerDraft = !!((view?.entities.find( e => e.gid === view?.gameplay?.localGid )?.visualFlags ?? 0) & 1);
 		}
 		if ( next === "COS inventory" ) {
+			petTrainingAskedRef = 0;
 			cosSlot = -1;
 			cosPage = 0;
 			cosPlayerPage = 0;
@@ -2792,6 +2820,33 @@ export function createUi(
 			executeCosCommand( Number( id.slice( 12 ) ) );
 			return;
 		}
+		// Port-only wolf skill tree (pet-training.ts): learn a level or reset.
+		if ( id.startsWith( "pet-skill-up:" ) && experimental.state().saved.attackPetTraining ) {
+			sendGameplay( {
+				kind: "cos-training",
+				gid: cosGid,
+				operation: PET_TRAINING_OP.learn,
+				arg: Number( id.slice( 13 ) )
+			} );
+			return;
+		}
+		if ( id.startsWith( "pet-skill:" ) && experimental.state().saved.attackPetTraining ) {
+			const skill = view?.gameplay?.petTraining?.skills.find( entry => entry.id === Number( id.slice( 10 ) ) );
+			if ( skill && skill.level > 0 && (skill.action || !skill.slotted) ) {
+				sendGameplay( {
+					kind: "cos-training",
+					gid: cosGid,
+					operation: skill.action ? PET_TRAINING_OP.use : PET_TRAINING_OP.slot,
+					arg: skill.id,
+					target: view?.gameplay?.target ?? 0
+				} );
+			}
+			return;
+		}
+		if ( id === "pet-skill-reset" && experimental.state().saved.attackPetTraining ) {
+			sendGameplay( { kind: "cos-training", gid: cosGid, operation: PET_TRAINING_OP.refund, arg: 0 } );
+			return;
+		}
 		if ( id.startsWith( "item-mall-" ) && itemMall.compactAction( id ) ) {
 			dirty = true;
 			return;
@@ -3692,7 +3747,13 @@ export function createUi(
 		} else if ( id === "exchange-confirm" || id === "exchange-cancel" || id === "exchange-close" ) {
 			sendGameplay( { kind: id === "exchange-close" ? "exchange-cancel" : id } );
 		} else if ( id === "exchange-gold-set" ) {
-			sendGameplay( { kind: "exchange-gold", amount: Number( exchangeHud.gold() || 0 ) } );
+			// 6B2070 -> 59A850: clicking CIFExchange's Gold button (id 15) while
+			// unlocked opens the shared gold modal (context 8, initial "1").
+			if ( view.gameplay?.exchange?.open && !view.gameplay.exchange.ownLocked ) {
+				goldDialog = "exchange";
+				goldAmount = "1";
+				focusAndSelect( "gold-amount", 0, 1 );
+			}
 		} else if ( id.startsWith( "exchange-my:" ) ) {
 			const slot = Number( id.slice( 12 ) );
 			if ( view.gameplay?.exchange?.own.some( row => row.slot === slot ) ) {
@@ -3789,7 +3850,8 @@ export function createUi(
 		// and automatically switches to Manual Movement State (mapFollow = false).
 		else if ( id.startsWith( "map-town:" ) ) {
 			const page = Number( id.slice( 9 ) );
-			if ( worldMapPages().some( p => p.id === page ) ) {
+			const mapLayout = experimental.state().saved.expandedWorldMap ? hud.data()?.mapLayout : undefined;
+			if ( worldMapPages( mapLayout ).some( p => p.id === page ) ) {
 				mapPage = page;
 				mapFollow = false;
 				mapPan = [ 0, 0 ];
@@ -4139,6 +4201,15 @@ export function createUi(
 					return;
 				}
 				if ( binding?.kind === 0x4a ) {
+					if (
+						binding.payload > PET_SKILL_SHORTCUT_BASE && binding.payload <= PET_SKILL_SHORTCUT_BASE + 255
+					) {
+						if ( experimental.state().saved.attackPetTraining ) {
+							const command = quickSlotCommand( binding, game! );
+							if ( command ) sendGameplay( command );
+						}
+						return;
+					}
 					executeAction( binding.payload & 0xffffff );
 					return;
 				}
@@ -4636,19 +4707,48 @@ export function createUi(
 				inventorySlot = -1;
 			}
 		} else if ( id === "inventory-gold" ) {
-			// With the warehouse open the inventory's money button deposits.
-			goldDialog = panel === "Storage" ? "deposit" : "drop";
+			// 59AA20: CIFInventory's Gold button returns early when Exchange
+			// (69AF00), Stall (67AF00) or Shop (69B060) is active; otherwise it
+			// opens Storage deposit (59A430) when Storage is active (69B080) or
+			// Drop gold (59A260) when no NPC interaction is active (59A27D).
+			const g = view.gameplay,
+				stallOpen = g?.stall?.phase === "owner" || g?.stall?.phase === "visitor",
+				shopOpen = panel === "Shop" || !!g?.shop,
+				storageOpen = panel === "Storage" || g?.storage?.phase === "open";
+			if ( g?.exchange?.open || stallOpen || shopOpen || (!storageOpen && !!g?.npcConversation) ) return;
+			goldDialog = storageOpen ? "deposit" : "drop";
 			goldAmount = "0";
 			focusAndSelect( "gold-amount", 0, 1 );
 		} else if ( id === "gold-cancel" ) {
 			goldDialog = false;
 			focus = null;
-		} else if ( id === "drop-gold" && view.gameplay && goldDialog !== "drop" && goldDialog !== false ) {
+		} else if ( id === "drop-gold" && view.gameplay && goldDialog === "exchange" ) {
+			// 59C510 context 8: confirming <= 0 closes the modal without sending;
+			// > 0 sends 0x706D moveType 0x0D (exchange-gold) capped at carried gold.
+			const amount = Number( goldAmount ), balance = view.gameplay.progression?.gold;
+			if ( !/^\d+$/.test( goldAmount ) || amount === 0 ) {
+				goldDialog = false;
+				focus = null;
+				goldAmount = "";
+			} else if (
+				!view.gameplay.inventoryPending && view.gameplay.exchange?.open &&
+				!view.gameplay.exchange.ownLocked && Number.isSafeInteger( amount ) &&
+				amount > 0 && amount <= 0xffffffff && balance !== undefined && BigInt( amount ) <= BigInt( balance )
+			) {
+				sendGameplay( { kind: "exchange-gold", amount } );
+				goldDialog = false;
+				focus = null;
+				goldAmount = "";
+			}
+		} else if ( id === "drop-gold" && view.gameplay && (goldDialog === "deposit" || goldDialog === "withdraw") ) {
+			// 59A430 caps warehouse deposits at min(carriedGold, 100_000_000);
+			// 59C510 closes the modal without sending when amount <= 0.
 			const amount = Number( goldAmount ),
-				balance = goldDialog === "withdraw" ? view.gameplay.storage?.gold : view.gameplay.progression?.gold;
+				balance = goldDialog === "withdraw" ? view.gameplay.storage?.gold : view.gameplay.progression?.gold,
+				cap = goldDialog === "deposit" ? 100000000 : 0xffffffff;
 			if (
 				!view.gameplay.inventoryPending && /^\d+$/.test( goldAmount ) && Number.isSafeInteger( amount ) &&
-				amount > 0 && amount <= 0xffffffff && balance !== undefined && BigInt( amount ) <= BigInt( balance )
+				amount > 0 && amount <= cap && balance !== undefined && BigInt( amount ) <= BigInt( balance )
 			) {
 				sendGameplay( {
 					kind: "storage-move",
@@ -4668,7 +4768,7 @@ export function createUi(
 			const amount = Number( goldAmount ), balance = view.gameplay.progression?.gold;
 			if (
 				!view.gameplay.inventoryPending && /^\d+$/.test( goldAmount ) && Number.isSafeInteger( amount ) &&
-				amount > 0 && amount <= 100000000 && balance !== undefined && BigInt( amount ) <= BigInt( balance )
+				amount > 0 && amount <= 0xffffffff && balance !== undefined && BigInt( amount ) <= BigInt( balance )
 			) {
 				sendGameplay( { kind: "gold-drop", amount } );
 				goldDialog = false;
@@ -4773,7 +4873,12 @@ export function createUi(
 		} else if ( id.startsWith( "cos-tab:" ) ) {
 			const tab = Number( id.slice( 8 ) ),
 				record = view.gameplay?.cosRecords?.find( r => r.gid === cosGid );
-			if ( tab === 0 || tab === 1 && cosHasInventory( record ) || tab === 2 && record?.band === 4 ) {
+			const training = record?.band === 3 && experimental.state().saved.attackPetTraining;
+			if (
+				tab === 0 || tab === 1 && (cosHasInventory( record ) || training) ||
+				tab === 2 && (record?.band === 4 || training)
+			) {
+				petTrainingAskedRef = 0;
 				cosTab = tab;
 				bindCosDraft( record );
 			}
@@ -6464,7 +6569,8 @@ export function createUi(
 			}
 			if (
 				event.kind === "drag" &&
-				(event.id.startsWith( "skill:" ) || event.id.startsWith( "hotbar:" ) ||
+				(event.id.startsWith( "skill:" ) || event.id.startsWith( "pet-skill:" ) ||
+					event.id.startsWith( "hotbar:" ) ||
 					event.id.startsWith( "action:" ))
 			) {
 				// A carried shortcut keeps following the pointer after its own slot
@@ -6541,6 +6647,23 @@ export function createUi(
 				) {
 					carriedItem = null;
 					dirty = true;
+				}
+				// Port-only: a worn wolf gear piece dragged onto a bag slot comes off.
+				if ( event.id.startsWith( "pet-gear:" ) && view?.gameplay && !view.gameplay.inventoryPending ) {
+					const target = topmostControlAt( controls, event.x, event.y );
+					if (
+						target?.id.startsWith( "slot:" ) &&
+						Number( target.id.slice( 5 ) ) >= (view.gameplay.equipmentSlotCount ?? 13)
+					) {
+						sendGameplay( {
+							kind: "cos-training",
+							gid: cosGid,
+							operation: PET_TRAINING_OP.unequip,
+							arg: Number( event.id.slice( 9 ) )
+						} );
+					}
+					dirty = true;
+					return;
 				}
 				// 645180: a bag item released on the card slot registers it, whether it came from this
 				// window's bag or the main one (the source only has to be a bag slot); the slot's own item
@@ -6701,6 +6824,17 @@ export function createUi(
 						item && target && !target.disabled && panel === "Alchemy" && target.id.startsWith( "alchemy-" )
 					) {
 						activate( "alchemy-slot:" + item.slot );
+						return;
+					}
+					// Port-only: a bag item dropped on a wolf gear slot is worn; the
+					// server refuses anything a wolf cannot wear.
+					if ( item && target && !target.disabled && target.id.startsWith( "pet-gear:" ) ) {
+						sendGameplay( {
+							kind: "cos-training",
+							gid: cosGid,
+							operation: PET_TRAINING_OP.equip,
+							arg: item.slot
+						} );
 						return;
 					}
 					// 6EB570: an inventory item dropped on the grant window's slot.
@@ -7427,6 +7561,17 @@ export function createUi(
 					dirty = true;
 					return;
 				}
+				// Port-only pet gear: right-click takes a worn piece off (pet-training.ts).
+				if ( event.id.startsWith( "pet-gear:" ) ) {
+					sendGameplay( {
+						kind: "cos-training",
+						gid: cosGid,
+						operation: PET_TRAINING_OP.unequip,
+						arg: Number( event.id.slice( 9 ) )
+					} );
+					dirty = true;
+					return;
+				}
 				// CIFCOSStatus_OnRightButtonRelease (6A9E40) selects the companion
 				// and makes it the player's target.
 				if ( event.id.startsWith( "cos-status:" ) ) {
@@ -7596,14 +7741,16 @@ export function createUi(
 					splitAmount = raw ? String( Math.min( splitStack.quantity - 1, Number( raw ) ) ) : "";
 				} else if ( event.id === "gold-amount" ) {
 					// A withdrawal draws on the warehouse, so its draft clamps to the
-					// room's gold; the drop and deposit spend the bag's
-					// (BR-261010-1655-2B68: an empty bag zeroed every withdrawal).
+					// room's gold; the drop, exchange and deposit spend the bag's
+					// (BR-261010-1655-2B68: an empty bag zeroed every withdrawal), and
+					// 59A430 caps a warehouse deposit at 100,000,000 (0x5f5e100).
 					const raw = event.value.replace( /[^0-9]/g, "" ).slice( 0, 20 ),
-						limit = BigInt(
-							(goldDialog === "withdraw" ?
-								view?.gameplay?.storage?.gold :
-								view?.gameplay?.progression?.gold) ?? 0
-						);
+						carried = BigInt( view?.gameplay?.progression?.gold ?? 0 ),
+						limit = goldDialog === "withdraw" ?
+							BigInt( view?.gameplay?.storage?.gold ?? 0 ) :
+							goldDialog === "deposit" && carried > 100000000n ?
+							100000000n :
+							carried;
 					goldAmount = raw ? String( BigInt( raw ) > limit ? limit : BigInt( raw ) ) : "";
 					confirmDrop = "";
 				} else if ( event.id === "social-name" ) socialName = event.value;
@@ -7992,6 +8139,9 @@ export function createUi(
 				Math.floor( (next.simulationTimeMs ?? 0) / 100 ) :
 				-1;
 			const slotTick = (next.gameplay?.skillCooldowns?.length || next.gameplay?.itemCooldowns?.length ||
+					next.gameplay?.petTraining?.rows.some( row =>
+						row.timerMs > 0 && quickslotTime < next.gameplay!.petTraining!.receivedAtMs + row.timerMs + 500
+					) ||
 					next.gameplay?.returnScroll || next.gameplay?.questGathering ||
 					skillPressFeedbackActive( next.gameplay, quickslotTime )) ?
 				Math.floor( quickslotTime / 16 ) :
@@ -8923,7 +9073,16 @@ export function createUi(
 				let statusBottom = targetBottom;
 				shown.forEach( ( record, i ) => {
 					const cls = cosClass( record.band )!, chrome = cosStatusChrome( cls );
-					const reference = data.cosReferences.get( record.refObjId );
+					const reference = petReference(
+						data.cosReferences.get( record.refObjId ),
+						experimental.state().saved.attackPetTraining && game?.petTraining?.gid === record.gid ?
+							game.petTraining :
+							undefined,
+						experimental.state().saved.attackPetTraining ?
+							next.entities.find( e => e.gid === record.gid )?.petResolve :
+							undefined,
+						next.simulationTimeMs ?? 0
+					);
 					const nativeRect = cosStatusRect( w, i, cls, cosStatusDesktopTop() );
 					const r: UiRect = compact ?
 						[
@@ -8949,9 +9108,14 @@ export function createUi(
 					image( r, chrome.frame );
 					const icon = iconPath( reference?.icon );
 					if ( icon ) image( [ x + 6, y + 7, 32, 32 ], icon );
-					const ratios = cosStatusRatios( record, reference );
+					const ratios = cosStatusRatios( record, reference ),
+						protection = shieldGauge(
+							next.entities.find( e => e.gid === record.gid ),
+							ratios.hp ?? 0,
+							next.simulationTimeMs ?? 0
+						);
 					const gauges = [
-						[ chrome.showHp, ratios.hp, "am_hp", 47 ],
+						[ chrome.showHp, ratios.hp === null ? null : protection.health, "am_hp", 47 ],
 						[ chrome.showHgp, ratios.hgp, "am_hgp", 56 ]
 					] as const;
 					for ( const [shown, ratio, name, dy] of gauges ) {
@@ -8961,6 +9125,14 @@ export function createUi(
 						paths.push( path );
 						if ( size ) {
 							image( [ x + 4, y + dy, size[0] * ratio, size[1] ], path, white, [ 0, 0, ratio, 1 ] );
+							if ( name === "am_hp" && protection.shield > 0 ) {
+								quads.push( ...shieldGaugeFill( [
+									x + 4 + size[0] * protection.start,
+									y + dy,
+									size[0] * protection.shield,
+									size[1]
+								], full ) );
+							}
 						}
 					}
 					blocks.push( r );
@@ -10159,13 +10331,18 @@ export function createUi(
 				if ( hudData ) {
 					const hpMax = game?.progression?.stats?.maxHp ?? local?.maxHp ?? character?.maxHp,
 						mpMax = game?.progression?.stats?.maxMp ?? local?.maxMp ?? character?.maxMp;
+					const protection = shieldGauge(
+						next.entities.find( e => e.gid === game?.localGid ),
+						(local?.hp ?? 0) / Math.max( 1, hpMax ?? 1 ),
+						next.simulationTimeMs ?? 0
+					);
 					const warning = (options.hpWarning && vitalWarning( local?.hp, hpMax )) ||
 						(options.mpWarning && vitalWarning( local?.mp, mpMax ));
 					cautionVisible = !!warning;
 					const hpGauge = gauges.read(
 							"mini-hp",
 							game?.localGid ?? 0,
-							(local?.hp ?? 0) / Math.max( 1, hpMax ?? 1 ),
+							protection.health,
 							"empty"
 						),
 						mpGauge = gauges.read(
@@ -10187,6 +10364,8 @@ export function createUi(
 						options.mpWarning,
 						warning ? Math.floor( now / 100 ) % 8 : -1,
 						local?.hp,
+						protection.amount,
+						protection.shield,
 						local?.mp,
 						hpMax,
 						mpMax,
@@ -10250,12 +10429,27 @@ export function createUi(
 										)
 									);
 								}
-								authoredText(
-									p["GDR_PMI_TXT_" + vital]!,
-									px,
-									py,
-									`${Math.max( 0, Math.min( current, max ) )} / ${max}`
-								);
+								if ( vital === "HP" && protection.shield > 0 ) {
+									const r = authoredRect( node, px, py );
+									quads.push(
+										...shieldGaugeFill( [
+											r[0] + r[2] * protection.start,
+											r[1],
+											r[2] * protection.shield,
+											r[3]
+										], full )
+									);
+								}
+								const hpText = `${Math.max( 0, Math.min( current, max ) )} / ${max}`;
+								if ( vital === "HP" && protection.shield > 0 ) {
+									authoredText(
+										{ ...p["GDR_PMI_TXT_HP"]!, color: [ 0, 0, 0, 1 ] },
+										px + 1,
+										py + 1,
+										hpText
+									);
+								}
+								authoredText( p["GDR_PMI_TXT_" + vital]!, px, py, hpText );
 							}
 						}
 						// Native caution atlas: eight 128x32 cells, four columns, 100ms per cell.
@@ -10432,7 +10626,18 @@ export function createUi(
 				}
 				// CIFPetMiniInfo (6B3AD0 / 6B34C0): the attack pet's panel, child 100
 				// of the player mini window.
-				const pet = hudData && game ? petMiniInfo( game.cosRecords, hudData.cosReferences ) : null;
+				const attackCosGid = game?.cosRecords?.find( r => cosClass( r.band ) === COS_CLASS_ATTACK )?.gid;
+				const pet = hudData && game ?
+					petMiniInfo(
+						game.cosRecords,
+						hudData.cosReferences,
+						experimental.state().saved.attackPetTraining ? game.petTraining : undefined,
+						experimental.state().saved.attackPetTraining && attackCosGid !== undefined ?
+							next.entities.find( e => e.gid === attackCosGid )?.petResolve :
+							undefined,
+						next.simulationTimeMs ?? 0
+					) :
+					null;
 				const petPanel = hudData?.player.GDR_PMI_PET_MINI_INFO, petLayout = hudData?.windows.ifpetminiinfo;
 				if ( hudData && pet && petPanel && petLayout ) {
 					if ( compact ) {
@@ -10454,7 +10659,12 @@ export function createUi(
 						hgpPath = ROOT + "interface/playerminiinfo/pmi_pet_hgp.png",
 						facePath = ROOT + "interface/playerminiinfo/pmi_pet_face.png",
 						icon = iconPath( pet.icon ),
-						hpGauge = gauges.read( "pet-mini-hp", pet.gid, pet.hp ?? 0, "empty" ),
+						protection = shieldGauge(
+							next.entities.find( e => e.gid === pet.gid ),
+							pet.hp ?? 0,
+							next.simulationTimeMs ?? 0
+						),
+						hpGauge = gauges.read( "pet-mini-hp", pet.gid, protection.health, "empty" ),
 						hgpGauge = gauges.read( "pet-mini-hgp", pet.gid, pet.hgp, "empty" ),
 						cautionFrame = pet.caution ? Math.floor( now / 100 ) % 8 : -1,
 						petControlStart = controls.length;
@@ -10464,6 +10674,8 @@ export function createUi(
 						pet.gid,
 						pet.name,
 						pet.level,
+						protection.amount,
+						protection.shield,
 						icon,
 						hpGauge.current,
 						hpGauge.target,
@@ -10513,6 +10725,15 @@ export function createUi(
 							quads.push(
 								...gaugeFill( [ gx, gy, gw, gh ], node.uv, path, value.current, value.target, full )
 							);
+							if ( path === hpPath && protection.shield > 0 ) {
+								quads.push(
+									...shieldGaugeFill(
+										[ gx + gw * protection.start, gy, gw * protection.shield, gh ],
+										// Retail 112x8 texture: 3px transparent padding plus a 1px black frame.
+										[ gx + 1, gy + 1, gw - 5, gh - 5 ]
+									)
+								);
+							}
 						}
 						// Native caution atlas: eight 128x32 cells, four columns, 100ms per cell.
 						const caution = petLayout.GDR_PET_MINI_EFFECT_HP!;
@@ -10647,14 +10868,26 @@ export function createUi(
 						// as row backing so selecting a member cannot cover their data.
 						if ( row.entity && row.entity.gid === game.target ) authoredImage( slot.GDR_QPS_SELECT!, x, y );
 						authoredText( slot.GDR_QPS_TXT_ID!, x, y, row.member.name );
+						const protection = shieldGauge( row.entity, row.hp, next.simulationTimeMs ?? 0 );
 						authoredGauge(
 							"quick-party-hp:" + row.member.id,
 							row.member.id,
 							slot.GDR_QPS_GAUGE_HP!,
 							x,
 							y,
-							row.hp
+							protection.health
 						);
+						if ( protection.shield > 0 ) {
+							const r = authoredRect( slot.GDR_QPS_GAUGE_HP!, x, y );
+							quads.push(
+								...shieldGaugeFill( [
+									r[0] + r[2] * protection.start,
+									r[1],
+									r[2] * protection.shield,
+									r[3]
+								], full )
+							);
+						}
 						authoredGauge(
 							"quick-party-mp:" + row.member.id,
 							row.member.id,
@@ -10891,7 +11124,16 @@ export function createUi(
 						game?.cosRecords?.find( r => r.gid === target.gid ) :
 						undefined;
 					const maxHp = target.maxHp ??
-						(target.kind === "cos" ? hudData.cosReferences.get( target.refObjId )?.maxHp : undefined);
+						(target.kind === "cos" ?
+							petReference(
+								hudData.cosReferences.get( target.refObjId ),
+								experimental.state().saved.attackPetTraining && game?.petTraining?.gid === target.gid ?
+									game.petTraining :
+									undefined,
+								experimental.state().saved.attackPetTraining ? target.petResolve : undefined,
+								next.simulationTimeMs ?? 0
+							)?.maxHp :
+							undefined);
 					// The local character, selected from its portrait, wears the
 					// player layout (5814D0 handles the local CICUser too).
 					const shown = target.kind === "local-player" ? { ...target, kind: "player" as const } : target;
@@ -10940,9 +11182,24 @@ export function createUi(
 						}
 						for ( const image of output.images ) {
 							if (
-								image.fraction !== undefined && (target.kind === "monster" || target.kind === "cos")
-							) authoredGauge( "target-hp", target.gid, image.node, tx, ty, image.fraction );
-							else authoredImage( image.node, tx, ty, undefined, image.fraction );
+								image.fraction !== undefined &&
+								(target.kind === "monster" || target.kind === "cos" || target.kind === "player" ||
+									target.kind === "local-player")
+							) {
+								const protection = shieldGauge( target, image.fraction, next.simulationTimeMs ?? 0 );
+								authoredGauge( "target-hp", target.gid, image.node, tx, ty, protection.health );
+								if ( protection.shield > 0 ) {
+									const r = authoredRect( image.node, tx, ty );
+									quads.push(
+										...shieldGaugeFill( [
+											r[0] + r[2] * protection.start,
+											r[1],
+											r[2] * protection.shield,
+											r[3]
+										], full )
+									);
+								}
+							} else authoredImage( image.node, tx, ty, undefined, image.fraction );
 						}
 						for ( const row of output.texts ) {
 							if ( !compactOutput ) authoredText( row.node, tx, ty, row.value );
@@ -11244,9 +11501,26 @@ export function createUi(
 					slot: number,
 					r: UiRect,
 					label: string,
-					options: { locked?: boolean; } = {}
+					options: { locked?: boolean; iconAlpha?: number; } = {}
 				) {
-					const { locked = false } = options;
+					// Different attack pets reuse the same band GID; refresh by reference identity.
+					const attackPet = game?.cosRecords?.find( record =>
+						record.band === 3 && !record.dead && record.hp > 0
+					);
+					if ( !attackPet ) petTrainingAskedRef = 0;
+					if (
+						experimental.state().saved.attackPetTraining && attackPet &&
+						petTrainingAskedRef !== attackPet.refObjId
+					) {
+						petTrainingAskedRef = attackPet.refObjId;
+						sendGameplay( {
+							kind: "cos-training",
+							gid: attackPet.gid,
+							operation: PET_TRAINING_OP.state,
+							arg: 2
+						} );
+					}
+					const { locked = false, iconAlpha = 1 } = options;
 					const binding = game?.quickSlots?.find( row => row.slot === slot ),
 						skill = binding?.kind === 0x49 ? training.skill( binding.payload ) : undefined;
 					const item = binding ?
@@ -11255,10 +11529,18 @@ export function createUi(
 					const action = binding?.kind === 0x4a ?
 						hudData?.actions.find( a => a.id === (binding.payload & 0xffffff) ) :
 						undefined;
+					const petDesign = binding?.kind === 0x4a && binding.payload > PET_SKILL_SHORTCUT_BASE ?
+						petSkillDesign( binding.payload - PET_SKILL_SHORTCUT_BASE ) :
+						undefined;
+					const petAvailable =
+						!!(petDesign && binding && game && experimental.state().saved.attackPetTraining &&
+							quickSlotCommand( binding, game ));
 					const name = skill ?
 						localization.text( skill.nameSymbol, skill.name ) :
 						item ?
 						(item.name ?? String( item.refObjId )) + " x" + item.quantity :
+						petDesign ?
+						petDesign.name :
 						action ?
 						hudCopy( action.name ) :
 						binding?.kind === 0x4e ?
@@ -11275,17 +11557,44 @@ export function createUi(
 						draggable: !!binding && !locked
 					} );
 					blocks.push( r );
-					const icon = iconPath( skill?.icon ?? item?.icon ?? action?.icon );
+					const icon = petDesign ?
+						petSkillIcon( petDesign ) :
+						iconPath( skill?.icon ?? item?.icon ?? action?.icon );
 					// A held press outlines the slot; a denied one shakes and tints it.
 					const feedback = skill ? skillPressFeedback( game, skill.id, r, full, quickslotTime ) : undefined;
 					if ( icon ) {
 						paths.push( icon );
 						const ir: UiRect = feedback?.offsetX ? [ r[0] + feedback.offsetX, r[1], r[2], r[3] ] : r;
-						if ( resources.has( icon ) ) rect( ir, [ 1, 1, 1, 1 ], icon );
+						if ( resources.has( icon ) ) {
+							rect(
+								ir,
+								[ 1, 1, 1, petDesign && !petAvailable ? iconAlpha * 0.35 : iconAlpha ],
+								icon,
+								petDesign ? petSkillIconUV( petDesign ) : undefined
+							);
+						}
 					}
 					const cooldown = skill ?
+						// Character and pet timers use the same presentation below.
 						skillCooldown( game?.skillCooldowns ?? [], skill.id, skill.cooldownGroup ?? 0, quickslotTime ) :
 						null;
+					if ( petDesign && petAvailable && game?.petTraining ) {
+						const timer = petCooldownQuads( game.petTraining, petDesign.row, quickslotTime, r, full );
+						for ( const q of timer ) if ( q.texture ) paths.push( q.texture );
+						quads.push( ...timer.filter( q => !q.texture || resources.has( q.texture ) ) );
+					}
+					if ( petDesign && petAvailable && game?.petTraining ) {
+						const entry = game.petTraining.skills.find( s => s.id === petDesign.id );
+						if ( entry ) {
+							const badges = petStackQuads(
+								petSkillStack( game.petTraining, petDesign, entry ),
+								r,
+								full
+							);
+							for ( const q of badges ) if ( q.texture ) paths.push( q.texture );
+							quads.push( ...badges.filter( q => !q.texture || resources.has( q.texture ) ) );
+						}
+					}
 					if ( skill ) {
 						paths.push( ...quickslotTimerPaths() );
 						const timer = quickslotCooldownQuads(
@@ -11509,8 +11818,14 @@ export function createUi(
 				}
 				// The current map is a world-lifetime resource, not a popup-lifetime
 				// resource. Closing M must not release the image and flash on the next open.
-				if ( mapFollow && pose ) {
-					mapPage = worldMapPageAt( pose );
+				const expandedMap = experimental.state().saved.expandedWorldMap;
+				const mapLayout = expandedMap ? hudData?.mapLayout : undefined;
+				const mapIcons = expandedMap ? hudData?.expandedMapIcons : hudData?.mapIcons;
+				const mapLabels = expandedMap ? hudData?.expandedMapLabels : hudData?.mapLabels;
+				if (
+					(mapFollow && pose) || (mapPage !== 0 && !worldMapPages( mapLayout ).some( p => p.id === mapPage ))
+				) {
+					mapPage = pose ? worldMapPageAt( pose, mapLayout ) : 0;
 					mapPan = [ 0, 0 ];
 					mapCenter = null;
 				}
@@ -11584,7 +11899,8 @@ export function createUi(
 						mapPage,
 						[ mapLeft + 6, mapTop + 34, mapWidth - 12, mapHeight - 40 ],
 						mapPan,
-						mapCenter ?? pose
+						mapCenter ?? pose,
+						mapLayout
 					);
 				}
 				const mapProjection = pose && mapOpen ?
@@ -11594,9 +11910,10 @@ export function createUi(
 						[ mapLeft + 6, mapTop + 34, mapWidth - 12, mapHeight - 40 ],
 						mapPan,
 						mapCenter ?? pose,
-						hudData?.mapLabels,
-						hudData?.mapIcons,
-						mapMarkers
+						mapLabels,
+						mapIcons,
+						mapMarkers,
+						mapLayout
 					) :
 					null;
 				// MANUAL drags (AUTO swallows them, 57F43D) move the stored position by the
@@ -11633,7 +11950,7 @@ export function createUi(
 					] :
 					[];
 				for ( const { icon, rect: r } of mapOpen ? mapProjection?.hits ?? [] : [] ) {
-					const page = worldMapPages().find( p => p.id === icon.destination );
+					const page = worldMapPages( mapLayout ).find( p => p.id === icon.destination );
 					if ( page ) {
 						mapHits.push( {
 							id: "map-town:" + page.id,
@@ -11653,7 +11970,8 @@ export function createUi(
 							clip,
 							pan: mapPan,
 							center: mapCenter ?? pose,
-							points: game?.reverseMapPoints ?? []
+							points: game?.reverseMapPoints ?? [],
+							layout: mapLayout
 						} )
 					) {
 						mapImages.push( {
@@ -11678,8 +11996,9 @@ export function createUi(
 						[ mapLeft + 6, mapTop + 34, mapWidth - 12, mapHeight - 40 ],
 						mapPan,
 						mapCenter ?? pose,
-						hudData?.mapIcons ?? [],
-						paths
+						mapIcons ?? [],
+						paths,
+						mapLayout
 					);
 					for ( const row of mapMarkers ) paths.push( row.path );
 					paths.push( MAP_LOCAL_MARKER );
@@ -11691,11 +12010,11 @@ export function createUi(
 					const admission = beginWindow();
 					const mw = mapWidth, mh = mapHeight, mx = mapLeft, my = mapTop;
 					if ( mapFollow && pose ) {
-						mapPage = worldMapPageAt( pose );
+						mapPage = worldMapPageAt( pose, mapLayout );
 						mapPan = [ 0, 0 ];
 						mapCenter = null;
 					}
-					const page = worldMapPages().find( row => row.id === mapPage ),
+					const page = worldMapPages( mapLayout ).find( row => row.id === mapPage ),
 						caption = hudCopy( page ? "UIIT_STT_" + page.name : "UIIT_PAG_WORLDMAP" ) || "World Map";
 					windowBox( caption, mx, my, mw, mh );
 					const inner: UiRect = [ mx + 6, my + 34, mw - 12, mh - 40 ];
@@ -16144,7 +16463,8 @@ export function createUi(
 						bindCosDraft( records[0] );
 					}
 					const record = records.find( r => r.gid === cosGid ),
-						hasInventory = cosHasInventory( record ),
+						training = record?.band === 3 && experimental.state().saved.attackPetTraining,
+						hasInventory = cosHasInventory( record ) || training,
 						busy = !!game?.inventoryPending;
 					// 7785D9..77864C: 0xB05B selector 2 re-binds CIFCOSSetup (6A95E0) when
 					// the bound companion's commandMode changes while its window is open.
@@ -16153,7 +16473,7 @@ export function createUi(
 					) {
 						bindCosDraft( record );
 					}
-					if ( cosTab === 1 && !hasInventory || cosTab === 2 && record?.band !== 4 ) cosTab = 0;
+					if ( cosTab === 1 && !hasInventory || cosTab === 2 && record?.band !== 4 && !training ) cosTab = 0;
 					// Beside a shop (trade goods loading into a transport) the bag keeps
 					// its own close identity; closing it ends the trade, as the shop's does.
 					nativeFrame( root, px, py, record?.name ?? "", panelCloseId( "COS inventory" ) );
@@ -16165,7 +16485,7 @@ export function createUi(
 					].forEach( ( key, i ) =>
 						nativeTab(
 							"cos-tab:" + i,
-							hudCopy( key ),
+							training && i === 2 ? "Skills" : hudCopy( key ),
 							[ px + 18 + i * 78, py + 44, 72, 24 ],
 							cosTab === i,
 							// 6A1404: companion tabs have an asymmetric left inset.
@@ -16175,14 +16495,16 @@ export function createUi(
 								// Unavailable, not busy: an open shop window, or a tab the
 								// record's class lacks (6A1920), holds the lock.
 								disabled: panel === "Shop" ||
-									(i === 1 ? !hasInventory : i === 2 ? record?.band !== 4 : false)
+									(i === 1 ? !hasInventory : i === 2 ? record?.band !== 4 && !training : false)
 							}
 						)
 					);
 					const ox = px + 12,
 						oy = py + 66,
 						page = hudData
-							.windows[cosTab === 1 ? "ifcosinventory" : cosTab === 2 ? "ifcossetup" : "ifcosinfo"]!;
+							.windows[
+								cosTab === 1 && !training ? "ifcosinventory" : cosTab !== 0 ? "ifcossetup" : "ifcosinfo"
+							]!;
 					// CIFCOSInfo_SetCompanion (6A69F0) shows each block by record
 					// class; the gauges (35..37) fill from the record below.
 					const sections = cosInfoSections( cosClass( record?.band ?? 0 ) ?? -1 );
@@ -16198,6 +16520,30 @@ export function createUi(
 							[ 100 ] :
 							[ 31, 32, 42, 43, 44, 45, 60, 61, 62, 63, 65, 66, 67, 68, 71, 72, 73, 76, 77, 78 ])
 					];
+					// The training page keeps only the setup page's backdrop (the inner
+					// box 3 and background tile 7) under its own controls.
+					const setupControls = [
+						9,
+						10,
+						11,
+						12,
+						13,
+						14,
+						15,
+						16,
+						17,
+						18,
+						20,
+						22,
+						25,
+						26,
+						27,
+						30,
+						31,
+						32,
+						40,
+						41
+					];
 					// 6A9420 creates TradeInfo for a transport only; its stars and the
 					// sell-all button are drawn below with their state.
 					const transport = cosClass( record?.band ?? 0 ) === COS_CLASS_TRANSPORT,
@@ -16206,15 +16552,15 @@ export function createUi(
 						page,
 						ox,
 						oy,
-						cosTab === 0 ?
-							hiddenInfo :
+						cosTab === 0 ? hiddenInfo : training ?
+							setupControls :
 							cosTab === 1 ?
 							(transport ?
 								[ COS_TRADE_STAR_FIRST, 27, 28, 29, COS_TRADE_STAR_LAST, COS_TRADE_SELL_ALL ] :
 								tradeInfo) :
 							[]
 					);
-					if ( cosTab === 1 ) {
+					if ( cosTab === 1 && !training ) {
 						const pages = Math.max( 1, Math.ceil( (record?.status ?? 0) / 28 ) );
 						cosPage = Math.min( cosPage, pages - 1 );
 						for ( let i = 0; i < 28; i++ ) {
@@ -16273,7 +16619,18 @@ export function createUi(
 							}
 						}
 					} else if ( cosTab === 0 && record ) {
-						const reference = hudData.cosReferences.get( record.refObjId );
+						const trainingState =
+							experimental.state().saved.attackPetTraining && game?.petTraining?.gid === record.gid ?
+								game.petTraining :
+								undefined;
+						const reference = petReference(
+							hudData.cosReferences.get( record.refObjId ),
+							trainingState,
+							experimental.state().saved.attackPetTraining ?
+								next.entities.find( e => e.gid === record.gid )?.petResolve :
+								undefined,
+							next.simulationTimeMs ?? 0
+						);
 						const node = ( id: number ) => Object.values( page ).find( n => n.id === id );
 						const texts: [number, string][] = [
 							// CIFCosInfo_RefreshName (6A5320): an unnamed companion reads "No name".
@@ -16285,10 +16642,32 @@ export function createUi(
 							authoredLabeledButton( nameButton, ox, oy, "cos-name", hudCopy( nameButton.text ), busy );
 						}
 						if ( sections.hp ) {
-							const ratio = cosStatusRatios( record, reference ).hp ?? 1;
-							texts.push( [ 41, cosHpText( record, reference ) ] );
+							const ratio = cosStatusRatios( record, reference ).hp ?? 1,
+								protection = shieldGauge(
+									next.entities.find( e => e.gid === record.gid ),
+									ratio,
+									next.simulationTimeMs ?? 0
+								);
+							texts.push( [
+								41,
+								cosHpText( record, reference ) +
+								(protection.amount ? " (+" + protection.amount + ")" : "")
+							] );
 							const gauge = node( 35 );
-							if ( gauge ) authoredGauge( "cos-info-hp", record.gid, gauge, ox, oy, ratio );
+							if ( gauge ) {
+								authoredGauge( "cos-info-hp", record.gid, gauge, ox, oy, protection.health );
+								if ( protection.shield > 0 ) {
+									const r = authoredRect( gauge, ox, oy );
+									quads.push(
+										...shieldGaugeFill( [
+											r[0] + r[2] * protection.start,
+											r[1],
+											r[2] * protection.shield,
+											r[3]
+										], full )
+									);
+								}
+							}
 						}
 						if ( sections.rentTime ) {
 							// 6A4FD0 -> 59DAA0 finds the summoner item by companion GID
@@ -16341,13 +16720,16 @@ export function createUi(
 							if ( record.level !== undefined ) texts.push( [ 65, String( record.level ) ] );
 							if ( reference ) {
 								// 6A4600 greys the ability values at low satiety (0xFF999999).
-								const ability = cosAbilities(
-									record,
-									reference,
-									reference.skills.map( skill => {
-										const attack = hudData.tooltipSkills.get( skill )?.attack;
-										return attack?.present ? attack : undefined;
-									} )
+								const ability = petAbilities(
+									cosAbilities(
+										record,
+										reference,
+										reference.skills.map( skill => {
+											const attack = hudData.tooltipSkills.get( skill )?.attack;
+											return attack?.present ? attack : undefined;
+										} )
+									),
+									trainingState
 								);
 								const values: [number, string][] = [
 									[ 66, String( ability.hit ) ],
@@ -16360,6 +16742,16 @@ export function createUi(
 								for ( const [id, value] of values ) {
 									const at = node( id );
 									if ( at ) {
+										if ( trainingState && (id === 67 || id === 77) ) {
+											const label = id === 67 ? "Physical attack" : "Magical attack";
+											controls.push( {
+												id: "pet-stat:" + id,
+												kind: "region",
+												label,
+												helpText: label + ": " + value,
+												rect: authoredClientRect( at, ox, oy )
+											} );
+										}
 										authoredText(
 											ability.low ? { ...at, color: COS_LOW_SATIETY } : at,
 											ox,
@@ -16373,6 +16765,224 @@ export function createUi(
 						for ( const [id, value] of texts ) {
 							const at = node( id );
 							if ( at ) authoredText( at, ox, oy, value );
+						}
+					} else if ( training && cosTab !== 0 ) {
+						// Port-only wolf skill tree and gear (pet-training.ts). Every rule is
+						// the server's 0x3FB1 state; this page draws it and sends F0 commands.
+						const state = game?.petTraining?.gid === cosGid ? game.petTraining : undefined,
+							petLevel = record?.level ?? 0;
+						if ( record && petTrainingAskedRef !== record.refObjId ) {
+							petTrainingAskedRef = record.refObjId;
+							sendGameplay( {
+								kind: "cos-training",
+								gid: cosGid,
+								operation: PET_TRAINING_OP.state,
+								arg: 2
+							} );
+						}
+						if ( cosTab === 1 ) {
+							// The character inventory's equipment side: the model between its
+							// sockets (the wolf framed from its own bounds).
+							quads.push( {
+								doll: { gid: cosGid, yaw: 0, fit: true },
+								texture: DOLL2_TEXTURE,
+								rect: [ ox + 74, oy + 18, 182, 200 ],
+								uv: [ 0, 0, 1, 1 ],
+								color: white,
+								clip: full
+							} );
+							const at: readonly (readonly [number, number])[] = [
+								[ ox + 32, oy + 46 ],
+								[ ox + 32, oy + 120 ],
+								[ ox + 266, oy + 46 ]
+							];
+							PET_GEAR_SLOTS.forEach( ( gear, i ) => {
+								const r: UiRect = [ at[i]![0], at[i]![1], 32, 32 ],
+									socket = hudData.popupArt.sockets[gear.socket]!,
+									item = state?.gear[i] ?? undefined,
+									icon = iconPath( item?.icon );
+								paths.push( socket );
+								if ( resources.has( socket ) ) rect( [ r[0] - 4, r[1] - 4, 40, 40 ], white, socket );
+								if ( icon && item ) {
+									image( r, icon );
+									equipmentOverlay( item, r );
+								}
+								quads.push(
+									...text.quads( gear.name, [ r[0] - 12, r[1] + 38, 56, 12 ], full, white, {
+										hAlign: 1
+									} )
+								);
+								controls.push( {
+									id: "pet-gear:" + i,
+									label: item?.name ?? gear.name,
+									...(item ? {} : { helpText: gear.name + ": drag pet gear here from the bag." }),
+									rect: r,
+									kind: "button",
+									disabled: busy,
+									rightActivate: !!item,
+									draggable: !!item && !busy
+								} );
+							} );
+							[
+								`Pet level ${petLevel}    Equipment ${
+									state?.gear.filter( item => item !== null ).length ?? 0
+								}/3`,
+								`Skill cooldown reduction: ${state?.stats?.cooldownPercent ?? 0}%`
+							].forEach( ( value, i ) =>
+								quads.push(
+									...text.quads(
+										value,
+										[ ox + 20, oy + 232 + i * 20, 290, 16 ],
+										full,
+										i === 0 ? gold : [ .45, .75, 1, 1 ],
+										{
+											hAlign: 1
+										}
+									)
+								)
+							);
+						} else {
+							// The character skill window's rows (native mastery bar, icons in
+							// its cells, level badge, add/up/max buttons): two action rows that
+							// share a cooldown each, then three passive rows of which one
+							// skill is slotted.
+							quads.push(
+								...text.quads(
+									`Skill points ${state?.points ?? 0}`,
+									[ ox + 16, oy + 12, 220, 14 ],
+									full,
+									white
+								)
+							);
+							button( "pet-skill-reset", "Reset", ox + 250, oy + 8, 66, busy );
+							const levelUp = hudData.windows.ifskill_slot!.GDR_STMS_BTN_LEVELUP!,
+								bar = ROOT + "interface/skill/skl_mastery_bar.png",
+								badge = ROOT + "interface/skill/skl_level_tab.png",
+								rows = state ? petRows( state ) : [];
+							paths.push( bar, badge );
+							rows.forEach( ( row, i ) => {
+								const gx = ox + 1, gy = oy + 30 + i * 55, action = i < 2;
+								if ( resources.has( bar ) ) rect( [ gx, gy, 328, 60 ], white, bar );
+								const info: UiRect = [ gx + 7, gy + 8, 20, 20 ];
+								const family = row[0]?.design;
+								if ( family ) {
+									paths.push( PET_SKILL_ATLAS );
+									if ( resources.has( PET_SKILL_ATLAS ) ) {
+										rect( info, white, PET_SKILL_ATLAS, petSkillIconUV( family ) );
+									}
+								}
+								controls.push( {
+									id: "pet-row-info:" + i,
+									label: (row[0]?.design.family ?? "Pet skills") + " information",
+									helpText: petRowHelp( state!, i, quickslotTime ),
+									rect: info,
+									kind: "button"
+								} );
+								for ( let col = row.length; col < 8; col++ ) {
+									image(
+										[ gx + 37 + 36 * col, gy + 3, 32, 32 ],
+										ROOT + "interface/skill/skl_mastery_nothing.png"
+									);
+								}
+								row.forEach( ( { design, skill }, col ) => {
+									const revealed = skill.live && (skill.level > 0 || petLevel >= design.unlockLevel),
+										icon = revealed ?
+											petSkillIcon( design ) :
+											ROOT + "interface/skill/skl_mastery_disable.png",
+										r: UiRect = [ gx + 37 + 36 * col, gy + 3, 32, 32 ],
+										alpha = !revealed ?
+											1 :
+											skill.level === 0 ?
+											0x80 / 0xff :
+											!action && !skill.slotted ?
+											0.65 :
+											1;
+									if ( icon ) {
+										paths.push( icon );
+										if ( resources.has( icon ) ) {
+											rect(
+												r,
+												alpha < 1 ? [ 1, 1, 1, alpha ] : white,
+												icon,
+												revealed ? petSkillIconUV( design ) : undefined
+											);
+										}
+									}
+									if ( skill.learnable ) {
+										authoredButton(
+											{
+												...levelUp,
+												texture: ROOT + "interface/skill/" +
+													(skill.level ? "skl_button_up" : "skl_button_add") +
+													".png"
+											},
+											r[0],
+											r[1],
+											"pet-skill-up:" + design.id,
+											design.name,
+											busy
+										);
+									} else if ( skill.level >= design.maxLevel ) {
+										authoredImage(
+											{ ...levelUp, texture: ROOT + "interface/skill/skl_level_max.png" },
+											r[0],
+											r[1]
+										);
+									}
+									const prerequisiteMet = design.option === 1 ||
+										(state!.skills.find( entry => entry.id === skill.id - 1 )?.level ?? 0) >=
+											design.maxLevel;
+									controls.push( {
+										id: "pet-skill:" + design.id,
+										label: design.name,
+										helpText: petSkillHelp(
+											design,
+											skill,
+											petLevel,
+											state!.points,
+											prerequisiteMet
+										),
+										rect: r,
+										kind: "button",
+										disabled: busy || !skill.live || skill.level === 0 ||
+											(action && !skill.queued && !!petRowCooldown( state!, i, quickslotTime )),
+										selected: skill.queued || skill.slotted,
+										draggable: skill.action && skill.live && skill.level > 0
+									} );
+									if ( action && skill.level > 0 ) {
+										const timer = petCooldownQuads( state!, i, quickslotTime, r, full );
+										for ( const q of timer ) if ( q.texture ) paths.push( q.texture );
+										quads.push( ...timer.filter( q => !q.texture || resources.has( q.texture ) ) );
+									}
+									const shown = skill.effectiveLevel;
+									if ( shown > 0 ) {
+										if ( resources.has( badge ) ) {
+											rect( [ r[0] + 19, r[1] + 17, 16, 16 ], white, badge );
+										}
+										for ( const [n, d] of String( shown ).split( "" ).entries() ) {
+											const digit = ROOT + "interface/skill/skl_lv_number_" + d + ".png";
+											paths.push( digit );
+											if ( resources.has( digit ) ) {
+												rect(
+													[ r[0] + (shown < 10 ? 26 : 24 + n * 5), r[1] + 24, 8, 8 ],
+													white,
+													digit
+												);
+											}
+										}
+									}
+									const stacks = petStackQuads( petSkillStack( state!, design, skill ), r, full );
+									for ( const q of stacks ) if ( q.texture ) paths.push( q.texture );
+									quads.push( ...stacks.filter( q => !q.texture || resources.has( q.texture ) ) );
+									if ( skill.queued ) {
+										quads.push(
+											...text.quads( "next", [ r[0], r[1] - 1, 32, 10 ], full, white, {
+												hAlign: 1
+											} )
+										);
+									}
+								} );
+							} );
 						}
 					} else if ( cosTab !== 0 ) {
 						for ( const node of Object.values( page ).filter( n => n.type === "CIFCheckBox" ) ) {
@@ -16712,7 +17322,15 @@ export function createUi(
 					const state = game?.exchange, root = hudData?.root.GDR_EXCHANGE, page = hudData?.windows.ifexchange;
 					if ( !state?.open || !root || !page ) {
 						exchangeHud.reset();
+						if ( goldDialog === "exchange" ) {
+							goldDialog = false;
+							focus = null;
+						}
 						return;
+					}
+					if ( state.ownLocked && goldDialog === "exchange" ) {
+						goldDialog = false;
+						focus = null;
 					}
 					const admission = beginWindow(),
 						[px, py] = windowOrigin( "Exchange", [
@@ -16755,14 +17373,7 @@ export function createUi(
 						}
 					}
 					authoredText( { ...at( 18 ), rect: [ 71, 152, 100, 16 ] }, px, py, String( state.theirGold ) );
-					partyEdit(
-						{ ...at( 19 ), rect: [ 71, 296, 100, 16 ] },
-						px,
-						py,
-						"exchange-gold",
-						exchangeHud.gold() || String( state.ownGold ),
-						12
-					);
+					authoredText( { ...at( 19 ), rect: [ 71, 296, 100, 16 ] }, px, py, String( state.ownGold ) );
 					authoredButton(
 						at( 15 ),
 						px,
@@ -22229,7 +22840,11 @@ export function createUi(
 			}
 			if (
 				worldVisible &&
-				(warDialog.money !== null || goldDialog && (panel === "Inventory" || panel === "Storage"))
+				(warDialog.money !== null ||
+					goldDialog && (
+							panel === "Inventory" || panel === "Storage" ||
+							goldDialog === "exchange" && !!game?.exchange?.open && !game.exchange.ownLocked
+						))
 			) {
 				const amount = warDialog.money ?? goldAmount,
 					inputId = warDialog.money !== null ? "war-money" : "gold-amount";
@@ -23982,11 +24597,21 @@ export function createUi(
 						hud.data()?.actions.find( r => r.id === (binding.payload & 0xffffff) ) :
 						undefined,
 					item = binding ? game.inventory.find( r => r.slot === quickSlotItemSlot( binding ) ) : undefined,
-					icon = iconPath( skill?.icon ?? action?.icon ?? item?.icon );
+					petDesign = binding?.kind === 0x4a ?
+						petSkillDesign( binding.payload - PET_SKILL_SHORTCUT_BASE ) :
+						undefined,
+					icon = petDesign ?
+						petSkillIcon( petDesign ) :
+						iconPath( skill?.icon ?? action?.icon ?? item?.icon );
 				if ( icon ) {
 					paths.push( icon );
 					if ( resources.has( icon ) ) {
-						rect( [ carriedShortcut.x - 16, carriedShortcut.y - 16, 32, 32 ], white, icon );
+						rect(
+							[ carriedShortcut.x - 16, carriedShortcut.y - 16, 32, 32 ],
+							white,
+							icon,
+							petDesign ? petSkillIconUV( petDesign ) : undefined
+						);
 					}
 				}
 			}
@@ -24006,6 +24631,31 @@ export function createUi(
 							key && hudCopy( key ));
 				const hudData = hud.data();
 				let tooltip: readonly TooltipRow[] = value ? [ { value, color: 0xffffffff } ] : [];
+				const petBinding = control?.id.startsWith( "hotbar:" ) ?
+					game?.quickSlots?.find( entry =>
+						entry.slot === Number( control.id.slice( 7 ) ) && entry.kind === 0x4a &&
+						entry.payload > PET_SKILL_SHORTCUT_BASE
+					) :
+					undefined;
+				if ( (control?.id.startsWith( "pet-skill:" ) || petBinding) && game?.petTraining ) {
+					const skillId = petBinding ?
+							petBinding.payload - PET_SKILL_SHORTCUT_BASE :
+							Number( control!.id.slice( 10 ) ),
+						skill = game.petTraining.skills.find( entry => entry.id === skillId ),
+						design = petSkillDesign( skillId ),
+						level = game.cosRecords?.find( record => record.gid === game.petTraining!.gid )?.level ?? 0;
+					if ( skill && design ) {
+						tooltip = petSkillTooltip(
+							design,
+							skill,
+							level,
+							game.petTraining.points,
+							design.option === 1 ||
+								(game.petTraining.skills.find( entry => entry.id === skill.id - 1 )?.level ?? 0) >=
+									design.maxLevel
+						);
+					}
+				}
 				// A press on the hovered control itself (a click, a Ctrl+click quick
 				// sell) keeps its tooltip, so it does not blink on every click
 				// (BUG-072). Native tooltips follow hover alone: A115C0 hit-tests the
@@ -24350,7 +25000,15 @@ export function createUi(
 			paths.push( ...windowWarm.paths() );
 			// An open map wants every tile a drag can reveal, even when it opened
 			// before its warm build ran.
-			if ( panel === "Map" ) paths.push( ...worldMapImagePaths( hud.data()?.mapIcons ) );
+			if ( panel === "Map" ) {
+				const expandedMap = experimental.state().saved.expandedWorldMap;
+				paths.push(
+					...worldMapImagePaths(
+						expandedMap ? hud.data()?.expandedMapIcons : hud.data()?.mapIcons,
+						expandedMap ? hud.data()?.mapLayout : undefined
+					)
+				);
+			}
 			for ( const item of game?.inventory ?? [] ) {
 				const path = iconPath( item.icon );
 				if ( path ) paths.push( path );

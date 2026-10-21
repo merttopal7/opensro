@@ -11,6 +11,7 @@ the per-actor loop: a loop `continue` is `return null` here.
 ===========================================================================
 */
 import { fortressAppearance } from "@/engine/foundation/animation/fortress-appearance";
+import { isGoldHeapType } from "@/engine/foundation/gameplay/ground-item";
 import { defaultWearFrozen } from "@/engine/foundation/animation/default-wear-policy";
 import { assembleEquipmentAppearance } from "@/engine/foundation/animation/equipment-appearance";
 import type { ModelParticle } from "@/engine/foundation/animation/model-particles";
@@ -114,8 +115,7 @@ export function createActorAppearance( owner: ActorOwner ) {
 					}
 					return null;
 				}
-				const gold = (entity.groundItem.typeFlags & 0x60) === 0x60 &&
-					(entity.groundItem.typeFlags & 0x780) === 0x280;
+				const gold = isGoldHeapType( entity.groundItem.typeFlags );
 				const fanfare = gold && entity.groundItem.appear !== undefined ?
 					published.dropModels["item/etc/drop_ch_money_ing.bsr"] :
 					undefined;

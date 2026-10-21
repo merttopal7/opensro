@@ -181,8 +181,17 @@ function createFixture( held = [] ) {
 					}
 				} );
 			} else pending.set( id, { kind: "bytes", id, buffer: Uint8Array.from( bytes ).buffer } );
-		} catch {
-			pending.set( id, { kind: "error", id, error: "Fixture asset missing: " + path } );
+		} catch ( error ) {
+			// As the worker reports a path the published manifest lacks
+			// (AssetAbsentError): optional data such as worldmap-mapinfo.json is
+			// absent from a native build.
+			const absent = /** @type {NodeJS.ErrnoException} */ (error).code === "ENOENT";
+			pending.set( id, {
+				kind: "error",
+				id,
+				error: "Fixture asset missing: " + path,
+				...(absent ? { absent: true } : {})
+			} );
 		}
 	}
 	/*

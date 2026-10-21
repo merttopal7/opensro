@@ -86,10 +86,27 @@ func IsCodenameBand(typeFlags uint16) bool {
 	return group == 0x400 || group == 0x480
 }
 
-// IsGoldBand reports whether the row carries a u32 gold amount (the gold heap
-// group 0x280).
+// IsGoldBand reports whether the row carries a u32 amount: the whole group
+// 0x280 (TID 3.3.5), as the v1.150 client parses it (ItemTid_IsEtcType5
+// 4FB2A0 in CSOItem_Deserialize 78C9E4). It is a wire width, not a meaning:
+// the group also holds the later shop tokens (IsGoldHeap).
 func IsGoldBand(typeFlags uint16) bool {
 	return isItemClass(typeFlags) && typeFlags&0x60 == 0x60 && typeFlags&0x780 == 0x280
+}
+
+// tid4Mask selects TID4; shopTokenTID is TID4 1 inside group 0x280:
+// the later shop tokens (ITEM_ETC_SD_TOKEN_*, ITEM_ETC_ARENA_COIN).
+const (
+	tid4Mask     = 0xF800
+	shopTokenTID = 0x800
+)
+
+// IsGoldHeap reports a gold heap (TID 3.3.5.0, ITEM_ETC_GOLD_*): the gold
+// band without the shop tokens, which v1.188 excludes the same way in
+// CGItem_IsGold (483159..483163) and CInstanceItem_Serialize_Helper
+// (42FE3B..42FE45). Native v1.150 data has no tokens, so the two agree there.
+func IsGoldHeap(typeFlags uint16) bool {
+	return IsGoldBand(typeFlags) && typeFlags&tid4Mask != shopTokenTID
 }
 
 // GroundItemRow is one CIItem ground-drop entity row.

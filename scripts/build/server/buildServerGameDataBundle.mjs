@@ -19,7 +19,15 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { withGeneratedAssetsLock } from "../../rebuildLock.mjs";
 import { loadCharacterDataRows } from "../char/resolveCharRoster.mjs";
-import { dataExtractedRoot, publicRoot, rebuildRoot, retailTextdataRoot, serverGameDataRoot } from "../world/paths.mjs";
+import { VARIANT_MANIFEST } from "../../lib/expandedBuild.mjs";
+import {
+	dataExtractedRoot,
+	gameRoot,
+	publicRoot,
+	rebuildRoot,
+	retailTextdataRoot,
+	serverGameDataRoot
+} from "../world/paths.mjs";
 import { buildStructureZoneProjection } from "./structureZones.mjs";
 import { buildServerGameDataArchive } from "./serverGameDataArchive.mjs";
 import { completeItemTextProjection, completeItemReferenceProjection } from "../shared/itemTextCompletions.mjs";
@@ -35,6 +43,8 @@ const PROTOCOL_VERSION = 2;
 const WORLD_PUBLIC_ROOT = path.join( publicRoot, "assets", "world" );
 // CObjectStringIfo_Load (98C7F0) reads this Data.pk2 file.
 const OBJECT_STRING_FILE = path.join( dataExtractedRoot, "navmesh", "objectstring.ifo" );
+// Read by apps/server/internal/game/world/alexandria (OverlayFile).
+const ALEXANDRIA_OVERLAY_FILE = path.join( "textdata", "alexandria-overlay.json" );
 
 export const defaultServerGameDataRoot = serverGameDataRoot;
 
@@ -56,6 +66,10 @@ export async function buildServerGameDataBundle( options ) {
 
 	try {
 		await copyTextdataProjection( temporaryRoot, textdataRoot );
+		await buildAlexandriaOverlayProjection(
+			temporaryRoot,
+			options.variantManifest ?? path.join( gameRoot, VARIANT_MANIFEST )
+		);
 		await buildCharacterAuthorityProjection( temporaryRoot, textdataRoot );
 		await buildAreaProjection( temporaryRoot, worldPublicRoot );
 		await buildMovementProjection( temporaryRoot, worldPublicRoot );
@@ -193,6 +207,41 @@ async function copyTextdataProjection( bundleRoot, sourceRoot ) {
 			)
 		)
 	);
+}
+
+/*
+================
+buildAlexandriaOverlayProjection
+
+Port-only, not native. A game root made by build_alexandria_variant.py adds
+Alexandria's regions, gates and NPC placements to the textdata; the server
+shows them only while SRO_ALEXANDRIA is on. This projects what it must hide
+otherwise: the added regions, teleport codes and gate building codenames. A
+native game root has no variant manifest and the projection gains no file,
+so its manifest stays byte-identical.
+================
+*/
+export async function buildAlexandriaOverlayProjection( bundleRoot, variantManifestPath ) {
+	if ( !(await isRegularFile( variantManifestPath )) ) {
+		return;
+	}
+	const variant = await readJson( variantManifestPath );
+	if ( variant.format !== "opensro-alexandria-variant-v1" ) {
+		throw new Error( `Unsupported Alexandria variant manifest ${variant.format}` );
+	}
+	const regions = (variant.regions ?? []).map( ( { sectorX, sectorY } ) => (sectorY << 8) | sectorX );
+	const teleports = variant.gates?.gates ?? [];
+	const buildings = variant.gates?.buildingCodes;
+	if ( regions.length === 0 || teleports.length === 0 || !Array.isArray( buildings ) ) {
+		throw new Error( `Alexandria variant manifest ${variantManifestPath} lacks regions, gates or buildingCodes` );
+	}
+	await writeJson( path.join( bundleRoot, ALEXANDRIA_OVERLAY_FILE ), {
+		format: "sro-server-alexandria-overlay",
+		version: 1,
+		regions: [ ...new Set( regions ) ].sort( ( left, right ) => left - right ),
+		teleports: [ ...teleports ].sort(),
+		buildings: [ ...buildings ].sort()
+	} );
 }
 
 /*

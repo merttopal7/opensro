@@ -13,13 +13,13 @@ import type { Pose } from "@/engine/contracts/gameplay";
 import type { UiQuad, UiRect } from "@/engine/contracts/ui";
 import { minimapRotation } from "./hud-readouts";
 const WORLD_MAP_ROOT = "/assets/images/Media_extracted/interface/worldmap/map/";
-// The overview page is 28 x 8 tiles of 128 pixels; tile names count four
-// regions per tile from region 66 x 113.
+// The overview page is tiles of 128 pixels; tile names count four regions per
+// tile from the layout's top-left region (66 x 113 and 28 x 8 tiles natively;
+// worldmap_mapinfo.txt row 0 widens it for a client that ships more map).
 // The local player's map sign, drawn last (57ce80).
 export const MAP_LOCAL_MARKER = "/assets/images/Media_extracted/interface/minimap/mm_sign_character.png";
-const WORLD_TILE_COLUMNS = 28;
-const WORLD_TILE_ROWS = 8;
 const WORLD_TILE_SIZE = 128;
+const WORLD_TILE_REGIONS = 4;
 
 /*
 ================
@@ -28,8 +28,9 @@ worldMapTilePath
 The overview tile at column x, row y.
 ================
 */
-function worldMapTilePath( x: number, y: number ): string {
-	return WORLD_MAP_ROOT + `map_world_${66 + x * 4}x${113 - y * 4}.png`;
+function worldMapTilePath( x: number, y: number, overview: WorldOverview ): string {
+	return WORLD_MAP_ROOT +
+		`map_world_${overview.left + x * WORLD_TILE_REGIONS}x${overview.top - y * WORLD_TILE_REGIONS}.png`;
 }
 
 /*
@@ -54,14 +55,122 @@ decoded so a tile is never black while it loads. Native CIFWorldMap
 creates every tile when the window is built.
 ================
 */
-export function worldMapImagePaths( icons: readonly MapIcon[] = [] ): string[] {
+export function worldMapImagePaths(
+	icons: readonly MapIcon[] = [],
+	layout: WorldMapLayout = nativeLayout()
+): string[] {
 	const paths: string[] = [];
-	for ( let x = 0; x < WORLD_TILE_COLUMNS; x++ ) {
-		for ( let y = 0; y < WORLD_TILE_ROWS; y++ ) paths.push( worldMapTilePath( x, y ) );
+	for ( let x = 0; x < layout.overview.columns; x++ ) {
+		for ( let y = 0; y < layout.overview.rows; y++ ) paths.push( worldMapTilePath( x, y, layout.overview ) );
 	}
-	for ( const page of worldMapPages() ) paths.push( worldMapPagePath( page.image ) );
+	for ( const page of worldMapPages( layout ) ) paths.push( worldMapPagePath( page.image ) );
 	for ( const icon of icons ) paths.push( icon.path );
 	return paths;
+}
+
+/*
+================
+WorldOverview
+
+The overview page's region box and its size in tiles. Natively it is regions
+66..177 across and 113..82 down (28 x 8 tiles).
+================
+*/
+interface WorldOverview {
+	readonly left: number;
+	readonly top: number;
+	readonly columns: number;
+	readonly rows: number;
+}
+function nativeOverview(): WorldOverview {
+	return { left: 66, top: 113, columns: 28, rows: 8 };
+}
+// Town pages beyond the five the native client knows, from the published
+// worldmap_mapinfo rows. Ids 1000 and up are the fortress and arena pages,
+// which this window does not draw.
+const EXTRA_PAGE_FIRST = 6;
+const EXTRA_PAGE_LAST = 999;
+
+/*
+================
+WorldMapLayout
+
+What the published worldmap_mapinfo rows add to the native map: the overview
+box and the extra town pages. Plain data the HUD resources decode once and
+the window passes down; this module keeps no state of its own.
+================
+*/
+export interface WorldMapLayout {
+	readonly overview: WorldOverview;
+	readonly extra: readonly TownPage[];
+}
+
+/*
+================
+nativeLayout
+
+The layout of a build that publishes no extra map: the native overview and
+the five native towns. A function, not a constant, because this module keeps
+no shared state (the ownership gate allows scalar constants only).
+================
+*/
+export function nativeLayout(): WorldMapLayout {
+	return { overview: nativeOverview(), extra: [] };
+}
+
+interface TownPage {
+	readonly id: number;
+	readonly name: string;
+	readonly image: string;
+	readonly size: readonly [number, number];
+	readonly texture: readonly [number, number];
+	readonly picture: readonly [number, number];
+	readonly bounds: readonly [number, number, number, number, number, number, number, number];
+}
+
+/*
+================
+decodeWorldMapLayout
+
+Reads the published worldmap_mapinfo rows: the overview's region box (row 0)
+and every extra town page (a kind 1 row with id 6..999). Rows that do not
+describe a whole-tile overview or a usable page are ignored, so a build with
+no extra map keeps the native layout.
+================
+*/
+export function decodeWorldMapLayout( raw: unknown ): WorldMapLayout {
+	const rows = (raw as { rows?: unknown; } | null)?.rows;
+	let overview = nativeOverview();
+	if ( !Array.isArray( rows ) ) return nativeLayout();
+	const pages: TownPage[] = [];
+	for ( const row of rows ) {
+		if ( !Array.isArray( row ) || row.length < 19 ) continue;
+		const id = Number( row[0] ), kind = Number( row[1] );
+		const box = [ 10, 11, 12, 13 ].map( i => Number( row[i] ) );
+		if ( !box.every( Number.isInteger ) ) continue;
+		const [left, top, right, bottom] = box as [number, number, number, number];
+		if ( id === 0 && kind === 0 ) {
+			const columns = (right - left + 1) / WORLD_TILE_REGIONS, tileRows = (top - bottom + 1) / WORLD_TILE_REGIONS;
+			if ( Number.isInteger( columns ) && Number.isInteger( tileRows ) && columns > 0 && tileRows > 0 ) {
+				overview = { left, top, columns, rows: tileRows };
+			}
+		} else if ( kind === 1 && id >= EXTRA_PAGE_FIRST && id <= EXTRA_PAGE_LAST ) {
+			const picture = String( row[3] ).replaceAll( "\\", "/" ).split( "/" ).pop() ?? "";
+			const sizes = [ 4, 5, 6, 7, 8, 9, 14, 15, 16, 17 ].map( i => Number( row[i] ) );
+			if ( !/^map_[a-z0-9_]+\.ddj$/.test( picture ) || !sizes.every( Number.isFinite ) ) continue;
+			const [textureX, textureY, pictureX, pictureY, drawX, drawY, ...offsets] = sizes as number[];
+			pages.push( {
+				id,
+				name: String( row[2] ),
+				image: picture.slice( "map_".length, -".ddj".length ),
+				size: [ drawX!, drawY! ],
+				texture: [ textureX!, textureY! ],
+				picture: [ pictureX!, pictureY! ],
+				bounds: [ left, top, right, bottom, ...offsets ] as unknown as TownPage["bounds"]
+			} );
+		}
+	}
+	return { overview, extra: pages };
 }
 
 /*
@@ -69,9 +178,19 @@ export function worldMapImagePaths( icons: readonly MapIcon[] = [] ): string[] {
 worldMapPages
 
 The shipped worldmap_mapinfo.txt fields; 5758D0 probes towns 1..5 in order.
+Pages published beyond those five (decodeWorldMapLayout) follow them.
 ================
 */
-export function worldMapPages() {
+export function worldMapPages( layout: WorldMapLayout = nativeLayout() ) {
+	return [ ...worldMapTownPages(), ...layout.extra ];
+}
+
+/*
+================
+worldMapTownPages
+================
+*/
+function worldMapTownPages() {
 	return [
 		{
 			id: 1,
@@ -126,11 +245,11 @@ worldMapPageAt
 The town page whose region box holds the pose, or 0 for the overview.
 ================
 */
-export function worldMapPageAt( p: Pose ): number {
+export function worldMapPageAt( p: Pose, layout: WorldMapLayout = nativeLayout() ): number {
 	if ( p.regionId & 0x8000 ) return 0;
 	const rx = p.regionId & 255,
 		rz = p.regionId >>> 8;
-	for ( const page of worldMapPages() ) {
+	for ( const page of worldMapPages( layout ) ) {
 		const [l, t, r, b, lx, ly, rxoff, ry] = page.bounds;
 		if ( rx < l || rx > r || rz < b || rz > t ) continue;
 		const x = (rx - l) * 1920 + p.x,
@@ -183,7 +302,7 @@ decodeMapIcons
 Validate the published map icon records.
 ================
 */
-export function decodeMapIcons( raw: unknown ): readonly MapIcon[] {
+export function decodeMapIcons( raw: unknown, layout: WorldMapLayout = nativeLayout() ): readonly MapIcon[] {
 	const rows = (raw as { rows?: unknown; }).rows;
 	if ( !Array.isArray( rows ) ) throw Error( "Invalid world map records" );
 	return rows.flatMap( ( row ) => {
@@ -192,8 +311,8 @@ export function decodeMapIcons( raw: unknown ): readonly MapIcon[] {
 		}
 		if ( Number( row[1] ) !== 2 ) return [];
 		const page = Number( row[7] ),
-			x = Number( row[10] ) + (page === 0 ? (Number( row[8] ) - 66) * 32 : 0),
-			y = Number( row[11] ) + (page === 0 ? (113 - Number( row[9] )) * 32 : 0),
+			x = Number( row[10] ) + (page === 0 ? (Number( row[8] ) - layout.overview.left) * 32 : 0),
+			y = Number( row[11] ) + (page === 0 ? (layout.overview.top - Number( row[9] )) * 32 : 0),
 			width = Number( row[12] ),
 			height = Number( row[13] ),
 			destination = Number( row[6] ),
@@ -238,7 +357,8 @@ add 32 pixels per region. Text is centered by its measured glyph extent.
 */
 export function decodeMapLabels(
 	raw: unknown,
-	names: Readonly<Record<string, string>>
+	names: Readonly<Record<string, string>>,
+	layout: WorldMapLayout = nativeLayout()
 ): readonly MapLabel[] {
 	const rows = (raw as { rows?: unknown; }).rows;
 	if ( !Array.isArray( rows ) ) throw Error( "Invalid world map records" );
@@ -248,8 +368,8 @@ export function decodeMapLabels(
 		}
 		if ( Number( row[1] ) !== 1 ) return [];
 		const page = Number( row[7] ),
-			x = Number( row[10] ) + (page === 0 ? (Number( row[8] ) - 66) * 32 : 0),
-			y = Number( row[11] ) + (page === 0 ? (113 - Number( row[9] )) * 32 : 0),
+			x = Number( row[10] ) + (page === 0 ? (Number( row[8] ) - layout.overview.left) * 32 : 0),
+			y = Number( row[11] ) + (page === 0 ? (layout.overview.top - Number( row[9] )) * 32 : 0),
 			font = Number( row[13] );
 		if ( ![ page, x, y, font ].every( Number.isFinite ) ) {
 			throw Error( "Invalid map coordinates" );
@@ -293,7 +413,8 @@ export function worldMapPresentation(
 	center: Pose = p,
 	labels: readonly MapLabel[] = [],
 	icons: readonly MapIcon[] = [],
-	markers: readonly MapMarker[] = []
+	markers: readonly MapMarker[] = [],
+	layout: WorldMapLayout = nativeLayout()
 ) {
 	const hits: { icon: MapIcon; rect: UiRect; }[] = [];
 	// 57fe60 paints the page, then 57bbb0 traverses the 6200 list twice:
@@ -304,7 +425,7 @@ export function worldMapPresentation(
 		overlay: UiQuad[] = [],
 		markerQuads: UiQuad[] = [],
 		white = [ 1, 1, 1, 1 ] as const;
-	const frame = worldMapFrame( pageId, clip, pan, center );
+	const frame = worldMapFrame( pageId, clip, pan, center, layout );
 	const { page, width, height, cx, cy, px, py, ox, oy } = frame;
 	/*
 	================
@@ -354,9 +475,9 @@ export function worldMapPresentation(
 			[ 0, 0, picture[0] / page.texture[0], picture[1] / page.texture[1] ]
 		);
 	} else {
-		for ( let x = 0; x < WORLD_TILE_COLUMNS; x++ ) {
-			for ( let y = 0; y < WORLD_TILE_ROWS; y++ ) {
-				sprite( background, worldMapTilePath( x, y ), [
+		for ( let x = 0; x < layout.overview.columns; x++ ) {
+			for ( let y = 0; y < layout.overview.rows; y++ ) {
+				sprite( background, worldMapTilePath( x, y, layout.overview ), [
 					ox + x * WORLD_TILE_SIZE,
 					oy + y * WORLD_TILE_SIZE,
 					WORLD_TILE_SIZE,
@@ -412,15 +533,22 @@ drag delta after clipping it against the four view edges, so the stored
 position never leaves the page; pan is that clamped position.
 ================
 */
-function worldMapFrame( pageId: number, clip: UiRect, pan: readonly [number, number], center: Pose ) {
-	const page = worldMapPages().find( ( row ) => row.id === pageId );
-	const width = page?.size[0] ?? 3584,
-		height = page?.size[1] ?? 1024;
+function worldMapFrame(
+	pageId: number,
+	clip: UiRect,
+	pan: readonly [number, number],
+	center: Pose,
+	layout: WorldMapLayout = nativeLayout()
+) {
+	const overview = layout.overview;
+	const page = worldMapPages( layout ).find( ( row ) => row.id === pageId );
+	const width = page?.size[0] ?? overview.columns * WORLD_TILE_SIZE,
+		height = page?.size[1] ?? overview.rows * WORLD_TILE_SIZE;
 	const b = page?.bounds,
-		left = b ? b[0] * 192 + b[4] : 66 * 192,
-		bottom = b ? b[3] * 192 + b[7] : 82 * 192,
-		top = b ? b[1] * 192 + b[5] : 114 * 192,
-		right = b ? b[2] * 192 + b[6] : 178 * 192;
+		left = b ? b[0] * 192 + b[4] : overview.left * 192,
+		bottom = b ? b[3] * 192 + b[7] : (overview.top + 1 - overview.rows * WORLD_TILE_REGIONS) * 192,
+		top = b ? b[1] * 192 + b[5] : (overview.top + 1) * 192,
+		right = b ? b[2] * 192 + b[6] : (overview.left + overview.columns * WORLD_TILE_REGIONS) * 192;
 	const cx = clip[2] / 2 -
 			(((center.regionId & 255) * 192 + center.x / 10 - left) /
 					(right - left)) *
@@ -449,9 +577,10 @@ export function worldMapPoint(
 	pan: readonly [number, number],
 	center: Pose,
 	sx: number,
-	sy: number
+	sy: number,
+	layout: WorldMapLayout = nativeLayout()
 ): { regionId: number; x: number; z: number; } | null {
-	const f = worldMapFrame( pageId, clip, pan, center );
+	const f = worldMapFrame( pageId, clip, pan, center, layout );
 	const mx = sx - f.ox,
 		my = sy - f.oy;
 	if ( mx < 0 || my < 0 || mx >= f.width || my >= f.height ) return null;
@@ -490,16 +619,19 @@ export function worldMapDemand(
 	pan: readonly [number, number],
 	center: Pose,
 	icons: readonly MapIcon[],
-	out: string[]
+	out: string[],
+	layout: WorldMapLayout = nativeLayout()
 ) {
-	const { page, width, height, ox, oy } = worldMapFrame( pageId, clip, pan, center );
+	const { page, width, height, ox, oy } = worldMapFrame( pageId, clip, pan, center, layout );
 	if ( page ) {
 		if ( inClip( ox, oy, width, height, clip ) ) out.push( worldMapPagePath( page.image ) );
 	} else {
-		for ( let x = 0; x < WORLD_TILE_COLUMNS; x++ ) {
-			for ( let y = 0; y < WORLD_TILE_ROWS; y++ ) {
+		for ( let x = 0; x < layout.overview.columns; x++ ) {
+			for ( let y = 0; y < layout.overview.rows; y++ ) {
 				const tx = ox + x * WORLD_TILE_SIZE, ty = oy + y * WORLD_TILE_SIZE;
-				if ( inClip( tx, ty, WORLD_TILE_SIZE, WORLD_TILE_SIZE, clip ) ) out.push( worldMapTilePath( x, y ) );
+				if ( inClip( tx, ty, WORLD_TILE_SIZE, WORLD_TILE_SIZE, clip ) ) {
+					out.push( worldMapTilePath( x, y, layout.overview ) );
+				}
 			}
 		}
 	}
@@ -522,11 +654,12 @@ export function worldMapQuads(
 	pageId: number,
 	clip: UiRect,
 	pan: readonly [number, number],
-	center: Pose = p
+	center: Pose = p,
+	layout: WorldMapLayout = nativeLayout()
 ): readonly UiQuad[] {
 	// Paint order without the text layer; callers that render labels splice
 	// their glyph quads between background and overlay instead.
-	const presentation = worldMapPresentation( p, pageId, clip, pan, center );
+	const presentation = worldMapPresentation( p, pageId, clip, pan, center, [], [], [], layout );
 	return [ ...presentation.background, ...presentation.overlay, ...presentation.markers ];
 }
 
@@ -596,9 +729,10 @@ export function worldMapPointMarkers<
 		readonly pan: readonly [number, number];
 		readonly center: Pose;
 		readonly points: readonly Point[];
+		readonly layout?: WorldMapLayout;
 	}
 ): { readonly point: Point; readonly rect: UiRect; }[] {
-	const frame = worldMapFrame( view.page, view.clip, view.pan, view.center );
+	const frame = worldMapFrame( view.page, view.clip, view.pan, view.center, view.layout );
 	return view.points.flatMap( point => {
 		const rect = worldMapMarkerRect( frame, point );
 		return rect && mapLabelVisible( rect, view.clip ) ? [ { point, rect } ] : [];

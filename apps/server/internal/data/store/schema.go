@@ -86,7 +86,9 @@ func isVersionMismatch(err error) bool {
 // and join fields plus character campDisbandedAtMs (native _TrainingCamp /
 // _TrainingCampMember / _TrainingCampSubMentorHonorPoint). The upgrade
 // rewrites no record.
-const CurrentVersion = 27
+// Version 28 adds opt-in companion training/treeVersion to both schema-27
+// histories. The preserving upgrade never rewrites a character record.
+const CurrentVersion = 28
 
 // SkillSeedFunc resolves the current racial base-skill set while preserving
 // any already learned skill identifiers.

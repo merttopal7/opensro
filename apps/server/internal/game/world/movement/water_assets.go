@@ -237,6 +237,13 @@ func (v *WaterValidator) loadCatalog() *regionCatalog {
 	if !v.readJSON(v.catalogPath, catalog) {
 		catalog = nil
 	}
+	if catalog != nil {
+		for name := range catalog.RegionsByID {
+			if v.hidden.HidesRegion(parseRegionID(name)) {
+				delete(catalog.RegionsByID, name)
+			}
+		}
+	}
 
 	v.mu.Lock()
 	defer v.mu.Unlock()

@@ -91,11 +91,10 @@ func (rt *Runtime) planInventoryGrant(
 		if !ok || ref == nil {
 			return nil, nil, fmt.Errorf("unresolved quest reward %s", request.Codename)
 		}
-		// A gold heap (the gold band, ITEM_ETC_GOLD_*) only lies on the
-		// ground: pickup credits the balance and never writes a row. A row
-		// would carry a gold type word the inventory body cannot encode,
-		// and the client fails world entry on it for good (#367).
-		if wire.IsGoldBand(ref.TypeFlags()) {
+		// A gold heap (ITEM_ETC_GOLD_*) only lies on the ground: pickup
+		// credits the balance and never writes a row (#367). The shop tokens
+		// that share its group are ordinary stackable items (wire.IsGoldHeap).
+		if wire.IsGoldHeap(ref.TypeFlags()) {
 			return nil, nil, fmt.Errorf("ground-only item %s cannot enter an inventory", request.Codename)
 		}
 		item := inventory.Item{RefObjID: ref.RefObjID, Codename: ref.Codename, TypeFlags: ref.TypeFlags(), Quantity: uint16(request.Count)}
@@ -131,7 +130,7 @@ func (rt *Runtime) planInventoryItemsGrant(
 		if item.Quantity == 0 || rt.deps.ItemReferences() == nil {
 			return nil, nil, fmt.Errorf("invalid quest grant %s", item.Codename)
 		}
-		if wire.IsGoldBand(item.TypeFlags) {
+		if wire.IsGoldHeap(item.TypeFlags) {
 			return nil, nil, fmt.Errorf("ground-only item %s cannot enter an inventory", item.Codename)
 		}
 		for item.Quantity > 0 {
@@ -165,4 +164,26 @@ func (rt *Runtime) planInventoryItemsGrant(
 		}
 	}
 	return alchemyRows(c.MissionInventory, before, after), frames, nil
+}
+
+/*
+================
+planBagChange
+
+Applies change to a copy of the bag and plans the resulting rows and the
+client's receipts (references, then per-slot delete and grant frames). The
+caller owns the transaction and commits the rows; a failed change plans
+nothing.
+================
+*/
+func (rt *Runtime) planBagChange(c *enterworld.Character, change func(inv *inventory.Inventory) error) ([]enterworld.InventoryRow, []wire.Frame, error) {
+	if c == nil || c.DeletePending {
+		return nil, nil, fmt.Errorf("bag change: unavailable character")
+	}
+	before := invItemsFromBag(c)
+	inv := inventory.New(before, inventory.BagEnd(c))
+	if err := change(inv); err != nil {
+		return nil, nil, err
+	}
+	return rt.planInventoryGrant(c, before, inv, nil, nil)
 }

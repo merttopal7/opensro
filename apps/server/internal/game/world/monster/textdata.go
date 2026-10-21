@@ -21,6 +21,7 @@ package monster
 import (
 	"encoding/binary"
 	"fmt"
+	"maps"
 	"math"
 	"opensro.online/server/internal/data/texttable"
 	"os"
@@ -54,6 +55,11 @@ type MonsterRef struct {
 	TidWord uint16
 	// Structure is a fortress structure (structureTidGate).
 	Structure bool
+	// PharaohGearRate is the equipment multiplier of a Pharaoh Tomb monster
+	// (pharaoh_tomb.go; port-only, not native). Only AppendPharaohTomb sets
+	// it, from SRO_PHARAOH_TOMB_GEAR_RATE; 0 is every other monster, and 1 the
+	// native rate.
+	PharaohGearRate uint8
 	// CostRepair and CostRevive are _RefObjCommon columns 27 and 28, the
 	// reference's +0xA4 and +0xA8: a structure's full-repair price
 	// (CGObjSiegeStruct_ComputeRepairCost 4CFD50; the item repair 496E60
@@ -276,12 +282,23 @@ func LoadMonsterRefs(textdataDir string) map[uint32]MonsterRef {
 		return make(map[uint32]MonsterRef)
 	}
 	sort.Strings(matches)
-	tables := make([][][]string, 0, len(matches))
-	for _, path := range matches {
-		tables = append(tables, readTabbedFile(path))
-	}
-	return parseMonsterRefTables(textdataDir, tables)
+	sources := append([]string{filepath.Join(textdataDir, "textdataname.txt"),
+		filepath.Join(textdataDir, "skilleffect.txt")}, matches...)
+	parsed := monsterRefParses.Get(texttable.Fingerprint(sources...), func() *map[uint32]MonsterRef {
+		tables := make([][][]string, 0, len(matches))
+		for _, path := range matches {
+			tables = append(tables, readTabbedFile(path))
+		}
+		refs := parseMonsterRefTables(textdataDir, tables)
+		return &refs
+	})
+	// MonsterRef is a flat value, so a copied map is the caller's own.
+	return maps.Clone(*parsed)
 }
+
+// monsterRefParses shares one parse of the same characterdata tables per
+// process (texttable.SharedParses); every caller gets its own map.
+var monsterRefParses texttable.SharedParses[map[uint32]MonsterRef]
 
 /*
 ================

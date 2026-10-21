@@ -369,3 +369,45 @@ test("UI and world preparation share a bounded cache without permanently pinning
 	assert.equal( state.started.length, 1 );
 	assert.equal( state.audio.error(), null );
 });
+
+for ( const enabled of [ false, true ] ) {
+	test(`bear skill cue preparation respects expansion ${enabled}`, () => {
+		const { assets, documents } = fixture();
+		Object.assign( documents["/assets/npc/manifest.json"].models.auxiliary, {
+			refObjId: 2,
+			soundProfileName: "COS_P_BEAR2"
+		} );
+		const owner = createSoundPreparation( assets, ROOT );
+		const scene = {
+			...gameplay,
+			petTraining: enabled ?
+				{
+					gid: 2,
+					points: 0,
+					attackPercent: 0,
+					defensePercent: 0,
+					rows: [],
+					slotted: [],
+					skills: [],
+					gear: [],
+					receivedAtMs: 0
+				} :
+				undefined
+		};
+		for ( let i = 0; i < 8; i++ ) owner.step( scene, [ ...entities, { refObjId: 2 } ] );
+		assert.equal( owner.error(), null );
+		assert.equal( owner.paths().includes( "/assets/audio/sfx/prim/snd/cos/cos_bear2_shout1.wav" ), enabled );
+		for ( const name of [ "usk_cleric_heal_target_a.wav", "usk_cleric_rebirth_target_a.wav" ] ) {
+			assert.equal( owner.paths().includes( `/assets/audio/sfx/prim/snd/skill2/${name}` ), enabled );
+		}
+		assert.equal(
+			owner.paths().includes( "/assets/audio/sfx/prim/snd/skill2/usk_warrior_guard_phyfence_a.wav" ),
+			enabled
+		);
+		assert.equal(
+			owner.paths().includes( "/assets/audio/sfx/prim/snd/skill2/usk_warlock_blood_explosion_bomb.wav" ),
+			enabled
+		);
+		owner.dispose();
+	});
+}

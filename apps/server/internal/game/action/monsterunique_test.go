@@ -312,3 +312,32 @@ func TestAssignedEquipmentDoesNotAcquireRandomBlues(t *testing.T) {
 		t.Fatalf("assigned equipment property mismatch: %+v/%v", drop, ok)
 	}
 }
+
+/*
+================
+TestPharaohGearRateAppliesOnlyToTombElitesAndUniques
+================
+*/
+func TestPharaohGearRateAppliesOnlyToTombElitesAndUniques(t *testing.T) {
+	rt := &Runtime{}
+	instance := func(rate, grade uint8) monster.Instance {
+		return monster.Instance{Ref: monster.MonsterRef{PharaohGearRate: rate, MonsterType: grade}}
+	}
+	for _, c := range []struct {
+		name string
+		mob  monster.Instance
+		want int
+	}{
+		{"tomb unique", instance(5, 8), 5},
+		{"tomb elite", instance(5, 6), 5},
+		{"tomb ordinary", instance(5, 0), 1},
+		{"tomb champion", instance(5, 1), 1},
+		{"field unique", instance(0, 8), 1},
+		{"native unique", instance(0, 3), 1},
+		{"native rate", instance(1, 8), 1},
+	} {
+		if got := rt.pharaohGearRate(c.mob); got != c.want {
+			t.Fatalf("%s = %d, want %d", c.name, got, c.want)
+		}
+	}
+}

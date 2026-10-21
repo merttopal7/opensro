@@ -52,7 +52,13 @@ func (rt *Runtime) cosReference(pet *enterworld.CharacterCOS) (*enterworld.Chara
 		return nil, false
 	}
 	ref, exists := source.CharacterRefByCodename(pet.Codename)
-	return ref, exists && ref != nil && ref.RefObjID == pet.RefObjID
+	valid := exists && ref != nil && ref.RefObjID == pet.RefObjID
+	if valid && rt.AttackPetExpansion && pet.ResolveStacks > 0 {
+		copy := *ref
+		copy.MaxHP = uint32(float64(ref.MaxHP) * (1 + companion.SpiritHPPercent(pet)/100))
+		ref = &copy
+	}
+	return ref, valid
 }
 
 /*

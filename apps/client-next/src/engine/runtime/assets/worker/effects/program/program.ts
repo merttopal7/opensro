@@ -347,6 +347,8 @@ export function createEffectPrograms() {
 						// scale channels; a matrix on their node would suppress them.
 						const validSchedule = op.start === 0 && (
 							((op.flags === 0 || op.flags === 1) && op.end === 0 && op.spacing === 1) ||
+							// Reassigning the same matrix at frame 1 preserves this static
+							// transform, as flags 3 does.
 							((op.flags === 2 || op.flags === 3) && (op.end === 0 || op.end === 1) && op.spacing === 1)
 						);
 						if (

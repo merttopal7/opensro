@@ -357,7 +357,7 @@ normal gear).
 ================
 */
 func (rt *Runtime) prepareGachaRewardItem(reward *enterworld.ItemRef, quantity uint64) (inventory.Item, error) {
-	if wire.IsGoldBand(reward.TypeFlags()) {
+	if wire.IsGoldHeap(reward.TypeFlags()) {
 		return inventory.Item{}, fmt.Errorf("ground-only item %s cannot enter an inventory", reward.Codename)
 	}
 	item := inventory.Item{

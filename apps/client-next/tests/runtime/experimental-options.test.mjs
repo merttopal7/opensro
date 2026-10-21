@@ -62,6 +62,7 @@ const OFF = Object.freeze( {
 	noticeLinks: true,
 	// On by default (owner 2026-10-15): the notice banner shows for 5 s.
 	shortNotices: true,
+	attackPetTraining: false,
 	// On by default (owner 2026-10-15): Withdraw asks before a guild ban.
 	confirmGuildBan: true,
 	// Off by default: straight projectiles keep their launch-captured endpoint (8D8580).
@@ -71,7 +72,9 @@ const OFF = Object.freeze( {
 	petClickOpensWindow: true,
 	// On by default (owner 2026-10-20): keep bit 0x80 enabled on 0xB4/0xB5 so the
 	// pet keeps picking up gold when full; off restores the native 0x0077DD61 disable.
-	smartPetPickup: true
+	smartPetPickup: true,
+	// Off by default: the M window shows only the five native towns and 28 x 8 overview.
+	expandedWorldMap: false
 } );
 
 test("only an explicit boolean enables chat timestamps", () => {
@@ -230,7 +233,7 @@ Tabs
 test("the window's tabs cover every preference once and Open returns to Image", () => {
 	assert.deepEqual(
 		EXPERIMENTAL_TABS.map( tab => tab.title ),
-		[ "Image", "World", "Lighting", "Game", "Notices", "Other" ]
+		[ "Image", "World", "Lighting", "Game", "Notices", "Other", "Pets" ]
 	);
 	// Lighting keeps the direct-light stages; render scale joins Image without
 	// changing the indices used to reopen the existing tabs.
@@ -515,4 +518,16 @@ test("smart pet pickup defaults on unless explicitly false and reaches the worke
 	assert.equal( off.smartPetPickup, false );
 	assert.equal( experimentalGameplay( off ).smartPetPickup, false );
 	assert.ok( EXPERIMENTAL_TABS.some( tab => tab.rows.some( row => row.key === "smartPetPickup" ) ) );
+});
+
+test("expanded world map defaults off (native five towns and 28 x 8 overview) and stays out of the worker's slices", () => {
+	for ( const value of [ undefined, null, {}, { expandedWorldMap: 1 }, { expandedWorldMap: "true" } ] ) {
+		const options = experimentalOptions( value );
+		assert.equal( options.expandedWorldMap, false );
+		assert.equal( "expandedWorldMap" in experimentalGameplay( options ), false );
+		assert.equal( "expandedWorldMap" in experimentalVideo( options ), false );
+	}
+	const on = experimentalOptions( { expandedWorldMap: true } );
+	assert.equal( on.expandedWorldMap, true );
+	assert.ok( EXPERIMENTAL_TABS.some( tab => tab.rows.some( row => row.key === "expandedWorldMap" ) ) );
 });

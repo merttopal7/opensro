@@ -10,6 +10,7 @@ distributed to [%s]"; an item prints "item [%s %d pieces]is distributed to
 
 ===========================================================================
 */
+import { isGoldGroupType, isGoldHeapType } from "./ground-item";
 import type { SystemNotice } from "./system-notices";
 
 // 7511C0's type tests on the item reference's flag word.
@@ -18,8 +19,6 @@ const CLASS_MASK = 0x1c;
 const EXPENDABLE_CLASS = 0xc;
 const CATEGORY_MASK = 0x60;
 const EXPENDABLE_CATEGORY = 0x60;
-const GROUP_MASK = 0x780;
-const GOLD_GROUP = 0x280;
 // CGInterface_ChatSystemMessageFormatted channels: 1 gain, 4 party.
 const GAIN_CHANNEL = 1;
 const PARTY_CHANNEL = 4;
@@ -55,8 +54,9 @@ export function partyLootNotice( p: Uint8Array, context: PartyLootContext ): Sys
 	const flags = item.typeFlags;
 	const expendable = !(flags & NON_ITEM_BIT) && (flags & CLASS_MASK) === EXPENDABLE_CLASS &&
 		(flags & CATEGORY_MASK) === EXPENDABLE_CATEGORY;
-	const gold = expendable && (flags & GROUP_MASK) === GOLD_GROUP;
-	const width = gold ? 4 : expendable ? 2 : 1;
+	// The whole gold group carries a u32; only a gold heap reads as gold.
+	const gold = expendable && isGoldHeapType( flags );
+	const width = expendable && isGoldGroupType( flags ) ? 4 : expendable ? 2 : 1;
 	if ( p.length !== 8 + width ) throw Error( "Invalid party loot notice length" );
 	const amount = width === 4 ? view.getUint32( 8, true ) : width === 2 ? view.getUint16( 8, true ) : p[8]!;
 	const member = context.memberName( recipient ) ?? "";

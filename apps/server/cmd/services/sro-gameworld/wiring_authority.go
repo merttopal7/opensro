@@ -20,9 +20,12 @@ import (
 	"opensro.online/server/internal/data/store"
 	"opensro.online/server/internal/domain"
 	"opensro.online/server/internal/game/action"
+	"opensro.online/server/internal/game/companion"
 	"opensro.online/server/internal/game/enterworld"
+	"opensro.online/server/internal/game/item/loot"
 	"opensro.online/server/internal/game/progression"
 	"opensro.online/server/internal/game/quest"
+	"opensro.online/server/internal/game/world/monster"
 	"opensro.online/server/internal/game/world/simulation"
 	"opensro.online/server/internal/platform/readiness"
 	"opensro.online/server/internal/security/auth"
@@ -40,8 +43,18 @@ every game lane receive that same authority before network traffic starts.
 ================================================================================
 */
 
+/*
+================
+questDefinitionLoader
+================
+*/
 type questDefinitionLoader func() (*quest.Definitions, error)
 
+/*
+================
+authorityPlane
+================
+*/
 type authorityPlane struct {
 	store      *store.Store
 	agentAPI   *agentapi.API
@@ -117,6 +130,12 @@ func openAuthorityPlane(
 	textdata, err := enterworld.LoadTextdataCatalogs(textdataDir)
 	if err != nil {
 		return authorityPlane{}, err
+	}
+	if err := loot.InitCap110(textdataDir, monster.Cap110Enabled()); err != nil {
+		return authorityPlane{}, err
+	}
+	if companion.AttackPetExpansionEnabled() {
+		textdata.Items.ApplyAttackPetProfiles()
 	}
 	// Port-only, not native: raise configured stack caps before any owner
 	// reads a reference row. Unset keeps every itemdata cap.
@@ -206,6 +225,11 @@ func openAuthorityPlane(
 	}
 	authorityStore.ReconcileGMPrivilege(gmIdentities)
 
+	levelCap, err := progression.LevelCapFromEnv()
+	if err != nil {
+		authorityStore.Close()
+		return authorityPlane{}, err
+	}
 	config := agentapi.Config{
 		Store:                 authorityStore,
 		CharacterPresentation: characterPresentationProjector(characterRoster, textdata.Levels),
@@ -221,7 +245,7 @@ func openAuthorityPlane(
 		MaintenanceGatePath:     strings.TrimSpace(os.Getenv(agentapi.EnvMaintenanceGate)),
 		AuthoredAreas:           devPaths.AuthoredAreas,
 		BenchmarkFixtureControl: os.Getenv(agentapi.EnvBenchmarkFixtureControl) == "1",
-		LevelCap:                progression.CurrentLevelCap(),
+		LevelCap:                levelCap,
 		SkillGroup: func(id uint32) (uint32, bool) {
 			row, ok := textdata.Skills.SkillByID(id)
 			return row.Group, ok

@@ -1,4 +1,5 @@
 import { CLIENT_PUBLIC_ROOT } from "../../../scripts/lib/generatedRoot.mjs";
+import { EXPANDED_BUILD } from "../../../scripts/lib/expandedBuild.mjs";
 import fs from "node:fs";
 import { createHash } from "node:crypto";
 import { pathToFileURL } from "node:url";
@@ -26,12 +27,46 @@ export function itemSoundSource( bytes ) {
 		JSON.stringify( drops, null, 2 )
 	};}\n`;
 }
+/*
+================
+catalogTables
+
+The two tables (equip sounds, drop sounds) a generated catalog source holds.
+================
+*/
+function catalogTables( source ) {
+	return [ ...source.matchAll( /\{return (\{[\s\S]*?\});\}/g ) ].map( ( match ) => JSON.parse( match[1] ) );
+}
+
+/*
+================
+itemSoundCatalogCurrent
+
+Whether the checked-in catalog matches the published sounds. A native build
+matches byte for byte. An expanded build adds sound rules for its imported
+items, so there every native row must still be present, in order, at the
+front of its list.
+================
+*/
+export function itemSoundCatalogCurrent( checkedIn, bytes, expanded = EXPANDED_BUILD ) {
+	const source = itemSoundSource( bytes );
+	if ( !expanded ) return checkedIn === source;
+	const native = catalogTables( checkedIn ), built = catalogTables( source );
+	return native.length === built.length &&
+		native.every( ( table, at ) =>
+			Object.entries( table ).every( ( [key, rows] ) =>
+				JSON.stringify( built[at][key]?.slice( 0, rows.length ) ) === JSON.stringify( rows )
+			)
+		);
+}
 if ( process.argv[1] && import.meta.url === pathToFileURL( process.argv[1] ).href ) {
 	const bytes = fs.readFileSync( CLIENT_PUBLIC_ROOT + "/assets/audio/effectsound.json" );
 	const target = new URL( "../src/engine/foundation/audio/item-sound-catalog.ts", import.meta.url ),
 		source = itemSoundSource( bytes );
-	if ( process.argv.includes( "--write" ) ) fs.writeFileSync( target, source );
-	else if ( !fs.existsSync( target ) || fs.readFileSync( target, "utf8" ) !== source ) {
+	if ( process.argv.includes( "--write" ) ) {
+		if ( EXPANDED_BUILD ) throw Error( "Refusing to write the native item sound catalog from an expanded build" );
+		fs.writeFileSync( target, source );
+	} else if ( !fs.existsSync( target ) || !itemSoundCatalogCurrent( fs.readFileSync( target, "utf8" ), bytes ) ) {
 		throw Error( "ITEM sound catalog drift; run node tools/generate-item-sounds.mjs --write" );
 	}
 	console.log( "ITEM sound catalog: PASS" );

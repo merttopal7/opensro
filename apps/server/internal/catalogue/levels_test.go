@@ -23,9 +23,26 @@ SP; level 100 and above has no row.
 */
 type tableLevels struct{}
 
+/*
+================
+SkillPointCost
+================
+*/
 func (tableLevels) SkillPointCost(level int64) (int64, bool) { return level, level < 100 }
-func (tableLevels) ExpRequired(level int64) (int64, bool)    { return 10 * level, level < 100 }
-func (tableLevels) MonsterExpBasis(int64) (int64, bool)      { return 0, false }
+
+/*
+================
+ExpRequired
+================
+*/
+func (tableLevels) ExpRequired(level int64) (int64, bool) { return 10 * level, level < 100 }
+
+/*
+================
+MonsterExpBasis
+================
+*/
+func (tableLevels) MonsterExpBasis(int64) (int64, bool) { return 0, false }
 
 /*
 ================
@@ -36,7 +53,7 @@ mastery prices at the table's end; the caps are the server's constants.
 ================
 */
 func TestLevelsReadTheTableAndTheCaps(t *testing.T) {
-	file := BuildLevels(Header{}, tableLevels{}, 0)
+	file := BuildLevels(Header{}, tableLevels{}, 0, progression.LevelCap)
 	if file.LevelCap != progression.LevelCap || file.MasteryLevelCap != progression.MasteryLevelCap ||
 		file.MasteryTotal.Chinese != progression.TotalMasteryCapChina || file.MasteryTotal.EuropeanPerLevel != progression.TotalMasteryEuropePerLevel {
 		t.Fatalf("caps %+v", file)
@@ -54,4 +71,35 @@ func TestLevelsReadTheTableAndTheCaps(t *testing.T) {
 	if past.Level != 100 || past.MasterySP != 0 {
 		t.Errorf("past the table %+v", past)
 	}
+}
+
+/*
+================
+TestLevelsExportConfiguredExpansionCap
+================
+*/
+func TestLevelsExportConfiguredExpansionCap(t *testing.T) {
+	levels := completeLevels{}
+	for _, cap := range []int64{progression.LevelCap, progression.ExpansionLevelCap} {
+		file := BuildLevels(Header{}, levels, 0, cap)
+		if file.LevelCap != cap || file.Levels[cap-2].Exp != (cap-1)*10 || file.Levels[cap-1].Exp != 0 {
+			t.Fatalf("catalogue disagrees with configured cap %d", cap)
+		}
+	}
+}
+
+/*
+================
+completeLevels
+================
+*/
+type completeLevels struct{ tableLevels }
+
+/*
+================
+ExpRequired
+================
+*/
+func (completeLevels) ExpRequired(level int64) (int64, bool) {
+	return 10 * level, level <= progression.MasteryLevelCap
 }

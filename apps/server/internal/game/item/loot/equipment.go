@@ -58,7 +58,15 @@ type equipmentBucket struct {
 	refs         []equipmentRef
 	weights      []uint32
 	alternatives map[string][]uint32
+	// expansionOnly marks a bucket the native catalog leaves empty (degree 10
+	// and up), filled only by the optional cap-110 data. Port-only, not native:
+	// a monster at or below nativeMonsterLevelCap never reaches it, so the
+	// native drop rolls of levels 1-90 step down exactly as before.
+	expansionOnly bool
 }
+
+// nativeMonsterLevelCap is the highest monster level of the native world.
+const nativeMonsterLevelCap uint8 = 90
 
 /*
 ================
@@ -347,7 +355,7 @@ func (c equipmentCatalog) selectEquipment(country uint8, group int, rare bool, l
 	step := equipmentClassStep(rare)
 	for ; group >= 0; group -= step {
 		b := c.buckets[equipmentKey{country, group, rare}]
-		if b == nil {
+		if b == nil || (b.expansionOnly && level <= nativeMonsterLevelCap) {
 			continue
 		}
 		var chosen equipmentRef
