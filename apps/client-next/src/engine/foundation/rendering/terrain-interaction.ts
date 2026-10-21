@@ -75,7 +75,7 @@ function tile( cells: TerrainCells, x: number, z: number ) {
 // A cell's heights never change while it is resident: its bounds and pick
 // triangles are built once, not on every click and hover. The world renderer
 // owns one cache; a caller without one rebuilds per pick.
-export type TerrainPickCache = WeakMap<TerrainRange, { bounds: Float64Array; geometry: Geometry; }>;
+export type TerrainPickCache = WeakMap<TerrainRange, { bounds: Float64Array; geometry?: Geometry; }>;
 
 /*
 ================
@@ -88,16 +88,15 @@ export function createTerrainPickCache(): TerrainPickCache {
 
 /*
 ================
-cellPick
+cellBounds
 
-The bounds and pick triangles of a terrain cell. 88D340: special water
-contributes two extra triangles; all paths then continue into the terrain
-loop at 88D93C. Land can lie ABOVE the plane. Min/max keep NaN propagation.
+The axis-aligned bounds of a terrain cell, including special water when
+present. Built before triangles so broad-phase misses never triangulate.
 ================
 */
-function cellPick( cells: TerrainCells, cell: TerrainRange, cache: TerrainPickCache ) {
-	let pick = cache.get( cell );
-	if ( pick ) return pick;
+function cellBounds( cell: TerrainRange, cache: TerrainPickCache ): Float64Array {
+	const existing = cache.get( cell );
+	if ( existing ) return existing.bounds;
 	const [cx, cz] = cell.cell, special = cell.water?.type === 1 && cell.water.waveType !== 0;
 	let lo = special ? cell.water!.height : Infinity, hi = special ? cell.water!.height : -Infinity;
 	for ( let i = 0; i < cell.heights.length; i++ ) {
@@ -105,6 +104,25 @@ function cellPick( cells: TerrainCells, cell: TerrainRange, cache: TerrainPickCa
 		lo = Math.min( lo, h );
 		hi = Math.max( hi, h );
 	}
+	const bounds = Float64Array.of( cx * 320, lo, cz * 320, (cx + 1) * 320, hi, (cz + 1) * 320 );
+	cache.set( cell, { bounds } );
+	return bounds;
+}
+
+/*
+================
+cellPick
+
+The bounds and pick triangles of a terrain cell. 88D340: special water
+contributes two extra triangles; all paths then continue into the terrain
+loop at 88D93C. Land can lie ABOVE the plane. Min/max keep NaN propagation.
+================
+*/
+function cellPick( cells: TerrainCells, cell: TerrainRange, cache: TerrainPickCache ): Geometry {
+	const pick = cache.get( cell );
+	if ( pick?.geometry ) return pick.geometry;
+	const bounds = pick ? pick.bounds : cellBounds( cell, cache );
+	const [cx, cz] = cell.cell, special = cell.water?.type === 1 && cell.water.waveType !== 0;
 	const positions: number[] = [], indices: number[] = [];
 	/*
 	================
@@ -128,16 +146,13 @@ function cellPick( cells: TerrainCells, cell: TerrainRange, cache: TerrainPickCa
 	for ( let z = cz * 16; z < (cz + 1) * 16; z++ ) {
 		for ( let x = cx * 16; x < (cx + 1) * 16; x++ ) append( tile( cells, x, z )! );
 	}
-	pick = {
-		bounds: Float64Array.of( cx * 320, lo, cz * 320, (cx + 1) * 320, hi, (cz + 1) * 320 ),
-		geometry: {
-			positions: new Float32Array( positions ),
-			indices: new Uint32Array( indices ),
-			transform: identity()
-		}
+	const geometry: Geometry = {
+		positions: new Float32Array( positions ),
+		indices: new Uint32Array( indices ),
+		transform: identity()
 	};
-	cache.set( cell, pick );
-	return pick;
+	cache.set( cell, { bounds, geometry } );
+	return geometry;
 }
 
 /*
@@ -178,15 +193,15 @@ every cell, without building every cell's triangles on each pick.
 export function pickTerrainCells( cells: TerrainCells, ray: PickRay, cache = createTerrainPickCache() ) {
 	const candidates: { entry: number; cell: TerrainRange; }[] = [];
 	for ( const cell of cells.values() ) {
-		const entry = boxEntry( ray, cellPick( cells, cell, cache ).bounds );
+		const entry = boxEntry( ray, cellBounds( cell, cache ) );
 		if ( entry !== Infinity ) candidates.push( { entry, cell } );
 	}
 	candidates.sort( ( a, b ) => a.entry - b.entry );
 	let best = Infinity;
 	for ( const { entry, cell } of candidates ) {
 		if ( entry > best ) break;
-		const pick = cellPick( cells, cell, cache );
-		const t = pickGeometry( ray, pick.geometry, pick.geometry.transform );
+		const geometry = cellPick( cells, cell, cache );
+		const t = pickGeometry( ray, geometry, geometry.transform );
 		if ( t !== null && t < best ) best = t;
 	}
 	return Number.isFinite( best ) ? best : null;

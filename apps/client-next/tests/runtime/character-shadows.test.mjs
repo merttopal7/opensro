@@ -365,6 +365,7 @@ test("shadow frames reuse bindings and views while still rendering each current 
 		request.matrix[12] += 10;
 		const next = owner.prepare( [ request ] )[0];
 		owner.encode( encoder );
+		assert.equal( next, first );
 		assert.equal( next.binding, first.binding );
 		assert.equal( bindings.length, 3 );
 		assert.equal( views.length, 3 );

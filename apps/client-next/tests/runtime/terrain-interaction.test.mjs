@@ -14,7 +14,7 @@ import "../helpers/native-source-loader.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { defined } from "../helpers/defined.mjs";
-const { pickTerrainCells, selectionDecalGeometry, terrainCellKey } = await import(
+const { createTerrainPickCache, pickTerrainCells, selectionDecalGeometry, terrainCellKey } = await import(
 	"../../src/engine/foundation/rendering/terrain-interaction.ts"
 );
 const { pickNavigationGround } = await import( "../../src/engine/foundation/navigation/ground-pick.ts" );
@@ -23,6 +23,7 @@ const cell = ( height = 0, water ) => ({
 	heights: Float32Array.from( { length: 289 }, () => height ),
 	water
 });
+const range = ( value ) => value;
 const cells = ( value ) => new Map( [ [ terrainCellKey( 0, 0 ), value ] ] ),
 	ray = { start: [ 10, 100, 10 ], delta: [ 0, -200, 0 ] };
 test("ground picks the nearest raw terrain or special-water surface and rejects misses", () => {
@@ -40,6 +41,19 @@ test("ground picks the nearest raw terrain or special-water surface and rejects 
 		"ordinary water does not contribute a ground plane"
 	);
 	assert.equal( pickTerrainCells( cells( cell( 20 ) ), { ...ray, start: [ -1, 100, 10 ] } ), null );
+	const hitCell = range( cell( 20 ) ),
+		missCell = range( { ...cell( 20 ), cell: [ 2, 2 ] } ),
+		farCell = range( { ...cell( 20 ), cell: [ 1, 0 ] } ),
+		cache = createTerrainPickCache(),
+		grid = new Map( [
+			[ terrainCellKey( 0, 0 ), hitCell ],
+			[ terrainCellKey( 2, 2 ), missCell ],
+			[ terrainCellKey( 1, 0 ), farCell ]
+		] );
+	assert.equal( pickTerrainCells( grid, { start: [ 10, 100, 10 ], delta: [ 350, -200, 0 ] }, cache ), .4 );
+	assert.ok( defined( cache.get( hitCell ) ).geometry );
+	assert.equal( defined( cache.get( missCell ) ).geometry, undefined );
+	assert.equal( defined( cache.get( farCell ) ).geometry, undefined );
 });
 
 test("oblique ice clicks retain the visible terrain intersection instead of walking farther", () => {

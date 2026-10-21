@@ -323,16 +323,21 @@ struct Out {@builtin(position) p:vec4f,@location(0) uv:vec2f};
 						}, { binding: 2, resource: sampler } ]
 					} );
 				}
-				s.draw = {
-					pipeline: ground,
-					binding: s.groundBinding!,
-					vertices: s.vertices,
-					indices: s.indices,
-					count: indices.length,
-					indexCount: indices.length,
-					instanceCount: 1,
-					instanceCapacity: 1
-				};
+				if (
+					!s.draw || s.draw.pipeline !== ground || s.draw.binding !== s.groundBinding ||
+					s.draw.indexCount !== indices.length
+				) {
+					s.draw = {
+						pipeline: ground,
+						binding: s.groundBinding!,
+						vertices: s.vertices,
+						indices: s.indices,
+						count: indices.length,
+						indexCount: indices.length,
+						instanceCount: 1,
+						instanceCapacity: 1
+					};
+				}
 				draws.push( s.draw );
 			}
 			return draws;

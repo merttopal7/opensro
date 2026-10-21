@@ -223,14 +223,27 @@ export function characterShadowTopology(
 						if (
 							maxX < loX || minX > hiX || maxZ < loZ || minZ > hiZ
 						) continue;
-						const q = [ [ ax, vertices[a + 1]!, az ], [ bx, vertices[b + 1]!, bz ], [
-							cx,
-							vertices[c + 1]!,
-							cz
-						] ];
-						const key = q.map( p => p.join( "," ) ).sort().join( ";" );
+						const ay = vertices[a + 1]!, by = vertices[b + 1]!, cy = vertices[c + 1]!;
+						let k0 = `${ax},${ay},${az}`, k1 = `${bx},${by},${bz}`, k2 = `${cx},${cy},${cz}`;
+						if ( k0 > k1 ) {
+							const t = k0;
+							k0 = k1;
+							k1 = t;
+						}
+						if ( k1 > k2 ) {
+							const t = k1;
+							k1 = k2;
+							k2 = t;
+							if ( k0 > k1 ) {
+								const u = k0;
+								k0 = k1;
+								k1 = u;
+							}
+						}
+						const key = `${k0};${k1};${k2}`;
 						if ( seen.has( key ) ) continue;
 						seen.add( key );
+						const q = [ [ ax, ay, az ], [ bx, by, bz ], [ cx, cy, cz ] ];
 						if ( blob ) {
 							polygons.push( { vertices: q, minimumSourceX: minX } );
 							continue;
