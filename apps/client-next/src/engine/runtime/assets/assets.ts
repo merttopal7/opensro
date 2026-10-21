@@ -25,7 +25,8 @@ import type { AssetOwner, AssetRequest, AssetResult, AssetWorkerMessage } from "
 import type { Degradation } from "@/engine/contracts/network";
 import { storedExperimentalOptions } from "@/engine/foundation/ui/experimental-options";
 import { chooseTextureVariant } from "@/engine/foundation/assets/texture-variants";
-const REQUEST_CAPACITY = 4;
+const DESKTOP_SHELL = typeof navigator !== "undefined" && /\bOpenSRODesktop\//.test( navigator.userAgent );
+const REQUEST_CAPACITY = DESKTOP_SHELL ? 12 : 4;
 // A load's watchdog is a stall window, not a total budget: the worker notes
 // the bytes it reads per job (job-progress), and a job that keeps moving
 // bytes may run past any fixed total on a slow link (a trickling route to

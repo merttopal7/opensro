@@ -94,6 +94,7 @@ export function createPacks(
 ) {
 	const persistent = createPersistentAssets(), parser = createPackIndex(), lifetime = new AbortController();
 	const desktopShell = typeof navigator !== "undefined" && /\bOpenSRODesktop\//.test( navigator.userAgent );
+	const residentBudget = desktopShell ? 256 << 20 : RESIDENT_PACK_BYTES;
 	const blocks = createPackBlocks( download, lifetime.signal );
 	type Index = ReturnType<typeof parser.manifest>;
 	type Loaded = { bytes: Uint8Array<ArrayBuffer>; start: number; };
@@ -248,7 +249,7 @@ export function createPacks(
 			const loaded = { bytes, start: parser.header( bytes, descriptor ) };
 			if ( disposed ) throw new Error( "Pack owner disposed" );
 			if ( missing && !desktopShell ) persistent.enqueue( base, descriptor.sha256, bytes );
-			while ( residentBytes + bytes.length > RESIDENT_PACK_BYTES && cache.size ) {
+			while ( residentBytes + bytes.length > residentBudget && cache.size ) {
 				const key = cache.keys().next().value!;
 				residentBytes -= cache.get( key )!.bytes.length;
 				cache.delete( key );

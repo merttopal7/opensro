@@ -54,6 +54,8 @@ const TRANSIENT_HTTP_STATUS = new Set( [ 408, 429, 500, 502, 503, 504 ] );
 const PARSED_EFFECT_CATALOG = new Uint8Array( 0 );
 // Stands in for a world bundle's bytes once they are parsed.
 const RELEASED_WORLD_BYTES = new Uint8Array( 0 );
+const DESKTOP_SHELL = typeof navigator !== "undefined" && /\bOpenSRODesktop\//.test( navigator.userAgent );
+const REQUEST_CAPACITY = DESKTOP_SHELL ? 12 : 4;
 /*
 ================
 listedFileGone
@@ -374,10 +376,13 @@ export function createLoader( send: ( result: AssetWorkerMessage, transfer: Tran
 		// Resource Timing distinguishes compressed transfers from HTTP cache
 		// reads; counting decoded stream chunks would invent warm downloads.
 		if ( !range ) {
-			const timing = performance.getEntriesByName( url, "resource" ).filter( row => row.startTime >= started ).at(
-				-1
-			) as PerformanceResourceTiming | undefined;
-			if ( timing ) received += timing.transferSize;
+			const timing = DESKTOP_SHELL ?
+				undefined :
+				performance.getEntriesByName( url, "resource" ).filter( row => row.startTime >= started ).at( -1 ) as
+					| PerformanceResourceTiming
+					| undefined;
+			if ( DESKTOP_SHELL ) received += bytes.byteLength;
+			else if ( timing ) received += timing.transferSize;
 			progress();
 		}
 		return bytes;
@@ -812,7 +817,8 @@ export function createLoader( send: ( result: AssetWorkerMessage, transfer: Tran
 				return;
 			}
 			if (
-				pending.has( request.id ) || active.size >= 4 || !Number.isSafeInteger( request.limit ) ||
+				pending.has( request.id ) || active.size >= REQUEST_CAPACITY ||
+				!Number.isSafeInteger( request.limit ) ||
 				request.limit < 1 || request.limit > assetRequestBudget( request.decode )
 			) {
 				send( { kind: "error", id: request.id, error: "Asset request exceeds budget" }, [] );

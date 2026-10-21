@@ -12,7 +12,8 @@ import type { PackDescriptor, PackEntry, PackDownload } from "./internal/pack-co
 const BLOCK_CACHE_BYTES = 16 << 20;
 
 export function createPackBlocks( download: PackDownload, signal: AbortSignal ) {
-	const blockBytes = 1 << 20, budget = BLOCK_CACHE_BYTES, capacity = 4;
+	const desktopShell = typeof navigator !== "undefined" && /\bOpenSRODesktop\//.test( navigator.userAgent );
+	const blockBytes = 1 << 20, budget = desktopShell ? 128 << 20 : BLOCK_CACHE_BYTES, capacity = desktopShell ? 16 : 4;
 	const cache = new Map<string, Uint8Array<ArrayBuffer>>(),
 		pending = new Map<string, Promise<Uint8Array<ArrayBuffer>>>();
 	const plans = new Map<string, Map<string, { start: number; end: number; }>>();
