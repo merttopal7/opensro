@@ -106,7 +106,13 @@ echo "[5/6] Starting Customer & Shard Panel ($SRO_PANEL_ADDR)..."
 pkill -x panel >/dev/null 2>&1 || true
 nohup ./panel > .state/panel.log 2>&1 &
 
-# 6) Deploy sro-agent and sro-gameworld
+# 6) Upgrade any older shard authority schemas and deploy sro-agent + sro-gameworld
+for auth_dir in .state/shards/*/authority; do
+	if [ -f "$auth_dir/state.db" ]; then
+		./sro-authority-upgrade -authority-dir "$auth_dir" -commit >/dev/null 2>&1 || true
+		rm -f "$auth_dir/authority.lock"
+	fi
+done
 echo "[6/6] Deploying sro-agent and sro-gameworld..."
 "$SRO_NOMAD_BINARY" var purge sro/operations/fleet >/dev/null 2>&1 || true
 ./sro-nomad deploy -agent-cpu=100 -agent-memory-mb=128 -gameworld-cpu=200 -gameworld-memory-mb=1024
