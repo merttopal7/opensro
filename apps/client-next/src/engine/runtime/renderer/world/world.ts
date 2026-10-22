@@ -14,6 +14,12 @@ import { clothPhaseMs } from "@/engine/foundation/animation/cloth";
 import { waterReflectionMatrix } from "@/engine/foundation/rendering/water-reflection";
 import { blendAdds } from "@/engine/foundation/rendering/blend-state";
 import {
+	isDungeonRegion,
+	regionOffsetXZ,
+	regionRelativeXZ,
+	sameCoordinateSpace
+} from "@/engine/foundation/world/world-space";
+import {
 	characterShadowTopology,
 	projectShadowReceiver,
 	shadowReceiverBounds,
@@ -269,7 +275,7 @@ export function createWorldRenderer(
 		for ( const footprint of footprints ) {
 			if ( !live.has( footprint.id ) ) continue;
 			const { pose } = footprint;
-			if ( ((pose.regionId | current.originRegion) & 0x8000) && pose.regionId !== current.originRegion ) continue;
+			if ( !sameCoordinateSpace( pose.regionId, current.originRegion ) ) continue;
 			const path = footprintTextures()[footprint.surface === "SAND" ? 0 : 1], source = images.get( path )?.source;
 			if ( !source ) continue;
 			let image = imageDraws.get( path );
@@ -280,10 +286,11 @@ export function createWorldRenderer(
 			let row = footprintDraws.get( footprint.id );
 			if ( row?.image !== image ) {
 				if ( row ) geometry.release( row.draw );
+				const [px, pz] = regionRelativeXZ( current.originRegion, pose );
 				const point: [number, number, number] = [
-					pose.x + ((pose.regionId & 255) - (current.originRegion & 255)) * 1920,
+					px,
 					pose.y,
-					pose.z + ((pose.regionId >>> 8) - (current.originRegion >>> 8)) * 1920
+					pz
 				];
 				const data = footprintGeometry( interactionCells, point, footprint.yaw, footprint.right );
 				if ( !data ) continue;
@@ -332,12 +339,11 @@ export function createWorldRenderer(
 		updateInteractionCells();
 		if ( !current || current.residency === "frontend" || !decalState ) return [];
 		const { pose, slot } = decalState;
-		if ( ((pose.regionId | current.originRegion) & 0x8000) && pose.regionId !== current.originRegion ) return [];
+		if ( !sameCoordinateSpace( pose.regionId, current.originRegion ) ) return [];
 		const path = selectionTextures()[slot]!, source = images.get( path )?.source;
 		if ( !source ) return [];
-		const x = pose.x + ((pose.regionId & 255) - (current.originRegion & 255)) * 1920,
-			y = pose.y,
-			z = pose.z + ((pose.regionId >>> 8) - (current.originRegion >>> 8)) * 1920;
+		const [x, z] = regionRelativeXZ( current.originRegion, pose ),
+			y = pose.y;
 		if (
 			decalValid && decalBuiltSlot === slot && decalPoint[0] === x && decalPoint[1] === y &&
 			decalPoint[2] === z &&
@@ -1621,7 +1627,8 @@ export function createWorldRenderer(
 					// must not fade every retained building in again.
 					const sameWorld = !!previous && fadeScene === previous &&
 						previous.residency === current.residency &&
-						!((previous.originRegion | current.originRegion) & 0x8000);
+						!isDungeonRegion( previous.originRegion ) &&
+						!isDungeonRegion( current.originRegion );
 					if ( sameWorld ) {
 						const placed = new Set<string>();
 						for ( const group of current.groups ) {
@@ -1659,12 +1666,9 @@ export function createWorldRenderer(
 					prune = true;
 				}
 			}
-			const dx = camera.originRegion && current ?
-					((camera.originRegion & 255) - (current.originRegion & 255)) * 1920 :
-					0,
-				dz = camera.originRegion && current ?
-					((camera.originRegion >>> 8) - (current.originRegion >>> 8)) * 1920 :
-					0;
+			const [dx, dz] = camera.originRegion && current ?
+				regionOffsetXZ( current.originRegion, camera.originRegion ) :
+				[ 0, 0 ];
 			if ( prune ) collectUnused( textures );
 			let localCamera: WorldCamera = {
 				...camera,
@@ -1779,7 +1783,7 @@ export function createWorldRenderer(
 			);
 			environmentSeconds = seconds;
 			const dungeonAmbient =
-					current && (current.dungeonVisibility !== undefined || (current.originRegion & 0x8000) !== 0) ?
+					current && (current.dungeonVisibility !== undefined || isDungeonRegion( current.originRegion )) ?
 						camera.dungeonBlock !== undefined ?
 							current.dungeonAmbient?.[camera.dungeonBlock] ?? DEFAULT_DUNGEON_AMBIENT_COLOR :
 							current.dungeonAmbient?.[0] ?? DEFAULT_DUNGEON_AMBIENT_COLOR :
@@ -1809,7 +1813,7 @@ export function createWorldRenderer(
 				localCamera,
 				seconds,
 				current?.originRegion ?? 0,
-				!!current && current.residency !== "frontend" && !(current.originRegion & 0x8000),
+				!!current && current.residency !== "frontend" && !isDungeonRegion( current.originRegion ),
 				weatherGround,
 				[ camera.target[0] + dx, camera.target[1], camera.target[2] + dz ]
 			);
