@@ -113,6 +113,7 @@ export function createRenderer(
 	const followFeatures = ( owner: ReturnType<typeof createDevice> ) =>
 		void owner.textureFeatures().then( settleFeatures );
 	followFeatures( device );
+	device.textureOptions( video.records[video.active][8] === 1, video.records[video.active][9]! );
 	let surface: SurfaceOwner | null = null, frame: FrameOwner | null = null;
 	let transformDirty = false, instancesDirty = false;
 	let mesh: Geometry | null = null, meshDraw: GeometryDraw | null = null;
@@ -239,6 +240,8 @@ export function createRenderer(
 			experimental = value;
 			device.experimentalVideo( value );
 			world.smoothCamera( value.smoothCamera );
+			world.spreadCloth( value.spreadClothSteps );
+			characters.spreadCloth( value.spreadClothSteps );
 			if ( hdrChanged && draw ) {
 				// The fullscreen image draw carries its pipeline; re-upload
 				// it in the new scene format.

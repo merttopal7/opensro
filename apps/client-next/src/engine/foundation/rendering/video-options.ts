@@ -103,15 +103,15 @@ export interface VideoOptions {
 	readonly records: readonly [readonly number[], readonly number[]];
 	readonly displaySize?: readonly [number, number];
 }
-// 5CDC20 initializes the native medium detail record; slot 14 is not displayed.
-// Slot 1 (UIIT_STT_SHADOW_DETAIL) defaults to 0 (UIIT_STT_NONE / nothing) for new players.
+// 5CDC20 initializes the native detail records; slot 14 is not displayed.
+// New players start on the Large-Scale Battle preset (slot 0 = 3, 5CDC80).
 /*
 ================
 defaultVideoOptions
 ================
 */
 export function defaultVideoOptions(): VideoOptions {
-	const row = [ 1, 0, 2, 2, 0, 1, 1, 1, 1, 2, 1, 0, 1, 2, 0, 0 ];
+	const row = [ 3, 0, 2, 4, 0, 0, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0 ];
 	return { active: 0, records: [ [ ...row ], [ ...row ] ], frameLimit: DEFAULT_FRAME_LIMIT };
 }
 // Slots 3 and 5 are selectable but change nothing, as in the native client:

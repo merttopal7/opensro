@@ -6,6 +6,7 @@ characters.ts - admitted character models, world batches and separate portrait s
 ===========================================================================
 */
 import { createClothVertices } from "@/engine/foundation/animation/cloth-vertices";
+import { clothPhaseMs } from "@/engine/foundation/animation/cloth";
 import { characterLabelHeight } from "@/engine/foundation/ui/character-labels";
 import type { WorldTexture } from "@/engine/contracts/texture";
 import { shadowProjection, SHADOW_LIMIT, SHADOW_DISTANCE } from "@/engine/foundation/rendering/character-shadow";
@@ -232,6 +233,9 @@ export function createCharacters( random?: import("@/engine/contracts/presentati
 		if ( !random ) throw Error( "Missing shared presentation RNG for cloth" );
 		return random.range( 0, 32768 );
 	}
+	// Port-only, not native: the Experimental "Spread cloth steps" row starts
+	// each new cloth stream at its own accumulator phase (clothPhaseMs).
+	let spreadCloth = false, clothStreams = 0;
 	let probe: import("@/engine/contracts/runtime").RenderFrameProbe | undefined;
 	// Per-geometry radius work: an assembled character reuses its parts'.
 	const bounds = createCharacterBoundsCache();
@@ -2256,7 +2260,7 @@ export function createCharacters( random?: import("@/engine/contracts/presentati
 		batch.cloth ??= new Map();
 		let cloth = batch.cloth.get( p );
 		if ( !cloth ) {
-			cloth = createClothVertices( primitive, clothRandom );
+			cloth = createClothVertices( primitive, clothRandom, spreadCloth ? clothPhaseMs( clothStreams++ ) : 0 );
 			batch.cloth.set( p, cloth );
 		}
 		let draw = batch.draws[p];
@@ -2445,6 +2449,17 @@ export function createCharacters( random?: import("@/engine/contracts/presentati
 		*/
 		profile( value: import("@/engine/contracts/runtime").RenderFrameProbe | undefined ) {
 			probe = value;
+		},
+		/*
+		================
+		spreadCloth
+
+		The Experimental "Spread cloth steps" row. It applies to cloth streams
+		created afterwards; a stream keeps the phase it started with.
+		================
+		*/
+		spreadCloth( enabled: boolean ) {
+			spreadCloth = enabled === true;
 		},
 		/*
 		================

@@ -15,11 +15,16 @@ import { packGeometryVertices } from "@/engine/foundation/rendering/geometry-ver
 createClothVertices
 
 Keep separate state per actor, even when actors share the same asset.
+phaseMs is the accumulator start (createCloth); 0 is native.
 ================
 */
-export function createClothVertices( primitive: { geometry: Geometry; cloth?: ClothData; }, random: () => number ) {
+export function createClothVertices(
+	primitive: { geometry: Geometry; cloth?: ClothData; },
+	random: () => number,
+	phaseMs = 0
+) {
 	const mesh = primitive.geometry, data = primitive.cloth!;
-	const simulation = createCloth( data, mesh.positions );
+	const simulation = createCloth( data, mesh.positions, phaseMs );
 	const anchors = new Float32Array( mesh.positions.length );
 	const vertices = packGeometryVertices( mesh );
 	const skinned = !!mesh.joints && !!mesh.weights;

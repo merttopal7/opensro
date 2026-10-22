@@ -117,6 +117,12 @@ export const EXPERIMENTAL_TABS: readonly {
 				id: "experimental-homing-projectiles",
 				label: "Homing projectiles",
 				description: "Steer straight projectiles toward a moving target."
+			},
+			{
+				key: "spreadClothSteps",
+				id: "experimental-spread-cloth-steps",
+				label: "Spread cloth steps",
+				description: "Smoother frames: cloth and hair step in different frames."
 			}
 		]
 	},

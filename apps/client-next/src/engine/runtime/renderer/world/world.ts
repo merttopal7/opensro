@@ -10,6 +10,7 @@ world. Diagnostics observe it only through the frame probe (profile).
 ===========================================================================
 */
 import { createClothVertices } from "@/engine/foundation/animation/cloth-vertices";
+import { clothPhaseMs } from "@/engine/foundation/animation/cloth";
 import { waterReflectionMatrix } from "@/engine/foundation/rendering/water-reflection";
 import { blendAdds } from "@/engine/foundation/rendering/blend-state";
 import {
@@ -429,6 +430,9 @@ export function createWorldRenderer(
 	// follow target's height and the collision release (camera-smoothing.ts).
 	const cameraSmoothing = createCameraSmoothing();
 	let smoothCamera = false;
+	// Port-only, not native: the Experimental "Spread cloth steps" row starts
+	// each new cloth stream at its own accumulator phase (clothPhaseMs).
+	let spreadCloth = false, clothStreams = 0;
 	// The inputs the retained collisionCamera was resolved for (followInput).
 	const collisionInput = new Float64Array( FOLLOW_INPUT_LENGTH );
 	let collisionInputValid = false;
@@ -767,7 +771,11 @@ export function createWorldRenderer(
 			if ( group.geometry.cloth && !clothMeshes.has( group ) ) {
 				clothMeshes.set(
 					group,
-					createClothVertices( { geometry: group.geometry, cloth: group.geometry.cloth }, clothRandom )
+					createClothVertices(
+						{ geometry: group.geometry, cloth: group.geometry.cloth },
+						clothRandom,
+						spreadCloth ? clothPhaseMs( clothStreams++ ) : 0
+					)
 				);
 			}
 		}
@@ -1429,6 +1437,17 @@ export function createWorldRenderer(
 			smoothCamera = enabled === true;
 			resetCameraSmoothing( cameraSmoothing );
 			collisionInputValid = false;
+		},
+		/*
+		================
+		spreadCloth
+
+		The Experimental "Spread cloth steps" row. It applies to cloth streams
+		created afterwards; a stream keeps the phase it started with.
+		================
+		*/
+		spreadCloth( enabled: boolean ) {
+			spreadCloth = enabled === true;
 		},
 		/*
 		================

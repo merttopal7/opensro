@@ -136,6 +136,11 @@ export interface ExperimentalOptions {
 	// when on, keep bit 0x80 enabled on full-bag errors and pause non-gold item
 	// pickup until bag space changes so the pet keeps picking up gold. Default on.
 	readonly smartPetPickup: boolean;
+	// Port-only, not native: each new cloth stream starts its 50 ms
+	// accumulator at its own phase (cloth.ts clothPhaseMs), so cloth created
+	// together does not step in one frame. A9EFB0 starts every instance at 0.
+	// Off unless turned on (the owner's choice, 2026-10-21).
+	readonly spreadClothSteps: boolean;
 	// Port-only, not native: when the build publishes extra worldmap_mapinfo
 	// town pages (Alexandria) and a wider overview box, the M window uses them
 	// instead of the five native town pages and 28 x 8 overview (5758D0). Off
@@ -224,6 +229,7 @@ export function experimentalOptions( value: unknown = null ): ExperimentalOption
 		homingProjectiles: enabled( "homingProjectiles" ),
 		petClickOpensWindow: record.petClickOpensWindow !== false,
 		smartPetPickup: record.smartPetPickup !== false,
+		spreadClothSteps: enabled( "spreadClothSteps" ),
 		expandedWorldMap: enabled( "expandedWorldMap" )
 	};
 }
@@ -274,6 +280,7 @@ export interface ExperimentalVideo {
 	readonly sharedActorRoom: boolean;
 	readonly vHidesCompanions: boolean;
 	readonly dungeonCharacterPvs: boolean;
+	readonly spreadClothSteps: boolean;
 }
 
 /*
@@ -296,7 +303,8 @@ export function experimentalVideo( options: ExperimentalOptions ): ExperimentalV
 		enchantSparks: options.enchantSparks,
 		sharedActorRoom: options.sharedActorRoom,
 		vHidesCompanions: options.vHidesCompanions,
-		dungeonCharacterPvs: options.dungeonCharacterPvs
+		dungeonCharacterPvs: options.dungeonCharacterPvs,
+		spreadClothSteps: options.spreadClothSteps
 	};
 }
 

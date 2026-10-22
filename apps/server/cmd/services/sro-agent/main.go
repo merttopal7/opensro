@@ -27,6 +27,7 @@ import (
 	"opensro.online/server/internal/agent/api"
 	"opensro.online/server/internal/agent/bugreport"
 	"opensro.online/server/internal/agent/server"
+	"opensro.online/server/internal/agent/updates"
 	"opensro.online/server/internal/cluster/shard"
 	"opensro.online/server/internal/config"
 	"opensro.online/server/internal/platform/history"
@@ -34,6 +35,7 @@ import (
 	"opensro.online/server/internal/platform/readiness"
 	"opensro.online/server/internal/security/auth"
 	"opensro.online/server/internal/security/workload"
+	"opensro.online/server/internal/testsupport/licensed"
 )
 
 const (
@@ -158,6 +160,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("agent: bug reports: %v", err)
 	}
+	updatesHandler := openUpdates(catalogPath)
 	ready := readiness.NewGate()
 	journal, err := history.Open(filepath.Join(filepath.Dir(directoryPath), "history.sqlite"), "agent", "", history.Build())
 	if err != nil {
@@ -171,6 +174,7 @@ func main() {
 	}
 	server, err := agentserver.New(agentserver.Config{
 		History: journal, HistoryHandler: historyHandler,
+		UpdatesHandler:          updatesHandler,
 		Accounts:                accounts,
 		Catalog:                 catalog,
 		Directory:               directory,
@@ -297,6 +301,67 @@ func openBugReports() (*bugreport.Service, error) {
 		config.MaxBytes,
 	)
 	return service, nil
+}
+
+/*
+================
+openUpdates
+
+Resolves the server's updates directory and optional client asset directories,
+runs an initial differential patch check, and returns the /updates/ HTTP handler.
+================
+*/
+func openUpdates(catalogPath string) http.Handler {
+	serverRoot := "."
+	if absCatalog, err := filepath.Abs(catalogPath); err == nil {
+		serverRoot = filepath.Dir(filepath.Dir(absCatalog))
+	}
+	updatesDir := strings.TrimSpace(os.Getenv("SRO_UPDATES_DIR"))
+	if updatesDir == "" {
+		updatesDir = filepath.Join(serverRoot, "updates")
+	}
+
+	clientPublicDir := strings.TrimSpace(os.Getenv("SRO_CLIENT_ASSETS_DIR"))
+	if clientPublicDir == "" {
+		if resolved, err := licensed.ClientPublicRoot(); err == nil {
+			if info, statErr := os.Stat(resolved); statErr == nil && info.IsDir() {
+				clientPublicDir = resolved
+			}
+		}
+		if clientPublicDir == "" {
+			candidate := filepath.Join(serverRoot, "client-public")
+			if info, statErr := os.Stat(candidate); statErr == nil && info.IsDir() {
+				clientPublicDir = candidate
+			}
+		}
+	}
+
+	clientDistDir := strings.TrimSpace(os.Getenv("SRO_CLIENT_DIST_DIR"))
+	if clientDistDir == "" {
+		for _, candidate := range []string{
+			filepath.Join(serverRoot, "client-dist"),
+			filepath.Join(filepath.Dir(serverRoot), "client-next", "temp", "artifacts", "dist"),
+			filepath.Join(filepath.Dir(serverRoot), "client-next", "dist"),
+		} {
+			if info, statErr := os.Stat(candidate); statErr == nil && info.IsDir() {
+				clientDistDir = candidate
+				break
+			}
+		}
+	}
+
+	handler, err := updates.NewHandler(updates.SyncConfig{
+		UpdatesDir:      updatesDir,
+		ClientPublicDir: clientPublicDir,
+		ClientDistDir:   clientDistDir,
+		ArchiveKey:      strings.TrimSpace(os.Getenv("SRO_ARCHIVE_KEY")),
+	}, nil)
+	if err != nil {
+		log.Warnf("agent: updates disabled (%s): %v", updatesDir, err)
+		return nil
+	}
+	log.Infof("agent: serving client updates from %s", updatesDir)
+	return handler
 }
 
 /*

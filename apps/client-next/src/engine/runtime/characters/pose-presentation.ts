@@ -32,7 +32,13 @@ export type { SampleInput } from "@/engine/contracts/pose-presentation";
 import { SIMULATION_STEP_MS } from "@/engine/contracts/simulation";
 import { interpolateMovement, poseDistance } from "@/engine/foundation/gameplay/native-movement";
 import { hypot2, hypot3 } from "@/engine/foundation/math/hypot";
-import { displaceRegionXZ, sameCoordinateSpace, worldDelta } from "@/engine/foundation/world/world-space";
+import {
+	displaceRegionXZ,
+	regionOffsetX,
+	regionOffsetZ,
+	sameCoordinateSpace,
+	worldDelta
+} from "@/engine/foundation/world/world-space";
 
 const TICK_SECONDS = SIMULATION_STEP_MS / 1000;
 const DISCONTINUITY_DISTANCE = 192;
@@ -44,6 +50,10 @@ const MIN_CORRECTION_DISTANCE = 0.01;
 const MAX_CORRECTION_DISTANCE = 96;
 const MAX_RECOVERY_PATHS = 4;
 const MAX_WALK_RECOVERY_SPEED_FACTOR = 1.5;
+// Port-only: native draws the logical pose and never repays a lag. Below
+// this lag (world units) the walking-chain recovery adds speed in
+// proportion to it; at or above it, the full MAX_WALK_RECOVERY_SPEED_FACTOR.
+const FULL_WALK_RECOVERY_LAG = 8;
 
 /*
 ================
@@ -159,44 +169,100 @@ function onCorridor( pose: Pose, from: Pose, to: Pose, walking = false ) {
 
 /*
 ================
+WalkingEdges
+
+A walking chain's edge spans (worldVector of each edge, x y z at 3 * edge)
+and lengths. A chain holds up to 256 samples and every walking character
+queries its chain several times a frame; building the spans per query
+allocated about 8 MB/s in a crowd (2026-10-22).
+================
+*/
+interface WalkingEdges {
+	readonly spans: Float64Array;
+	readonly lengths: Float64Array;
+}
+
+// Published chains are immutable; a new publication is a new array.
+const walkingEdgeCache = new WeakMap<readonly Pose[], WalkingEdges | null>();
+
+/*
+================
+walkingEdges
+
+The chain's edges, or null when two neighbours share no coordinate space.
+================
+*/
+function walkingEdges( path: readonly Pose[] ): WalkingEdges | null {
+	const cached = walkingEdgeCache.get( path );
+	if ( cached !== undefined ) return cached;
+	let edges: WalkingEdges | null = {
+		spans: new Float64Array( path.length * 3 ),
+		lengths: new Float64Array( path.length )
+	};
+	for ( let i = 1; i < path.length; i++ ) {
+		const span = worldVector( path[i]!, path[i - 1]! );
+		if ( !span ) {
+			edges = null;
+			break;
+		}
+		edges.spans.set( span, i * 3 );
+		edges.lengths[i] = hypot3( ...span );
+	}
+	walkingEdgeCache.set( path, edges );
+	return edges;
+}
+
+/*
+================
 walkingLocation
 
-Locate a pose on the navigation owner's connected sample chain.
+Locate a pose on the navigation owner's connected sample chain. The pose's
+offset from each edge start is worldVector( pose, from ), spelled out to
+keep the per-edge loop free of allocation.
 ================
 */
 function walkingLocation( pose: Pose, path: readonly Pose[], latest = false ) {
-	let distance = 0;
-	let best: { distance: number; error: number; pose: Pose; edge: number; fraction: number; } | null = null;
+	const edges = walkingEdges( path );
+	if ( !edges ) return null;
+	const { spans, lengths } = edges;
+	let distance = 0, bestEdge = 0, bestFraction = 0, bestDistance = 0, bestError = 0;
 	for ( let i = 1; i < path.length; i++ ) {
-		const from = path[i - 1]!, to = path[i]!;
-		const span = worldVector( to, from ), point = worldVector( pose, from );
-		if ( !span || !point ) return null;
-		const planar2 = span[0] ** 2 + span[2] ** 2;
+		const from = path[i - 1]!;
+		if ( !sameCoordinateSpace( pose.regionId, from.regionId ) ) return null;
+		const px = pose.x - from.x + regionOffsetX( from.regionId, pose.regionId ),
+			py = pose.y - from.y,
+			pz = pose.z - from.z + regionOffsetZ( from.regionId, pose.regionId );
+		const sx = spans[i * 3]!, sy = spans[i * 3 + 1]!, sz = spans[i * 3 + 2]!;
+		const planar2 = sx ** 2 + sz ** 2;
 		const fraction = planar2 ?
-			Math.max( 0, Math.min( 1, (point[0] * span[0] + point[2] * span[2]) / planar2 ) ) :
-			span[1] ?
-			Math.max( 0, Math.min( 1, point[1] / span[1] ) ) :
+			Math.max( 0, Math.min( 1, (px * sx + pz * sz) / planar2 ) ) :
+			sy ?
+			Math.max( 0, Math.min( 1, py / sy ) ) :
 			0;
-		const length = hypot3( ...span );
-		const miss = hypot2( point[0] - span[0] * fraction, point[2] - span[2] * fraction );
+		const length = lengths[i]!;
+		const miss = hypot2( px - sx * fraction, pz - sz * fraction );
 		if ( miss <= MIN_CORRECTION_DISTANCE ) {
-			const error = miss + Math.abs( point[1] - span[1] * fraction );
+			const error = miss + Math.abs( py - sy * fraction );
 			if (
-				!best || (latest && error <= MIN_CORRECTION_DISTANCE && best.error <= MIN_CORRECTION_DISTANCE) ||
-				error < best.error
+				!bestEdge || (latest && error <= MIN_CORRECTION_DISTANCE && bestError <= MIN_CORRECTION_DISTANCE) ||
+				error < bestError
 			) {
-				best = {
-					edge: i,
-					fraction,
-					distance: distance + length * fraction,
-					error,
-					pose: interpolateMovement( from, to, fraction )
-				};
+				bestEdge = i;
+				bestFraction = fraction;
+				bestDistance = distance + length * fraction;
+				bestError = error;
 			}
 		}
 		distance += length;
 	}
-	return best;
+	if ( !bestEdge ) return null;
+	return {
+		edge: bestEdge,
+		fraction: bestFraction,
+		distance: bestDistance,
+		error: bestError,
+		pose: interpolateMovement( path[bestEdge - 1]!, path[bestEdge]!, bestFraction )
+	};
 }
 
 /*
@@ -207,19 +273,28 @@ The certified path's point nearest a pose in the plane.
 ================
 */
 function nearestWalkingPose( pose: Pose, path: readonly Pose[] ): Pose | null {
-	let best: { miss: number; pose: Pose; } | null = null;
+	const edges = walkingEdges( path );
+	if ( !edges ) return null;
+	const { spans } = edges;
+	let bestEdge = 0, bestFraction = 0, bestMiss = 0;
 	for ( let i = 1; i < path.length; i++ ) {
-		const from = path[i - 1]!, to = path[i]!;
-		const span = worldVector( to, from ), point = worldVector( pose, from );
-		if ( !span || !point ) return null;
-		const planar2 = span[0] ** 2 + span[2] ** 2;
+		const from = path[i - 1]!;
+		if ( !sameCoordinateSpace( pose.regionId, from.regionId ) ) return null;
+		const px = pose.x - from.x + regionOffsetX( from.regionId, pose.regionId ),
+			pz = pose.z - from.z + regionOffsetZ( from.regionId, pose.regionId );
+		const sx = spans[i * 3]!, sz = spans[i * 3 + 2]!;
+		const planar2 = sx ** 2 + sz ** 2;
 		const fraction = planar2 ?
-			Math.max( 0, Math.min( 1, (point[0] * span[0] + point[2] * span[2]) / planar2 ) ) :
+			Math.max( 0, Math.min( 1, (px * sx + pz * sz) / planar2 ) ) :
 			0;
-		const miss = hypot2( point[0] - span[0] * fraction, point[2] - span[2] * fraction );
-		if ( !best || miss < best.miss ) best = { miss, pose: interpolateMovement( from, to, fraction ) };
+		const miss = hypot2( px - sx * fraction, pz - sz * fraction );
+		if ( !bestEdge || miss < bestMiss ) {
+			bestEdge = i;
+			bestFraction = fraction;
+			bestMiss = miss;
+		}
 	}
-	return best?.pose ?? null;
+	return bestEdge ? interpolateMovement( path[bestEdge - 1]!, path[bestEdge]!, bestFraction ) : null;
 }
 
 /*
@@ -230,13 +305,28 @@ Spend distance along certified edges.
 ================
 */
 function walkingPose( path: readonly Pose[], distance: number ): Pose {
+	const { lengths } = walkingEdges( path )!;
 	for ( let i = 1; i < path.length; i++ ) {
-		const from = path[i - 1]!, to = path[i]!;
-		const length = hypot3( ...worldVector( to, from )! );
-		if ( distance <= length ) return interpolateMovement( from, to, length ? distance / length : 0 );
+		const length = lengths[i]!;
+		if ( distance <= length ) return interpolateMovement( path[i - 1]!, path[i]!, length ? distance / length : 0 );
 		distance -= length;
 	}
 	return path[path.length - 1]!;
+}
+
+/*
+================
+walkRecoveryBudget
+
+Distance the display may travel along the walking chain this frame: the
+walk itself plus a surplus that grows with the lag up to
+FULL_WALK_RECOVERY_LAG. A small lag decays without a sprint; a stall's
+large one is still repaid at the cap.
+================
+*/
+function walkRecoveryBudget( speed: number, lag: number, seconds: number ) {
+	const surplus = (MAX_WALK_RECOVERY_SPEED_FACTOR - 1) * speed * Math.min( 1, lag / FULL_WALK_RECOVERY_LAG );
+	return (speed + surplus) * seconds;
 }
 
 /*
@@ -720,9 +810,14 @@ export function createPosePresentation() {
 		}
 		if ( row.paths.length > MAX_RECOVERY_PATHS ) row.paths.splice( 0, row.paths.length - MAX_RECOVERY_PATHS );
 		let drawn = displace( model, row.offset );
+		// A delivery gap longer than the worker's 100 ms presentation corridor
+		// parks the model and hands the next frame a 3.5-6 unit lag. Spent at
+		// the 1.5x cap, the camera sprinted at 75 u/s after every such hitch on
+		// a 50 u/s run (2026-10-21). A fixed lower cap cannot repay a second's
+		// stall, and without extra speed the per-click timing jumps add up.
 		const recoveryBudget = row === previousTrack && !input.displacement && walkingPath && row.recoverySpeed > 0 &&
 				previousFrameAt !== undefined ?
-			MAX_WALK_RECOVERY_SPEED_FACTOR * row.recoverySpeed * Math.max( 0, now - previousFrameAt ) :
+			walkRecoveryBudget( row.recoverySpeed, hypot3( ...row.offset ), Math.max( 0, now - previousFrameAt ) ) :
 			Infinity;
 		const corridor = input.transition?.corridor;
 		// Receipt adoption also happens twice at one display timestamp. The

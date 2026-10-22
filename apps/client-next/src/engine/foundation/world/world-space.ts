@@ -153,13 +153,31 @@ when either region is a dungeon region, or 1920-unit sector steps outdoors.
 ================
 */
 export function regionOffsetXZ( fromRegion: number, toRegion: number ): [number, number] {
-	if ( isDungeonRegion( fromRegion ) || isDungeonRegion( toRegion ) ) {
-		return [ 0, 0 ];
-	}
-	return [
-		(sectorX( toRegion ) - sectorX( fromRegion )) * REGION_SIZE,
-		(sectorY( toRegion ) - sectorY( fromRegion )) * REGION_SIZE
-	];
+	return [ regionOffsetX( fromRegion, toRegion ), regionOffsetZ( fromRegion, toRegion ) ];
+}
+
+/*
+================
+regionOffsetX
+
+regionOffsetXZ's x without an array, for per-frame loops over long paths.
+================
+*/
+export function regionOffsetX( fromRegion: number, toRegion: number ): number {
+	if ( isDungeonRegion( fromRegion ) || isDungeonRegion( toRegion ) ) return 0;
+	return (sectorX( toRegion ) - sectorX( fromRegion )) * REGION_SIZE;
+}
+
+/*
+================
+regionOffsetZ
+
+regionOffsetXZ's z without an array, for per-frame loops over long paths.
+================
+*/
+export function regionOffsetZ( fromRegion: number, toRegion: number ): number {
+	if ( isDungeonRegion( fromRegion ) || isDungeonRegion( toRegion ) ) return 0;
+	return (sectorY( toRegion ) - sectorY( fromRegion )) * REGION_SIZE;
 }
 
 /*

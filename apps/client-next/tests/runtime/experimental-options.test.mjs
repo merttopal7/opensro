@@ -73,6 +73,8 @@ const OFF = Object.freeze( {
 	// On by default (owner 2026-10-20): keep bit 0x80 enabled on 0xB4/0xB5 so the
 	// pet keeps picking up gold when full; off restores the native 0x0077DD61 disable.
 	smartPetPickup: true,
+	// Off by default: every cloth instance starts its accumulator at 0 (A9EFB0).
+	spreadClothSteps: false,
 	// Off by default: the M window shows only the five native towns and 28 x 8 overview.
 	expandedWorldMap: false
 } );
@@ -159,7 +161,8 @@ test("every video stage defaults off and only an explicit true enables it", () =
 		// The shared actor room is on by default (owner 2026-10-14).
 		sharedActorRoom: true,
 		vHidesCompanions: false,
-		dungeonCharacterPvs: true
+		dungeonCharacterPvs: true,
+		spreadClothSteps: false
 	} );
 	for (
 		const key of [
@@ -530,4 +533,16 @@ test("expanded world map defaults off (native five towns and 28 x 8 overview) an
 	const on = experimentalOptions( { expandedWorldMap: true } );
 	assert.equal( on.expandedWorldMap, true );
 	assert.ok( EXPERIMENTAL_TABS.some( tab => tab.rows.some( row => row.key === "expandedWorldMap" ) ) );
+});
+
+test("spread cloth steps default off (native accumulator start) and reach only the renderer's slice", () => {
+	for ( const value of [ undefined, null, {}, { spreadClothSteps: 1 }, { spreadClothSteps: "true" } ] ) {
+		const options = experimentalOptions( value );
+		assert.equal( options.spreadClothSteps, false );
+		assert.equal( experimentalVideo( options ).spreadClothSteps, false );
+		assert.equal( "spreadClothSteps" in experimentalGameplay( options ), false );
+	}
+	const on = experimentalOptions( { spreadClothSteps: true } );
+	assert.equal( experimentalVideo( on ).spreadClothSteps, true );
+	assert.ok( EXPERIMENTAL_TABS.some( tab => tab.rows.some( row => row.key === "spreadClothSteps" ) ) );
 });

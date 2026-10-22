@@ -8,7 +8,7 @@ cloth.test.mjs - fixed-step dynamics, anchored skinning and option transitions
 import "../helpers/native-source-loader.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
-const { clothData, createCloth } = await import( "../../src/engine/foundation/animation/cloth.ts" );
+const { clothData, clothPhaseMs, createCloth } = await import( "../../src/engine/foundation/animation/cloth.ts" );
 const { createClothVertices } = await import( "../../src/engine/foundation/animation/cloth-vertices.ts" );
 const { identity } = await import( "../../src/engine/foundation/rendering/world-math.ts" );
 
@@ -200,4 +200,29 @@ test("unskinned cloth restores immutable anchors after animated motion", () => {
 	assert.deepEqual( restored.subarray( 17, 20 ), Float32Array.of( 0, 1, 0 ) );
 	assert.equal( cloth.update( palette, .2, true, motion )[15], 0 );
 	assert.ok( cloth.update( palette, .3, true, motion )[15] < 0 );
+});
+
+test("a cloth phase only moves when the 50ms steps fall due; phase 0 is the native start", () => {
+	const native = createCloth( fixture(), rest ), zero = createCloth( fixture(), rest, 0 );
+	const phased = createCloth( fixture(), rest, 30 );
+	for ( const deltaMs of [ 10, 9, 1, 30, 50, 7, 43 ] ) {
+		assert.deepEqual( advance( zero, deltaMs ), advance( native, deltaMs ) );
+	}
+	const late = createCloth( fixture(), rest );
+	advance( phased, 0 );
+	advance( late, 0 );
+	assert.deepEqual( advance( phased, 19 ), rest, "a 30 ms phase has not stepped after 19 ms" );
+	const first = advance( phased, 1 ).slice();
+	assert.notDeepEqual( first, rest, "it steps after 20 ms instead of 50 ms" );
+	assert.deepEqual( advance( late, 50 ), first, "the step itself is the native one" );
+});
+
+test("successive cloth phases spread over one step", () => {
+	const phases = Array.from( { length: 8 }, ( _, i ) => clothPhaseMs( i ) );
+	assert.equal( phases[0], 0, "the first instance keeps the native start" );
+	assert.equal( new Set( phases ).size, phases.length );
+	for ( const phase of phases ) assert.ok( Number.isInteger( phase ) && phase >= 0 && phase < 50 );
+	const sorted = [ ...phases ].sort( ( a, b ) => a - b );
+	const widest = Math.max( ...sorted.map( ( p, i ) => (sorted[i + 1] ?? sorted[0] + 50) - p ) );
+	assert.ok( widest <= 15, `eight instances leave no long idle stretch in a step: ${widest} ms` );
 });

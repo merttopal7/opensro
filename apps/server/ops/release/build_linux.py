@@ -30,6 +30,7 @@ TARGETS = (
 	("sro-authority-upgrade", "./cmd/tools/sro-authority-upgrade"),
 	("sro-game-data-check", "./cmd/tools/sro-game-data-check"),
 	("sro-swap-sun", "./cmd/operations/sro-swap-sun"),
+	("sro-packer", "./cmd/operations/sro-packer"),
 )
 
 BUILD_SUBJECT_SYMBOL = "opensro.online/server/internal/agent/server.BuildSubjectSymbol"
@@ -38,7 +39,7 @@ START_SH = """#!/usr/bin/env bash
 set -Eeuo pipefail
 cd "$(dirname "$0")"
 
-chmod +x agent gameworld panel sro-nomad sro-init sro-provision-identity hash-agent-password sro-authority-upgrade sro-game-data-check sro-swap-sun init-postgres.sh ops/backup/*.sh
+chmod +x agent gameworld panel sro-nomad sro-init sro-provision-identity hash-agent-password sro-authority-upgrade sro-game-data-check sro-swap-sun sro-packer init-postgres.sh ops/backup/*.sh
 
 export SRO_SERVER_GAME_DATA_ROOT="$(pwd)/.generated/game-data/1.150/server.srogz"
 export SRO_AGENT_POSTGRES_DSN="postgres://app:123@127.0.0.1:5433/opensro?sslmode=disable"
@@ -106,7 +107,9 @@ echo "[5/6] Starting Customer & Shard Panel ($SRO_PANEL_ADDR)..."
 pkill -x panel >/dev/null 2>&1 || true
 nohup ./panel > .state/panel.log 2>&1 &
 
-# 6) Upgrade any older shard authority schemas and deploy sro-agent + sro-gameworld
+# 6) Check client updates and deploy sro-agent + sro-gameworld
+mkdir -p updates
+./sro-packer sync -updates "$(pwd)/updates" || true
 for auth_dir in .state/shards/*/authority; do
 	if [ -f "$auth_dir/state.db" ]; then
 		./sro-authority-upgrade -authority-dir "$auth_dir" -commit >/dev/null 2>&1 || true
@@ -120,6 +123,7 @@ echo "[6/6] Deploying sro-agent and sro-gameworld..."
 echo ""
 echo "=== OpenSRO Server Active! ==="
 echo "Agent API     : http://127.0.0.1:8787"
+echo "Client Updates: http://127.0.0.1:8787/updates/patches.json"
 echo "GameWorld     : http://127.0.0.1:8788"
 echo "Customer Panel: http://127.0.0.1:8795"
 echo "Status        : ./sro-nomad status"
@@ -227,6 +231,118 @@ echo "PostgreSQL 'opensro' veritabani ve tablolar hazir!"
 """
 
 
+DESKTOP_INDEX_HTML_TEMPLATE = """<!doctype html>
+<html lang="en">
+\t<head>
+\t\t<meta charset="utf-8" />
+\t\t<meta name="viewport" content="width=device-width,initial-scale=1" />
+\t\t<link rel="icon" href="data:," />
+\t\t<title>Silkroad Online · New Silkroad</title>
+\t\t<meta name="theme-color" content="#101820" />
+\t\t<link rel="stylesheet" crossorigin href="/assets/{css_file}" />
+\t\t<link rel="stylesheet" href="/styles.css" />
+\t\t<script type="module" src="/main.js"></script>
+\t\t<script type="module" crossorigin src="/assets/{js_file}"></script>
+\t</head>
+\t<body>
+\t\t<header id="top-drag-bar" class="drag-bar" title="Pencereyi sürüklemek için basılı tutun"></header>
+\t\t<div id="startup-loading" class="sro-boot-loading" data-active="true" role="status" aria-live="polite">
+\t\t\t<div class="sro-boot-loading__inner">
+\t\t\t\t<img
+\t\t\t\t\tclass="sro-boot-loading__logo"
+\t\t\t\t\tsrc="/assets/images/Media_extracted/interface/outer/logo-big.png"
+\t\t\t\t\twidth="870"
+\t\t\t\t\theight="320"
+\t\t\t\t\talt="Silkroad Online"
+\t\t\t\t/>
+\t\t\t\t<img
+\t\t\t\t\tclass="sro-boot-loading__native-label"
+\t\t\t\t\tsrc="/assets/images/Media_extracted/interface/loading/nowloading.png"
+\t\t\t\t\twidth="144"
+\t\t\t\t\theight="20"
+\t\t\t\t\talt="Now loading"
+\t\t\t\t/>
+\t\t\t\t<div class="sro-boot-loading__copy">
+\t\t\t\t\t<div class="sro-boot-loading__label">Preparing your journey</div>
+\t\t\t\t\t<div class="sro-boot-loading__detail">Loading local game files</div>
+\t\t\t\t</div>
+\t\t\t\t<div class="sro-boot-loading__bar">
+\t\t\t\t\t<div class="sro-boot-loading__bar-track"><div class="sro-boot-loading__bar-fill"></div></div>
+\t\t\t\t</div>
+\t\t\t</div>
+\t\t</div>
+\t\t<canvas aria-label="Silkroad replacement renderer"></canvas>
+\t\t<div id="fps-chip" class="sro-fps-chip" data-expanded="false">
+\t\t\t<button
+\t\t\t\tid="fps-toggle"
+\t\t\t\tclass="sro-fps-chip__toggle"
+\t\t\t\ttype="button"
+\t\t\t\taria-expanded="false"
+\t\t\t\taria-controls="fps-readout"
+\t\t\t\taria-label="Show FPS telemetry"
+\t\t\t\ttitle="Show FPS telemetry"
+\t\t\t>
+\t\t\t\tF
+\t\t\t</button>
+\t\t\t<div id="fps-readout" class="sro-fps-chip__readout" role="status" aria-live="off" hidden></div>
+\t\t</div>
+\t\t<div id="update-notice" class="sro-update-notice" role="status" hidden>
+\t\t\t<span>Silkroad Online has been updated. Refresh to continue playing.</span>
+\t\t\t<button type="button">Refresh</button>
+\t\t</div>
+\t\t<section id="loading-transfer" class="loading-transfer" hidden aria-label="Loading progress">
+\t\t\t<div class="loading-transfer__header">
+\t\t\t\t<span class="loading-transfer__pulse" aria-hidden="true"></span>
+\t\t\t\t<span data-transfer="title">Preparing your journey</span>
+\t\t\t</div>
+\t\t\t<div data-transfer="file" class="loading-transfer__file" aria-live="polite">Discovering game files</div>
+\t\t\t<dl class="loading-transfer__metrics">
+\t\t\t\t<div>
+\t\t\t\t\t<dt>Data loaded</dt>
+\t\t\t\t\t<dd data-transfer="bytes">0 MB</dd>
+\t\t\t\t</div>
+\t\t\t\t<div>
+\t\t\t\t\t<dt>Transfer rate</dt>
+\t\t\t\t\t<dd data-transfer="speed">—</dd>
+\t\t\t\t</div>
+\t\t\t\t<div>
+\t\t\t\t\t<dt>Files ready</dt>
+\t\t\t\t\t<dd data-transfer="files">0</dd>
+\t\t\t\t</div>
+\t\t\t\t<div>
+\t\t\t\t\t<dt>Cache reused</dt>
+\t\t\t\t\t<dd data-transfer="cache">0</dd>
+\t\t\t\t</div>
+\t\t\t</dl>
+\t\t\t<div data-transfer="queue" class="loading-transfer__queue">Discovering what this scene needs</div>
+\t\t</section>
+\t\t<output aria-hidden="true">Starting replacement runtime…</output>
+\t</body>
+</html>
+"""
+
+
+# ================
+# prepare_client_dist
+# ================
+def prepare_client_dist(src_dir: Path, dst_dir: Path) -> None:
+	if dst_dir.exists():
+		shutil.rmtree(dst_dir)
+	shutil.copytree(src_dir, dst_dir)
+	viewer = dst_dir / "viewer.html"
+	if viewer.is_file():
+		viewer.unlink()
+	assets_dir = dst_dir / "assets"
+	if assets_dir.is_dir():
+		js_files = sorted(f.name for f in assets_dir.glob("bootstrap-*.js"))
+		css_files = sorted(f.name for f in assets_dir.glob("index-*.css"))
+		if js_files and css_files:
+			rendered = DESKTOP_INDEX_HTML_TEMPLATE.format(
+				js_file=js_files[-1],
+				css_file=css_files[-1],
+			)
+			(dst_dir / "index.html").write_bytes(rendered.encode("utf-8"))
+
 # ================
 # resolve_go_binary
 # ================
@@ -309,6 +425,45 @@ def assemble_package(go_bin: str, module_root: Path, out_dir: Path, arch: str) -
 		srogz_dst.parent.mkdir(parents=True, exist_ok=True)
 		shutil.copy2(srogz_src, srogz_dst)
 		print(f"[linux/{arch}] copied game data -> {srogz_dst} ({srogz_dst.stat().st_size // (1024 * 1024)} MB)")
+
+	client_dist_src = module_root.parent / "client-next" / "temp" / "artifacts" / "dist"
+	client_dist_dst = out_dir / "client-dist"
+	if client_dist_src.is_dir():
+		prepare_client_dist(client_dist_src, client_dist_dst)
+		print(f"[linux/{arch}] copied client dist -> {client_dist_dst}")
+
+	updates_dst = out_dir / "updates"
+	updates_dst.mkdir(parents=True, exist_ok=True)
+	baseline_dst = updates_dst / "baseline.json"
+	if not baseline_dst.is_file():
+		subprocess.run(
+			[
+				go_bin,
+				"run",
+				"./cmd/operations/sro-packer",
+				"baseline",
+				"-updates",
+				str(updates_dst),
+				"-dist",
+				str(client_dist_dst),
+			],
+			cwd=module_root,
+			check=False,
+		)
+	subprocess.run(
+		[
+			go_bin,
+			"run",
+			"./cmd/operations/sro-packer",
+			"sync",
+			"-updates",
+			str(updates_dst),
+			"-dist",
+			str(client_dist_dst),
+		],
+		cwd=module_root,
+		check=False,
+	)
 
 	start_script = out_dir / "start-linux.sh"
 	start_script.write_bytes(START_SH.encode("utf-8"))

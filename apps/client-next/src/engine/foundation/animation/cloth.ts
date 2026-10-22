@@ -65,6 +65,22 @@ export function clothData( value: unknown, vertices: number ): ClothData | undef
 	return d;
 }
 
+// Golden-ratio fraction: successive instances land evenly spread over a step.
+const PHASE_SPREAD = 0.6180339887498949;
+
+/*
+================
+clothPhaseMs
+
+Port-only, not native (Experimental spreadClothSteps): the accumulator
+start of the index-th cloth instance. A9EFB0 starts every instance at 0,
+so instances created in one frame step in the same frame forever.
+================
+*/
+export function clothPhaseMs( index: number ): number {
+	return Math.floor( (index * PHASE_SPREAD % 1) * STEP_MS );
+}
+
 /*
 ================
 createCloth
@@ -72,11 +88,12 @@ createCloth
 A9EFB0 caps accumulated time at 200ms and drains 50ms steps. A77530 uses
 Verlet positions, authored damping, gravity, and ordered extension constraints.
 The random function is supplied so tests can exercise the native gust gate.
+phaseMs 0 is the native accumulator start (see clothPhaseMs).
 ================
 */
-export function createCloth( data: ClothData, rest: Float32Array ) {
+export function createCloth( data: ClothData, rest: Float32Array, phaseMs = 0 ) {
 	const positions = new Float32Array( rest ), previous = new Float32Array( rest );
-	let elapsed = 0, initialized = false;
+	let elapsed = phaseMs, initialized = false;
 	// A step may move pinned vertices (pin 2 integrates, constraints pull a
 	// mobile pin 1). due checks whether re-anchoring would actually change them.
 	let stepped = false;
@@ -157,7 +174,7 @@ export function createCloth( data: ClothData, rest: Float32Array ) {
 			if ( !initialized || !input.enabled ) {
 				positions.set( input.anchors );
 				previous.set( input.anchors );
-				elapsed = 0;
+				elapsed = phaseMs;
 				initialized = true;
 			}
 			for ( let i = 0; i < data.pins.length; i++ ) {

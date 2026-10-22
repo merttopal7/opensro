@@ -5,6 +5,7 @@ apps/client-next/src/engine/foundation/ui/pet-design-data.ts # generated workboo
 apps/client-next/src/engine/foundation/ui/skill-tooltip-params.ts # not yet analysed; split on its responsibility boundaries when formatted
 apps/client-next/src/engine/runtime/characters/characters.ts # one frame coordinator: the state index, action/event lanes and actor pass share one ordered frame; the lanes it calls are separate owners
 apps/client-next/src/engine/runtime/characters/effects/effects.ts # formatted 2026-10-01; step() still owns cast stages, attached buffs, status, item and system effects and flights: split along those owners
+apps/client-next/src/engine/runtime/characters/pose-presentation.ts # one per-actor pose presentation owner: locomotion clip selection, recovery walk pace, riding, weapon attachments and action overrides share one state record
 apps/client-next/src/engine/runtime/renderer/device/geometry.ts # cohesive draw-resource and binding lifetime owner; upload snapshots have a separate owner
 apps/client-next/src/engine/runtime/renderer/characters/characters.ts # synchronous model, pose and draw-batch lifetime owner; shared admission and retirement must stay ordered
 apps/client-next/src/engine/runtime/renderer/world/world.ts # not yet analysed; split on its responsibility boundaries when formatted
@@ -22,6 +23,7 @@ apps/client-next/tests/runtime/gameplay.test.mjs # test file; split by feature
 apps/client-next/tests/runtime/ui-behavior.test.mjs # test file covering every window; split per window
 apps/client-next/tests/runtime/world-renderer.test.mjs # test file; split by feature
 apps/client-next/tests/runtime/world.test.mjs # test file; split by feature
+apps/server/internal/security/auth/accounts.go # one SQLite account store owner: credential verification, session token issuance and shard lock state share one transaction handle
 scripts/build/shared/cifRuntimeImageCatalog.mjs # not yet analysed; split on its responsibility boundaries when formatted
 
 apps/client-next/src/engine/runtime/renderer/renderer.ts # GPU lifetime and ordered frame closure share one cohesive owner; splitting requires new mutable state plumbing.

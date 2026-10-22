@@ -18,6 +18,7 @@
 # extraction cache (scripts/build/server/buildServerGameDataBundle.mjs).
 # Built from a licensed client; never committed.
 /.generated/
+/updates/
 
 # Go and native build outputs.
 *.exe

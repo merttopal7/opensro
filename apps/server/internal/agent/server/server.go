@@ -147,6 +147,8 @@ type Config struct {
 	Readiness               *readiness.Gate
 	// BugReports is nil when the operator has not configured bug reports.
 	BugReports *bugreport.Service
+	// UpdatesHandler serves /updates/patches.json and /updates/*.temir when configured.
+	UpdatesHandler http.Handler
 	// BcryptCost is the cost of the unknown-account refusal and of the hashes
 	// a login raises to; zero is auth.AccountBcryptCost. A store that reports
 	// its own cost must agree. Tests pass bcrypt.MinCost.
@@ -161,6 +163,7 @@ Server
 type Server struct {
 	history                 *history.Journal
 	historyHandler          http.Handler
+	updatesHandler          http.Handler
 	accounts                AccountAuthority
 	catalog                 *shard.Catalog
 	directory               *shard.Directory
@@ -268,6 +271,7 @@ func New(config Config) (*Server, error) {
 	srv := &Server{
 		history:                 config.History,
 		historyHandler:          config.HistoryHandler,
+		updatesHandler:          config.UpdatesHandler,
 		accounts:                config.Accounts,
 		catalog:                 config.Catalog,
 		directory:               config.Directory,
@@ -332,6 +336,9 @@ func (server *Server) Handler() http.Handler {
 		browser(server.requireRunning(http.HandlerFunc(server.handleLogin))),
 	)
 	mux.HandleFunc("/marks/", server.handleMark)
+	if server.updatesHandler != nil {
+		mux.Handle("/updates/", server.updatesHandler)
+	}
 	mux.Handle("/title/session", browser(server.requireRunning(http.HandlerFunc(server.handleBrowserSession))))
 	mux.Handle("/title/logout", browser(http.HandlerFunc(server.handleBrowserLogout)))
 	mux.Handle("/title/character-select", browser(http.HandlerFunc(server.handleBrowserCharacterSelect)))
