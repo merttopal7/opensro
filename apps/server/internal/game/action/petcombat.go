@@ -27,6 +27,7 @@ companion. Monster pursuit already resolves both kinds of opponent.
 package action
 
 import (
+	"opensro.online/server/internal/game/companion"
 	"strings"
 	"sync/atomic"
 
@@ -243,6 +244,11 @@ func (rt *Runtime) advancePetCombat(step petCombatStep) (frames []simulation.Fra
 		rt.cancelPetCombat(step.key, step.state, step.nowMs)
 		return nil, false
 	}
+	if rt.petExpansionAllowed(step.snapshot, step.pet) && companion.PetKind(step.pet.Codename) == "Penguin" && target.monster != nil {
+		skill.ActionRange = 150
+		skill.ActionCastingTimeMs = 600
+		skill.ProjectileSpeed = 500
+	}
 	block := rt.cosAbnormal(step.key.division, step.snapshot.Name, step.pet.GID)
 	spacing := simulation.CombatSpacing{
 		ActorBodyRadius:  simulation.BodyRadius(step.ref.Parameters.BodyRadius),
@@ -374,10 +380,11 @@ petStrikeResult
 ================
 */
 type petStrikeResult struct {
-	strike monsterStrike
-	actor  []wire.Frame
-	frames []simulation.Frame
-	fatal  bool
+	strike   monsterStrike
+	hpDamage uint64 // HP actually removed; native impact damage may include overkill.
+	actor    []wire.Frame
+	frames   []simulation.Frame
+	fatal    bool
 }
 
 /*
@@ -430,11 +437,21 @@ func (rt *Runtime) petStrike(step petCombatStep, target monster.Instance, skill 
 	if !planned {
 		return petStrikeResult{}, false
 	}
+	if step.trained != nil && step.trained.coldExtension {
+		for i := range plans {
+			for j := range plans[i].Abnormal {
+				if plans[i].Abnormal[j].Status == abnormal.Frostbite {
+					plans[i].Abnormal[j].DurationMs += 2000
+				}
+			}
+		}
+	}
 	monsterPose := monster.Pose{RegionID: targetAt.RegionID, X: targetAt.X, Y: targetAt.Y, Z: targetAt.Z}
 	roster := rt.monsterRewardRoster(division, owner, step.nowMs)
 	var committed []simulation.MonsterDamageResult
 	var settlement monsterSettlement
 	var trainedFrames []wire.Frame
+	var hpDamage uint64
 	if !rt.deps.UpdateManyDeferred(roster.characters, "pet-attack", func() bool {
 		// The live summoner owns the trained rows and counters (pettrained.go):
 		// a row spent meanwhile refuses the hit, a refused commit spends nothing.
@@ -449,9 +466,12 @@ func (rt *Runtime) petStrike(step petCombatStep, target monster.Instance, skill 
 		dealt := uint32(0)
 		for _, applied := range committed {
 			dealt += applied.Damage
+			hpDamage += uint64(applied.Damage)
 		}
+		hpDamage = min(hpDamage, uint64(target.CurrentHP))
 		trainedFrames, _ = rt.petTrainedCommit(step, owner, livePet, step.trained, dealt, committed[len(committed)-1].Fatal, false)
 		if committed[len(committed)-1].Fatal {
+			roster.companionKill = true
 			settlement = rt.settleMonsterInsideDoor(division, owner, roster, committed[len(committed)-1], monsterPose, step.nowMs)
 		}
 		return true
@@ -493,7 +513,7 @@ func (rt *Runtime) petStrike(step petCombatStep, target monster.Instance, skill 
 		actorFrames = append(actorFrames, settlement.otherPublic...)
 		step.state.others = append(step.state.others, settlement.others...)
 	}
-	return petStrikeResult{strike: monsterStrike{gid: target.Gid, pose: targetAt, impacts: impacts, public: public, fatal: fatal}, actor: actorFrames, fatal: fatal}, true
+	return petStrikeResult{strike: monsterStrike{gid: target.Gid, pose: targetAt, impacts: impacts, public: public, fatal: fatal}, actor: actorFrames, hpDamage: hpDamage, fatal: fatal}, true
 }
 
 /*

@@ -15,7 +15,8 @@ import {
 	experimentalOptions,
 	type ExperimentalKey,
 	type ExperimentalOptions,
-	renderScales
+	renderScales,
+	uiScaleStop
 } from "@/engine/foundation/ui/experimental-options";
 import type { SessionState } from "@/engine/contracts/session";
 
@@ -28,7 +29,7 @@ and one-line help. Numeric preferences never pass through toggle().
 ================
 */
 export interface ExperimentalRow {
-	readonly key: ExperimentalKey | "renderScale";
+	readonly key: ExperimentalKey | "renderScale" | "uiScale";
 	readonly id: string;
 	readonly label: string;
 	readonly description: string;
@@ -41,7 +42,9 @@ EXPERIMENTAL_TABS
 Port-only, not native. The window's tabs, Options style: Image holds the
 frame-wide stages and scene resolution, World the
 atmosphere stages that deviate from the 2005 look, Lighting the direct-light
-stages, Chat and Developer the earlier additions.
+stages, Chat and Developer the earlier additions. Pickup holds the item
+filter's kinds (#841); it is appended last so the existing tabs keep the
+indices a reopening window relies on.
 ================
 */
 export const EXPERIMENTAL_TABS: readonly {
@@ -58,6 +61,12 @@ export const EXPERIMENTAL_TABS: readonly {
 				id: "experimental-render-scale",
 				label: "Render scale",
 				description: "100% is native; lower values soften the scene."
+			},
+			{
+				key: "uiScale",
+				id: "experimental-ui-scale",
+				label: "UI size",
+				description: "Scale windows and text; 100% is native size."
 			},
 			{
 				key: "postProcessing",
@@ -84,10 +93,10 @@ export const EXPERIMENTAL_TABS: readonly {
 				description: "Float frame with filmic highlight roll-off."
 			},
 			{
-				key: "spreadClothSteps",
-				id: "experimental-spread-cloth-steps",
-				label: "Spread cloth steps",
-				description: "Smoother frames: cloth and hair step in different frames."
+				key: "safeLoadingScreen",
+				id: "experimental-safe-loading-screen",
+				label: "Safe loading screen",
+				description: "Hide inappropriate loading images."
 			}
 		]
 	},
@@ -130,6 +139,12 @@ export const EXPERIMENTAL_TABS: readonly {
 				id: "experimental-homing-projectiles",
 				label: "Homing projectiles",
 				description: "Steer straight projectiles toward a moving target."
+			},
+			{
+				key: "spreadClothSteps",
+				id: "experimental-spread-cloth-steps",
+				label: "Spread cloth steps",
+				description: "Smoother frames: cloth and hair step in different frames."
 			}
 		]
 	},
@@ -152,8 +167,8 @@ export const EXPERIMENTAL_TABS: readonly {
 			{
 				key: "enchantSparks",
 				id: "experimental-enchant-sparks",
-				label: "Enchant sparks",
-				description: "Sparks on +8 and higher weapons and shields."
+				label: "Enhanced item glow",
+				description: "Richer glow and sparks on reinforced gear."
 			},
 			{
 				key: "dungeonCharacterPvs",
@@ -175,22 +190,22 @@ export const EXPERIMENTAL_TABS: readonly {
 			key: "predictedRunUp",
 			id: "experimental-predicted-run-up",
 			label: "Predicted run-up",
-			description: "Walk to a far target on press; may jump at the cast."
+			description: "Walk to a far target on press; stop at the cast."
 		}, {
 			key: "smoothCamera",
 			id: "experimental-smooth-camera",
 			label: "Smooth camera",
 			description: "Ease small camera jumps and the return from a wall."
 		}, {
-			key: "vHidesCompanions",
-			id: "experimental-v-hides-companions",
-			label: "V hides pets and transports",
-			description: "Holding V also hides other players' pets and transports."
+			key: "mainThreadOwnWalk",
+			id: "experimental-main-thread-own-walk",
+			label: "Instant own movement",
+			description: "Your character starts walking on the click frame."
 		}, {
-			key: "smartPetPickup",
-			id: "experimental-smart-pet-pickup",
-			label: "Keep pet gold pickup when full",
-			description: "Keep picking up gold when a full bag refuses an item."
+			key: "touchInspect",
+			id: "experimental-touch-inspect",
+			label: "Tap shows item details",
+			description: "On touch, a tap on an item or skill keeps its tooltip up."
 		} ]
 	},
 	{
@@ -212,6 +227,11 @@ export const EXPERIMENTAL_TABS: readonly {
 			label: "Plus +7 notices",
 			description: "Show the shard's +7 alchemy announcements."
 		}, {
+			key: "uniqueDamageRank",
+			id: "experimental-unique-damage-rank",
+			label: "Unique damage ranking",
+			description: "When a unique you hit dies, show who did the most."
+		}, {
 			key: "noticeLinks",
 			id: "experimental-notice-links",
 			label: "Links in notices",
@@ -221,6 +241,11 @@ export const EXPERIMENTAL_TABS: readonly {
 			id: "experimental-short-notices",
 			label: "Short notices",
 			description: "Show notices for up to the original 7 seconds."
+		}, {
+			key: "questTrackerMarkers",
+			id: "experimental-quest-tracker-markers",
+			label: "Quest target markers",
+			description: "Show every active quest's target on M and the minimap."
 		} ]
 	},
 	{
@@ -247,6 +272,11 @@ export const EXPERIMENTAL_TABS: readonly {
 			label: "Drop on bag tabs",
 			description: "Drop an item on a bag tab to move it to that page."
 		}, {
+			key: "exchangeClickShortcuts",
+			id: "experimental-exchange-click-shortcuts",
+			label: "Exchange click shortcuts",
+			description: "Ctrl+click, right-click or double-click a bag item to offer it."
+		}, {
 			key: "confirmGuildBan",
 			id: "experimental-confirm-guild-ban",
 			label: "Confirm guild ban",
@@ -262,15 +292,65 @@ export const EXPERIMENTAL_TABS: readonly {
 			label: "Attack-pet training",
 			description: "Pet skills and gear; requires server opt-in."
 		}, {
+			key: "transportAutoPotion",
+			id: "experimental-transport-auto-potion",
+			label: "Transport auto-potion",
+			description: "Heal your transport at your auto-potion HP %."
+		}, {
 			key: "petClickOpensWindow",
 			id: "experimental-pet-click-opens-window",
 			label: "Pet panel opens window",
 			description: "Click a pet panel to open its window."
 		}, {
+			key: "petPickupFilter",
+			id: "experimental-pet-pickup-filter",
+			label: "Pickup pet item filter",
+			description: "Choose what the pickup pet collects: Pickup tab."
+		}, {
 			key: "expandedWorldMap",
 			id: "experimental-expanded-world-map",
 			label: "Expanded world map",
 			description: "Show extra town pages and wider overview."
+		}, {
+			key: "vHidesCompanions",
+			id: "experimental-v-hides-companions",
+			label: "V hides pets and transports",
+			description: "Holding V also hides other players' pets and transports."
+		} ]
+	},
+	{
+		title: "Pickup",
+		section: "Pickup pet filter",
+		rows: [ {
+			key: "smartPetPickup",
+			id: "experimental-smart-pet-pickup",
+			label: "Keep pet gold pickup when full",
+			description: "Keep picking up gold when a full bag refuses an item."
+		}, {
+			key: "petFilterGold",
+			id: "experimental-pet-filter-gold",
+			label: "Gold",
+			description: "Collect gold; only while the item filter is on."
+		}, {
+			key: "petFilterEquipment",
+			id: "experimental-pet-filter-equipment",
+			label: "Equipment",
+			description: "Collect equipment; only while the filter is on."
+		}, {
+			key: "petFilterAlchemy",
+			id: "experimental-pet-filter-alchemy",
+			label: "Alchemy",
+			description: "Elixirs, stones and tablets; only with the filter."
+		}, {
+			key: "petFilterPotions",
+			id: "experimental-pet-filter-potions",
+			label: "Potions",
+			description: "Collect potions; only while the filter is on."
+		}, {
+			key: "petFilterOther",
+			id: "experimental-pet-filter-other",
+			label: "Other items",
+			description: "Scrolls, arrows and the rest; only with the filter."
 		} ]
 	}
 ];
@@ -335,6 +415,19 @@ export function createExperimentalHud() {
 			const renderScale = renderScales().find( scale => scale === value );
 			if ( renderScale === undefined ) return;
 			draft = { ...draft, renderScale };
+		},
+		/*
+		================
+		setUiScale
+
+		Port-only, not native. The slider's stop becomes the draft's UI size;
+		a value off the slider leaves the draft intact.
+		================
+		*/
+		setUiScale( value: number ) {
+			const uiScale = uiScaleStop( value );
+			if ( uiScale === undefined ) return;
+			draft = { ...draft, uiScale };
 		},
 		/*
 		================

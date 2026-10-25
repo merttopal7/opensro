@@ -50,8 +50,9 @@ type wolfHowl struct {
 }
 type wolfHowlStore struct {
 	sync.Mutex
-	rows  map[petOwnerKey]wolfHowl
-	blood map[petOwnerKey]wolfBloodProjection
+	rows   map[petOwnerKey]wolfHowl
+	blood  map[petOwnerKey]wolfBloodProjection
+	arcane map[petOwnerKey]penguinMagicGrant
 }
 
 /*

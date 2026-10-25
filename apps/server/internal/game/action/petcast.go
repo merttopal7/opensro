@@ -19,12 +19,24 @@ import (
 
 /*
 ================
+petCastPrepared
+
+Port-only echoes are independent casts, not another release of the windup.
+================
+*/
+func petCastPrepared(step petCombatStep) bool {
+	return step.state.combat != nil && step.state.combat.castToken != 0 &&
+		!(step.trained != nil && step.trained.penguinRepeat)
+}
+
+/*
+================
 petStrikeToken
 ================
 */
 func (rt *Runtime) petStrikeToken(step petCombatStep) uint32 {
-	if intent := step.state.combat; intent != nil && intent.castToken != 0 {
-		return intent.castToken
+	if petCastPrepared(step) {
+		return step.state.combat.castToken
 	}
 	return atomic.AddUint32(&rt.castTokenCounter, 1)
 }
@@ -37,7 +49,7 @@ petStrikeFrame
 ================
 */
 func (rt *Runtime) petStrikeFrame(step petCombatStep, result wire.SkillCastSingleTargetResult) wire.Frame {
-	if intent := step.state.combat; intent != nil && intent.castToken != 0 {
+	if petCastPrepared(step) {
 		return wire.SkillCastReleaseResultFrame(result)
 	}
 	return wire.SkillCastSingleTargetResultFrame(result)

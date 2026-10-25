@@ -283,6 +283,18 @@ export const runtimeCifImageReferences = [
 	// Shared quick-status windows select their fills in code (85E3F0 / 85F660).
 	"interface/ifcommon/quick_hp.ddj",
 	"interface/ifcommon/quick_mp.ddj",
+	// CIFTimerWnd digits: CIFEventTimer_UpdateDigitTextures (5182C0)
+	// snprintf's one "interface/timer/timer_%d.ddj" per digit; resinfo
+	// names only timer_0, so the other nine are runtime references.
+	"interface/timer/timer_1.ddj",
+	"interface/timer/timer_2.ddj",
+	"interface/timer/timer_3.ddj",
+	"interface/timer/timer_4.ddj",
+	"interface/timer/timer_5.ddj",
+	"interface/timer/timer_6.ddj",
+	"interface/timer/timer_7.ddj",
+	"interface/timer/timer_8.ddj",
+	"interface/timer/timer_9.ddj",
 	...targetStatusRuntimeImageReferences,
 	...damageTextRuntimeImageReferences,
 	...partyMatchRowRuntimeImageReferences,
@@ -1218,6 +1230,10 @@ export const runtimeCifButtonImageReferences = [
 	"interface/quick_slot/qsl_hclose_button.ddj",
 	"interface/quick_slot/qsl_vclose_button.ddj",
 	"interface/messagebox/msgbox_rebirth_button.ddj",
+	// CIFMessageBox_ConfigureByType 52F460 types 0x21 and 0x24 (5326E7..53274D)
+	// give the reverse return box's three MsgBoxINIF buttons this art; the
+	// layout names only com_button.
+	"interface/ifcommon/com_return_button.ddj",
 	// CPSCharacterCreate swaps both sex controls between *_on and *_off at
 	// runtime. The layouts expose only the initial pair, so all four normal
 	// paths must enter the button-state publication pass with their focus and

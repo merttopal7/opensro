@@ -569,3 +569,89 @@ func TestSummonedPetScrollMovesWithinBagAndUpdatesStateSlot(t *testing.T) {
 		t.Fatalf("attack pet at slot 24 was not dismissed: %+v", row24)
 	}
 }
+
+/*
+================
+TestPetSummonInBattleAnswersBattleBeforeBusy
+
+The reference server's pet summoner tests the battle state (answer 0x78)
+before the casting and motion-lock tests, which answer 5. A player
+casting in a fight must hear the battle notice
+(UIIT_MSG_COS_CAN_NOT_CREATE_BATTLE), not the silent busy code; with the
+battle state gone, the open cast still answers busy.
+================
+*/
+func TestPetSummonInBattleAnswersBattleBeforeBusy(t *testing.T) {
+	rt, _, c, target := newCombatTestRuntime(t, 100000)
+	items := cosTestItemSource{staticItemSource: rt.deps.ItemReferences().(staticItemSource),
+		characters: map[string]*enterworld.CharacterRef{}}
+	flute := &enterworld.ItemRef{Codename: "SUMMON_ATTACK", RefObjID: 900, TypeIDs: [4]int64{3, 2, 1, 1}, Country: 3,
+		AssociatedCharacterCodename: "ATTACK", NativeFields: enterworld.NewNativeFields(map[string]float64{"canUse": 1})}
+	items.staticItemSource[flute.Codename] = flute
+	items.characters["ATTACK"] = &enterworld.CharacterRef{Codename: "ATTACK", RefObjID: 950, TidWord: 0x1c6 | 3<<11,
+		Level: 1, MaxHP: 100, RunSpeed: 60, WalkSpeed: 20, Scale: 100}
+	rt.deps.(*enterworld.Deps).Items = items
+	const fluteSlot = 23
+	c.MissionInventory = append(c.MissionInventory, enterworld.InventoryRow{Slot: fluteSlot, RefObjID: flute.RefObjID,
+		Codename: flute.Codename, TypeFlags: flute.TypeFlags(), StackCount: 1})
+	skill := shippedOffense(t, "SKILL_CH_SWORD_SMASH_A_01")
+	rt.deps.SkillData().(staticSkillSource)[skill.ID] = skill
+	c.Skills = append(c.Skills, skill.ID)
+	c.CurrentMP = testInt64(10000)
+	started := rt.HandleTargetInteract(testDivision, c, wire.SkillAction{ActionId: skill.ID, HasTarget: true, TargetGid: target.Gid}.Encode())
+	if !rt.PlayerAttackLocked(testDivision, c.Name) || c.BattleUntilMs == 0 {
+		t.Fatal("fixture did not open a casting instance in battle", started)
+	}
+	use := wire.NewWriter(3).U8(fluteSlot).U16(flute.TypeFlags()).Payload()
+	assertItemUseRefusedUnchanged(t, rt, c, use, cosSummonInBattle)
+	c.BattleUntilMs = 0
+	assertItemUseRefusedUnchanged(t, rt, c, use, cosSummonBusy)
+
+	// The reference server tests the seated motion before the battle
+	// state: a player seated in a fight still answers the silent busy
+	// code, not the battle notice.
+	c.BattleUntilMs = 2_000_000
+	key := simulation.WorldKey(testDivision, c.Name)
+	seed := func() simulation.WorldState { return simulation.SeedWorldState(c) }
+	rt.Worlds.Update(key, seed, func(w *simulation.WorldState) { w.Sitting = true })
+	assertItemUseRefusedUnchanged(t, rt, c, use, cosSummonBusy)
+}
+
+/*
+================
+TestTransportSummonInBattleAnswersBattleBeforeBusy
+
+The transport summoner carries the same refusal order as the
+persistent lane: the battle state is tested before the casting and
+motion-change locks, so a player casting in a fight hears the battle
+notice for a horse scroll too; the open cast answers busy once the
+fight is over.
+================
+*/
+func TestTransportSummonInBattleAnswersBattleBeforeBusy(t *testing.T) {
+	rt, _, c, target := newCombatTestRuntime(t, 100000)
+	items := cosTestItemSource{staticItemSource: rt.deps.ItemReferences().(staticItemSource),
+		characters: map[string]*enterworld.CharacterRef{}}
+	horse := &enterworld.ItemRef{Codename: "ITEM_COS_T_DHORSE3", RefObjID: 3905, TypeIDs: [4]int64{3, 3, 3, 2}, Country: 3,
+		AssociatedCharacterCodename: "COS_T_DHORSE3", NativeFields: enterworld.NewNativeFields(map[string]float64{"canUse": 1})}
+	items.staticItemSource[horse.Codename] = horse
+	items.characters["COS_T_DHORSE3"] = &enterworld.CharacterRef{Codename: "COS_T_DHORSE3", RefObjID: 3914, TidWord: 0x11C6,
+		Name: "Red Horse", WalkSpeed: 20, RunSpeed: 40, Scale: 100, CanRide: true, Level: 105, MaxHP: 87829,
+		MountedAttackCapability210: 3000}
+	rt.deps.(*enterworld.Deps).Items = items
+	const horseSlot = 23
+	c.MissionInventory = append(c.MissionInventory, enterworld.InventoryRow{Slot: horseSlot, RefObjID: horse.RefObjID,
+		Codename: horse.Codename, TypeFlags: horse.TypeFlags(), StackCount: 1})
+	skill := shippedOffense(t, "SKILL_CH_SWORD_SMASH_A_01")
+	rt.deps.SkillData().(staticSkillSource)[skill.ID] = skill
+	c.Skills = append(c.Skills, skill.ID)
+	c.CurrentMP = testInt64(10000)
+	started := rt.HandleTargetInteract(testDivision, c, wire.SkillAction{ActionId: skill.ID, HasTarget: true, TargetGid: target.Gid}.Encode())
+	if !rt.PlayerAttackLocked(testDivision, c.Name) || c.BattleUntilMs == 0 {
+		t.Fatal("fixture did not open a casting instance in battle", started)
+	}
+	use := wire.NewWriter(3).U8(horseSlot).U16(horse.TypeFlags()).Payload()
+	assertItemUseRefusedUnchanged(t, rt, c, use, cosSummonInBattle)
+	c.BattleUntilMs = 0
+	assertItemUseRefusedUnchanged(t, rt, c, use, cosSummonBusy)
+}

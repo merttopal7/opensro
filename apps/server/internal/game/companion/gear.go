@@ -263,7 +263,7 @@ func ModifiersFor(p *domain.CharacterCOS) Modifiers {
 			m.AttackPct += v
 		case "Cold Mastery":
 			m.MagicPct += v
-		case "Swift Fangs", "Swift Wings":
+		case "Swift Fangs":
 			m.AttackSpeedPct += v
 		case "Thick Fur", "Frost Armor":
 			m.DefensePct += v
@@ -274,6 +274,13 @@ func ModifiersFor(p *domain.CharacterCOS) Modifiers {
 		case "Lucky Feather":
 			m.FindPct += v
 		}
+	}
+	if PetKind(p.Codename) == "Penguin" {
+		m.MagicPct += p.ArcaneMagicPercent
+	}
+	if p.BroodStage != 0 {
+		return Modifiers{GearStats: m.GearStats, AttackPct: m.AttackPct, PhysicalPct: m.PhysicalPct, MagicPct: m.MagicPct,
+			DefensePct: m.DefensePct, CritPct: m.CritPct, AttackSpeedPct: m.AttackSpeedPct}
 	}
 	m.CooldownPct = min(m.CooldownPct, 80)
 	return m

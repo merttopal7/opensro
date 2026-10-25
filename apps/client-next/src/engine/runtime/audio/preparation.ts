@@ -260,9 +260,20 @@ export function createSoundPreparation( assets: AssetOwner, origin: string ) {
 				]
 			) wanted.add( path );
 		}
-		if ( gameplay.petTraining && [ ...wantedProfiles ].some( name => name.startsWith( "COS_P_WOLF" ) ) ) {
+		if (
+			gameplay.petTraining &&
+			[ ...wantedProfiles ].some( name => name.startsWith( "COS_P_WOLF" ) || name.startsWith( "COS_P_PENGUIN" ) )
+		) {
 			for (
-				const path of [ PET_HOWL_SOUND, PET_REND_SOUND, PET_EXECUTE_SOUND, PET_SWEEP_SOUND, PET_HUNT_SOUND ]
+				const path of [
+					PET_HOWL_SOUND,
+					PET_REND_SOUND,
+					PET_EXECUTE_SOUND,
+					PET_SWEEP_SOUND,
+					PET_HUNT_SOUND,
+					"/assets/audio/sfx/prim/snd/skill2/usk_wizard_cold_area_a.wav",
+					"/assets/audio/sfx/prim/snd/skill2/usk_wizard_cold_hit_a.wav"
+				]
 			) {
 				wanted.add( path );
 			}

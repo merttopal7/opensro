@@ -66,6 +66,10 @@ func (rt *Runtime) restoreCharacterCOS(division, name string) {
 			}
 			before := *pet
 			pet.ResolveStacks = 0
+			pet.ArcaneMagicPercent = 0
+			rt.wolfHowls.Lock()
+			delete(rt.wolfHowls.arcane, petOwnerKey{division: division, name: strings.ToLower(c.Name), gid: pet.GID})
+			rt.wolfHowls.Unlock()
 			changed = pet.RefreshRentalTimes(now) || changed
 			ref, valid := rt.cosReference(pet)
 			if !valid || row.Slot < 0 || row.Slot > 255 {

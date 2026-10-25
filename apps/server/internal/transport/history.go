@@ -25,7 +25,12 @@ Transport facts cross the composition boundary without importing persistence.
 */
 type LifecycleEvent struct {
 	Session, Account, Shard, Character, Kind, Category, Code, Message string
-	Attached, InWorld                                                 bool
+	// Transport is the kind of the session's latest attachment
+	// ("webtransport"/"websocket"); Fallback is the reason the client
+	// reported for not using its first-choice transport ("" when none
+	// was reported). Telemetry only (#1449).
+	Transport, Fallback string
+	Attached, InWorld   bool
 }
 
 /*
@@ -65,6 +70,20 @@ every session with ByeReasonShutdown), not anything the player did.
 func ShutdownClose(cause error) bool {
 	var bye CloseReason
 	return errors.As(cause, &bye) && bye.Reason == ByeReasonShutdown
+}
+
+/*
+================
+ReplacedClose
+
+Whether a session closed because a newer session of the same character
+replaced it (a reload or reconnect: ByeReasonReplaced). The character
+carries on in the new session; nobody left the game.
+================
+*/
+func ReplacedClose(cause error) bool {
+	var bye CloseReason
+	return errors.As(cause, &bye) && bye.Reason == ByeReasonReplaced
 }
 
 /*
@@ -126,7 +145,8 @@ func (s *Session) recordHistoryLocked(kind string, cause error) {
 		code = kind
 	}
 	j.RecordLifecycle(LifecycleEvent{Session: j.SessionID(strconv.FormatUint(s.ID, 10)), Account: account, Shard: shard, Character: character,
-		Kind: kind, Category: category, Code: code, Message: fmt.Sprint(cause), Attached: s.attached, InWorld: s.WorldReady() && kind != "world_left"})
+		Kind: kind, Category: category, Code: code, Message: fmt.Sprint(cause), Transport: s.transport, Fallback: s.fallback,
+		Attached: s.attached, InWorld: s.WorldReady() && kind != "world_left"})
 }
 
 /*

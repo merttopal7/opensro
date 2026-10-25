@@ -12,8 +12,13 @@ DOF floor.
 import { minimapSameFloor } from "./minimap-floor";
 import { REGION_SIZE, worldDelta } from "@/engine/foundation/world/world-space";
 import type { EntityState } from "@/engine/contracts/world";
-import type { GameplayState, Pose } from "@/engine/contracts/gameplay";
+import type { GameplayState, Pose, QuestRecord } from "@/engine/contracts/gameplay";
 
+/*
+================
+MinimapMarker
+================
+*/
 export interface MinimapMarker {
 	readonly x: number;
 	readonly y: number;
@@ -82,7 +87,37 @@ export function minimapEdge(
 	};
 }
 
+/*
+================
+questMarkerTargets
+
+The quest target ids the marker passes draw: the journal-tracked quest's
+own, and - port-only, the quest tracker row (#840) - every active quest's,
+each id once, in journal order. Callers resolve them against the NPC
+position catalogue; a target with no NPC position draws nothing, exactly
+as the tracked quest's unresolved targets do natively.
+================
+*/
+export function questMarkerTargets(
+	quests: readonly QuestRecord[] | undefined,
+	trackedQuest: number,
+	allQuests: boolean
+): readonly number[] {
+	const ids = new Set<number>();
+	for ( const quest of quests ?? [] ) {
+		if ( !allQuests && quest.refId !== trackedQuest ) continue;
+		for ( const id of quest.targetIds ) ids.add( id );
+	}
+	return [ ...ids ];
+}
+
+/*
+================
+RosterPosition
+================
+*/
 export interface RosterPosition {
+	readonly name: string;
 	readonly kind: "apprenticeship" | "party";
 	readonly regionId: number;
 	readonly x: number;
@@ -108,9 +143,14 @@ export function rosterPositions(
 	entities: readonly EntityState[]
 ): readonly RosterPosition[] {
 	const result: RosterPosition[] = [], war = game?.fortress?.worldId ?? 0x10001;
+	/*
+	================
+	live
+	================
+	*/
 	const live = ( name: string, fallback: RosterPosition ): RosterPosition => {
 		const row = entities.find( e => e.name === name && (e.kind === "player" || e.kind === "local-player") );
-		return row ? { kind: fallback.kind, regionId: row.regionId, x: row.x, y: row.y, z: row.z } : fallback;
+		return row ? { ...fallback, regionId: row.regionId, x: row.x, y: row.y, z: row.z } : fallback;
 	};
 	if ( game?.academy?.member ) {
 		for ( const row of [ ...(game.academy.members ?? []) ].sort( ( a, b ) => a.id - b.id ) ) {
@@ -123,6 +163,7 @@ export function rosterPositions(
 			result.push(
 				live( row.name, {
 					kind: "apprenticeship",
+					name: row.name,
 					regionId: roster.regionId,
 					x: roster.x,
 					y: roster.y,
@@ -136,7 +177,14 @@ export function rosterPositions(
 		const roster = { regionId: row.region, x: row.x, y: row.y, z: row.z, angle: 0 };
 		if ( !minimapSameFloor( local, roster, game ) ) continue;
 		result.push(
-			live( row.name, { kind: "party", regionId: roster.regionId, x: roster.x, y: roster.y, z: roster.z } )
+			live( row.name, {
+				kind: "party",
+				name: row.name,
+				regionId: roster.regionId,
+				x: roster.x,
+				y: roster.y,
+				z: roster.z
+			} )
 		);
 	}
 	return result;

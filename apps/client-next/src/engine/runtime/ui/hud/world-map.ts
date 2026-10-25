@@ -21,7 +21,7 @@ import type { ExperimentalOptions } from "@/engine/foundation/ui/experimental-op
 import { frameParts, frameRing } from "@/engine/foundation/ui/frame-ring";
 import { panelCloseId } from "@/engine/foundation/ui/panels";
 import { minimapSameFloor } from "@/engine/foundation/ui/minimap-floor";
-import { rosterPositions } from "@/engine/foundation/ui/minimap-markers";
+import { questMarkerTargets, rosterPositions } from "@/engine/foundation/ui/minimap-markers";
 import {
 	worldMapDemand,
 	MAP_LOCAL_MARKER,
@@ -41,9 +41,32 @@ import {
 import { createHuntingGuideHud } from "./hunting-guide";
 
 const WORLD_MAP_WIDTH = 652, WORLD_MAP_HEIGHT = 424;
+// Port-only, not native (screens below the native 800x600 minimum): the map
+// window shrinks to the screen, less this margin per side, and keeps the map
+// at native scale for panning; the generic window fit would otherwise draw
+// the whole window, labels included, at a fraction of their size.
+const COMPACT_MAP_MARGIN = 4;
 const ROOT = "/assets/images/Media_extracted/";
 const FRAME = ROOT + "interface/frame/mframe_wnd_", PARTS = frameParts();
 const white = [ 1, 1, 1, 1 ] as const;
+// 57CE80's roster passes (apprenticeship 57D2FC, party 57D7D8) test the
+// pointer the map stores on every move (57FB9E, +0x7C8/+0x7CC) against each
+// sign inset by 2.0 (C46208), then draw that member's name (829F30's
+// text, white font 0) centred on the sign and 8.0 (BCDC80) above its
+// centre, so the name sits on the sign's top edge.
+const MAP_ROSTER_PREFIX = "map-roster:";
+const MAP_ROSTER_HOVER_INSET = 2;
+const MAP_ROSTER_LABEL_RISE = 8;
+const MAP_ROSTER_LABEL_FONT = 0;
+
+/*
+================
+mapRosterId
+================
+*/
+function mapRosterId( row: { readonly kind: string; readonly name: string; } ): string {
+	return MAP_ROSTER_PREFIX + row.kind + ":" + row.name;
+}
 
 /*
 ================
@@ -73,6 +96,9 @@ interface MapPaint {
 	w: number;
 	h: number;
 	full: UiRect;
+	// The compact layout's window area (above the quickslots), when that
+	// layout fits windows into it; undefined on the desktop layout.
+	bounds?: UiRect;
 	hover: string | null;
 	hudData:
 		| {
@@ -98,7 +124,7 @@ interface MapPaint {
 	controls: UiControl[];
 	hudCopy: ( key: string ) => string;
 	beginWindow: () => readonly [number, number, number, number];
-	endWindow: ( mark: readonly [number, number, number, number] ) => void;
+	endWindow: ( mark: readonly [number, number, number, number], owner?: string, source?: UiRect ) => void;
 	windowBox: ( title: string, x: number, y: number, width: number, height: number ) => void;
 	authoredButton: ( node: AuthoredControl, x: number, y: number, id: string, label: string ) => void;
 	authoredLabeledButton: MapPaint["authoredButton"];
@@ -266,7 +292,8 @@ export function createWorldMapHud( options: MapHudOptions ) {
 		================
 		*/
 		surface( id: string ) {
-			return id === "map-pan" || (guideAvailable && id.startsWith( HUNTING_AREA_PREFIX ));
+			return id === "map-pan" || id.startsWith( MAP_ROSTER_PREFIX ) ||
+				(guideAvailable && id.startsWith( HUNTING_AREA_PREFIX ));
 		},
 		/*
 		================
@@ -278,7 +305,8 @@ export function createWorldMapHud( options: MapHudOptions ) {
 				mapX = Math.max( 0, mapX + event.dx );
 				mapY = Math.max( 0, mapY + event.dy );
 			} else if (
-				(event.id === "map-pan" || event.id.startsWith( "map-town:" ) ||
+				(event.id === "map-pan" || event.id.startsWith( MAP_ROSTER_PREFIX ) ||
+					event.id.startsWith( "map-town:" ) ||
 					event.id.startsWith( HUNTING_AREA_PREFIX )) && !mapFollow
 			) {
 				mapPan = [ mapPan[0] + event.dx, mapPan[1] + event.dy ];
@@ -344,9 +372,17 @@ export function createWorldMapHud( options: MapHudOptions ) {
 				mapPan = [ 0, 0 ];
 				mapCenter = null;
 			}
-			const mapWidth = mapSmall ? 268 : WORLD_MAP_WIDTH, mapHeight = mapSmall ? 296 : WORLD_MAP_HEIGHT;
-			const mapLeft = Math.min( mapX, Math.max( 0, w - mapWidth ) ),
-				mapTop = Math.min( mapY, Math.max( 0, h - mapHeight ) );
+			const area: UiRect = input.bounds ?? [ 0, 0, w, h ];
+			const mapWidth = Math.min(
+					mapSmall ? 268 : WORLD_MAP_WIDTH,
+					Math.max( 0, area[2] - COMPACT_MAP_MARGIN * 2 )
+				),
+				mapHeight = Math.min(
+					mapSmall ? 296 : WORLD_MAP_HEIGHT,
+					Math.max( 0, area[3] - COMPACT_MAP_MARGIN * 2 )
+				);
+			const mapLeft = Math.max( area[0], Math.min( mapX, area[0] + area[2] - mapWidth ) ),
+				mapTop = Math.max( area[1], Math.min( mapY, area[1] + area[3] - mapHeight ) );
 			mapX = mapLeft;
 			mapY = mapTop;
 			if ( mapPage !== 0 && hover?.startsWith( HUNTING_AREA_PREFIX ) ) hover = null;
@@ -363,9 +399,19 @@ export function createWorldMapHud( options: MapHudOptions ) {
 			// 16x16 quad centred on the projected world position; the world map has no
 			// 47px ring, so unlike the minimap there is no edge clamp and no arrow
 			// sprite swap, and off-page members are simply clipped by the window.
+			// The quest pass draws the tracked quest's targets; port-only, the
+			// quest tracker row widens it to every active quest (#840).
 			const mapMarkers: MapMarker[] = [];
+			const roster = pose ? rosterPositions( pose, game ?? null, next.entities ) : [];
+			let rosterStart = 0;
 			if ( pose ) {
-				for ( const id of game?.quests?.find( q => q.refId === trackedQuest )?.targetIds ?? [] ) {
+				for (
+					const id of questMarkerTargets(
+						game?.quests,
+						trackedQuest,
+						experimental.state().saved.questTrackerMarkers
+					)
+				) {
 					const target = minimapResources.positions()?.get( id );
 					if ( target && minimapSameFloor( pose, target, game ?? null ) ) {
 						mapMarkers.push( {
@@ -399,7 +445,8 @@ export function createWorldMapHud( options: MapHudOptions ) {
 						path: ROOT + "interface/minimap/mm_sign_otherplayer.png"
 					} );
 				}
-				for ( const row of rosterPositions( pose, game ?? null, next.entities ) ) {
+				rosterStart = mapMarkers.length;
+				for ( const row of roster ) {
 					mapMarkers.push( {
 						regionId: row.regionId,
 						x: row.x,
@@ -455,6 +502,45 @@ export function createWorldMapHud( options: MapHudOptions ) {
 				null;
 			const fontPath = text.path();
 			if ( !mapOpen && fontPath ) paths.push( fontPath );
+			const rosterSigns = mapOpen && pose ?
+				worldMapPointMarkers( {
+					page: mapPage,
+					clip: mapClip,
+					pan: mapPan,
+					center: mapCenter ?? pose,
+					points: roster,
+					layout: mapLayout
+				} ) :
+				[];
+			const mapSigns = mapProjection ? [ ...mapProjection.markers ] : [];
+			const hovered = rosterSigns.find( sign => mapRosterId( sign.point ) === hover );
+			const signAt = mapProjection && hovered ?
+				mapProjection.markerRows.indexOf( rosterStart + roster.indexOf( hovered.point ) ) :
+				-1;
+			if ( hovered && signAt >= 0 ) {
+				// Painted right after the member's own sign, so later signs cover it.
+				// Native names at most one member per pass (flag reset at 57D4DF);
+				// one hover names one member in all. Inference: the name is clipped
+				// to the map area like the signs it belongs to.
+				const name = hovered.point.name, rect = hovered.rect;
+				const width = text.run( name, 0, MAP_ROSTER_LABEL_FONT ).width,
+					height = text.extentHeight( MAP_ROSTER_LABEL_FONT );
+				const label: UiRect = [
+					Math.trunc( rect[0] + rect[2] / 2 - Math.trunc( width / 2 ) ),
+					Math.trunc( rect[1] + rect[3] / 2 - MAP_ROSTER_LABEL_RISE - height ),
+					width,
+					height
+				];
+				mapSigns.splice(
+					signAt + 1,
+					0,
+					...text.quads( name, label, mapClip, white, {
+						fontIndex: MAP_ROSTER_LABEL_FONT,
+						hAlign: 0,
+						vAlign: 0
+					} )
+				);
+			}
 			const mapImages = mapProjection ?
 				[
 					...mapProjection.background,
@@ -484,7 +570,7 @@ export function createWorldMapHud( options: MapHudOptions ) {
 							{ fontIndex: entry.font, hAlign: 0, vAlign: 0 }
 						);
 					} ),
-					...mapProjection.markers
+					...mapSigns
 				] :
 				[];
 			for ( const { icon, rect: r } of mapOpen ? mapProjection?.hits ?? [] : [] ) {
@@ -498,6 +584,22 @@ export function createWorldMapHud( options: MapHudOptions ) {
 						draggable: true
 					} );
 				}
+			}
+			for ( const { point, rect } of rosterSigns ) {
+				const left = Math.max( rect[0] + MAP_ROSTER_HOVER_INSET, mapClip[0] ),
+					top = Math.max( rect[1] + MAP_ROSTER_HOVER_INSET, mapClip[1] );
+				const right = Math.min( rect[0] + rect[2] - MAP_ROSTER_HOVER_INSET, mapClip[0] + mapClip[2] );
+				const bottom = Math.min( rect[1] + rect[3] - MAP_ROSTER_HOVER_INSET, mapClip[1] + mapClip[3] );
+				if ( right <= left || bottom <= top ) continue;
+				// The native test reads the pointer, not a control: the sign never
+				// takes the press, so a drag that starts on it still pans the map.
+				mapHits.push( {
+					id: mapRosterId( point ),
+					label: point.name,
+					rect: [ left, top, right - left, bottom - top ],
+					kind: "region",
+					draggable: true
+				} );
 			}
 			// Port-only: the reverse return map points while the map holds a scroll.
 			if ( mapOpen && pose && reverseScrollHud.mapping() ) {
@@ -612,14 +714,29 @@ export function createWorldMapHud( options: MapHudOptions ) {
 					);
 				}
 				if ( !mapSmall ) {
-					const node = nodes.GDR_WM_BTN_AUTO_MOVE!,
+					// Anchored to the window's right edge: a compact window is narrower
+					// than the authored 652 and the button must stay inside it.
+					const authored = nodes.GDR_WM_BTN_AUTO_MOVE!,
+						node = mw < WORLD_MAP_WIDTH ?
+							{
+								...authored,
+								rect: [
+									authored.rect[0] - (WORLD_MAP_WIDTH - mw),
+									authored.rect[1],
+									authored.rect[2],
+									authored.rect[3]
+								] as UiRect
+							} :
+							authored,
 						caption = hudCopy(
 							mapFollow ? "UIIT_STT_WORLDMAP_AUTO_MOVE" : "UIIT_STT_WORLDMAP_MANUAL_MOVE"
 						);
 					authoredLabeledButton( node, mx, my, "map-follow", caption );
 				}
 				closeButton( mx + mw - 25, my + 10, panelCloseId( "Map" ) );
-				endWindow( admission );
+				// The page tiles reach past the window through mapClip; the
+				// window rect is what the compact fit must measure.
+				endWindow( admission, "primary", [ mx, my, mw, mh ] );
 			}
 			return hover;
 		},

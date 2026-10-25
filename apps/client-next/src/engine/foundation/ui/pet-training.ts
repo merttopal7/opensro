@@ -224,6 +224,52 @@ function wolfSkillEffectLines( d: PetSkillDesign, value: number ): string[] | nu
 				"Switching prey resets charges",
 				...(d.option === 3 ? [ "Burst: 50% of bonus damage", "Up to 5 other bleeding enemies within 6 m" ] : [])
 			];
+		case "Ice Lance":
+			return [
+				`Magical damage ${v}%`,
+				"Casting range 15 m",
+				"Frostbite chance 40%",
+				...(d.option >= 2 ? [ "Pierces 2 additional enemies" ] : []),
+				...(d.option === 3 ? [ "Frostbitten targets: damage +50%" ] : [])
+			];
+		case "Blizzard":
+			return [
+				`Magical damage ${v}% per pulse`,
+				"4 pulses, one second apart",
+				`Radius ${d.option >= 2 ? 7 : 5} m; maximum targets 8`,
+				...(d.option >= 2 ? [ "Applies frostbite slow" ] : []),
+				...(d.option === 3 ? [ "Freezes enemies hit by all four pulses" ] : []),
+				"Native resistance applies"
+			];
+		case "Shatter":
+			return [
+				`Damage to chilled enemies +${v}%`,
+				d.option >= 2 ? "Penguin and owner" : "Penguin only",
+				...(d.option === 3 ?
+					[ "Frozen kills burst within 5 m", "50% of killing damage; maximum targets 5" ] :
+					[])
+			];
+		case "Arcane Resonance":
+			return [
+				`Magical attack +${v}% per stack`,
+				"Maximum stacks 5; duration 8 s",
+				...(d.option >= 2 ? [ "Owner magic hits build separate stacks" ] : []),
+				...(d.option === 3 ?
+					[
+						"At 5 penguin stacks: next active repeats once",
+						"Consumes penguin stacks; echoes do not build charges"
+					] :
+					[])
+			];
+		case "Frozen Hourglass":
+			return [
+				"Penguin spell hits build charges",
+				...(d.option >= 2 ? [ "Owner magic hits also build charges" ] : []),
+				"Maximum charges 5; once per action",
+				"At 5 charges: next active recovers 2 s",
+				"Shared charges; no charges from echoes or storm pulses",
+				...(d.option === 3 ? [ "Empowered frostbite and storm slow last 2 s longer" ] : [])
+			];
 		default:
 			return null;
 	}
@@ -241,21 +287,16 @@ export function petEffect( design: PetSkillDesign, value: number, effectiveLevel
 	if ( wolf ) return wolf.join( ". " ) + ".";
 	const rank2 = effectiveLevel >= PET_DESIGN.rules.rank2Level || design.option > 1;
 	const rank3 = effectiveLevel >= PET_DESIGN.rules.rank3Level || design.option > 1;
-	if ( design.family === "Mend" ) {
-		return `On command, heals the owner for ${
-			formatValue( value * (rank2 ? 1.5 : 1) )
-		}% of maximum HP immediately.`;
-	}
-	if ( design.family === "Mark Prey" ) {
-		return `Commanded strike attempts to reduce physical and magical defense by ${
-			formatValue( value + (rank2 ? 20 : 0) )
-		}% for 8 s.`;
+	if ( design.family === "Rejuvenating Plume" ) {
+		return `Restore ${formatValue( value )}% maximum HP: half immediately, half over 5 seconds.` +
+			(design.option >= 2 ? " Also heals the crow and removes one poison or burn from the owner." : "") +
+			(design.option === 3 ? " Party range 20 m; each additional recipient receives 20% less healing." : "");
 	}
 
-	if ( design.family === "Frost Nova" ) {
-		return `Commanded strike deals ${formatValue( value )}% magical damage to up to 8 targets within ${
-			rank2 ? 7 : 5
-		} m and attempts frostbite. Status duration follows native resistance rules.`;
+	if ( design.family === "Stormbrood" ) {
+		return "Destructible egg hatches after 30 s into an unhealable crow. Clone lasts 10 min; stats and normal attacks only. Maximum 10 eggs/clones." +
+			(design.option >= 2 ? " Stores 3 casts." : "") +
+			(design.option === 3 ? " Clone death: 8 m wind burst, 500% normal attack damage; up to 8 monsters." : "");
 	}
 
 	if ( design.family === "Unbroken Spirit" ) {
@@ -279,17 +320,17 @@ export function petEffect( design: PetSkillDesign, value: number, effectiveLevel
 				"") +
 			" Blocked hits and periodic damage do not count. Shielded hits count. Unique monsters are immune.";
 	}
-	if ( design.family === "Static Feathers" ) {
-		return `${formatValue( value )}% chance per attack to spread that strike to up to ${
-			rank2 ? 5 : 3
-		} targets within 8 m, with 20% damage reduction and an electric-shock attempt. No separate lightning spell is cast.`;
+
+	if ( design.family === "Guiding Feathers" ) {
+		return `Crow hits grant +${formatValue( value )}% hit ratio per Precision stack for 10 s, up to 5.` +
+			(design.option >= 2 ?
+				` At 5 stacks, your next damaging skill deals ${
+					20 + (effectiveLevel - 1) * 2
+				}% more damage and consumes Precision.` :
+				"") +
+			(design.option === 3 ? " Party members within 20 m gain independent stacks." : "");
 	}
-	if ( design.family === "Murder of Crows" ) {
-		return `Every ${rank2 ? 8 : 10}th damaging attack deals ${
-			formatValue( value )
-		}% damage to up to 8 targets within 4 m.` +
-			(rank3 ? " Also attempts 2 s Myopia (50% attack-range reduction)." : "");
-	}
+
 	if ( design.family === "Challenging Roar" ) {
 		const radius = petRoarRadius( design.option, effectiveLevel );
 		return `Taunts up to ${design.option === 3 ? 6 : 3} monsters within ${formatValue( radius )} m. ` +
@@ -335,7 +376,7 @@ export function petCooldownQuads(
 	clip: UiRect
 ): UiQuad[] {
 	const cooldown = state.rows[row];
-	if ( !cooldown || cooldown.timerMs <= 0 ) return [];
+	if ( !cooldown || cooldown.timerMs <= 0 || cooldown.kind === "Charges" && cooldown.left > 0 ) return [];
 	return quickslotCooldownQuads(
 		[ {
 			skill: row + 1,
@@ -390,6 +431,7 @@ export function petRowCooldown( state: PetTraining, row: number, nowMs: number )
 	const r = state.rows[row];
 	if ( !r ) return "";
 	const ms = r.timerMs - Math.max( 0, nowMs - state.receivedAtMs );
+	if ( r.kind === "Charges" && r.left > 0 ) return "";
 	if ( ms > 0 ) return `${Math.ceil( ms / 1000 )}s`;
 	return r.left > 0 ? `${r.left} ${r.kind.toLowerCase()}` : "";
 }
@@ -442,7 +484,14 @@ export function petSkillTooltip(
 	if ( design.cooldown !== null ) {
 		const recharge = Math.max(
 			0,
-			design.cooldown + (design.cooldownPerLevel ?? 0) * (Math.max( 1, skill.effectiveLevel ) - 1)
+			design.cooldown +
+				(design.cooldownPerLevel ?? 0) *
+					(Math.max(
+						1,
+						design.family === "Stormbrood" ?
+							Math.min( 10, skill.effectiveLevel ) :
+							skill.effectiveLevel
+					) - 1)
 		);
 		add(
 			`Base recharge: ${
@@ -494,48 +543,58 @@ function petSkillEffectLines( d: PetSkillDesign, value: number, rank: number ): 
 				"Requires a damaging hit; uniques immune"
 			];
 
-		case "Frost Armor":
-			return [ `Physical defence +${v}%`, `Magical defence +${v}%` ];
-		case "Frost Nova":
+		case "Rejuvenating Plume":
 			return [
-				`Magical damage ${v}%`,
-				`Range ${advanced ? 7 : 5} m`,
-				"Maximum targets 8",
-				"Inflicts frostbite; native resistance applies"
+				`Restore ${v}% maximum HP`,
+				"Half immediately; half over 5 s",
+				...(d.option >= 2 ? [ "Also heals the crow", "Removes one poison or burn from owner" ] : []),
+				...(d.option === 3 ? [ "Party range 20 m", "Each additional recipient: 20% less healing" ] : [])
 			];
-		case "Deep Freeze":
+		case "Stormbrood":
 			return [
-				`Freeze potency ${v}`,
-				...(advanced ? [ "Spreads to 2 additional targets" ] : []),
-				"Duration follows target resistance"
+				"Egg hatches after 30 s",
+				"Clone lasts 10 min and cannot be healed",
+				"Copies stats and normal attacks only",
+				...(d.option >= 2 ? [ "3 stored casts" ] : []),
+				"Maximum 10 eggs/clones",
+				...(d.option === 3 ? [ "On death: 500% attack wind burst", "Radius 8 m; up to 8 monsters" ] : [])
 			];
-		case "Cold Mastery":
-			return [ `Magical attack +${v}%` ];
-		case "Static Feathers":
+
+		case "Mana Spring":
 			return [
-				`Chain strike chance ${v}% per attack`,
-				`Maximum targets ${advanced ? 5 : 3}`,
-				"Range 8 m; damage reduction 20%",
-				"Inflicts electric shock"
+				`Restore MP equal to ${v}% of bird damage`,
+				d.option >= 2 ? "Owner and party members within 20 m" : "Owner only",
+				...(d.option === 3 ? [ "Each damaging attack: character/pet reuse -0.5 s" ] : []),
+				"Uses actual damage; blocked hits grant nothing"
 			];
-		case "Mend":
-			return [ `Owner HP restored ${formatValue( value * (advanced ? 1.5 : 1) )}%` ];
-		case "Mark Prey":
+		case "Tailwind":
 			return [
-				`Physical and magical defence -${formatValue( value + (advanced ? 20 : 0) )}%`,
-				"Duration 8 s; native resistance applies"
+				`Movement speed +${v}% per stack`,
+				"Gain 1 stack every 5 s; maximum 10",
+				"Dealing or taking damage removes all stacks",
+				...(d.option >= 2 ?
+					[
+						"At 10 stacks: next hit dealt or taken stuns that enemy for 2 s",
+						"Native resistance and unique immunity apply"
+					] :
+					[]),
+				...(d.option === 3 ? [ "Party members within 20 m gain independent stacks" ] : [])
 			];
-		case "Carrion Feast":
-			return [ `Owner HP restored ${v}%`, "Requires the crow's killing hit" ];
-		case "Swift Wings":
-			return [ `Attack speed +${v}%` ];
-		case "Murder of Crows":
+		case "Guiding Feathers":
 			return [
-				`Every ${advanced ? 8 : 10} damaging attacks: burst`,
-				`Damage ${v}%`,
-				"Range 4 m; maximum targets 8",
-				...(mastered ? [ "Inflicts Myopia for 2 s", "Attack range reduced 50%" ] : [])
+				`Hit ratio +${v}% per Precision stack`,
+				"Crow hits grant 1 stack; maximum 5",
+				"Duration 10 s; crow hits refresh duration",
+				...(d.option >= 2 ?
+					[
+						`At 5 stacks: next damaging skill +${20 + (rank - 1) * 2}% damage`,
+						"Successful skill consumes your Precision",
+						"Normal attacks do not consume stacks"
+					] :
+					[]),
+				...(d.option === 3 ? [ "Party range 20 m; independent counters" ] : [])
 			];
+
 		case "Challenging Roar":
 			return [
 				`Taunt ${d.option === 3 ? 6 : 3} targets`,

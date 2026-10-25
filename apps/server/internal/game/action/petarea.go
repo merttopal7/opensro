@@ -14,6 +14,7 @@ import (
 	"fmt"
 
 	"opensro.online/server/internal/domain"
+	"opensro.online/server/internal/game/companion"
 	"opensro.online/server/internal/game/enterworld"
 	"opensro.online/server/internal/game/item/wire"
 	"opensro.online/server/internal/game/world/simulation"
@@ -49,10 +50,20 @@ func (rt *Runtime) petAreaTargets(step petCombatStep, primary petCombatTarget, s
 	var candidates []monsterAreaVictim
 	targets := make(map[uint32]petCombatTarget)
 	add := func(target petCombatTarget, radius float64) {
+		penguin := rt.AttackPetExpansion && companion.PetKind(step.pet.Codename) == "Penguin"
+		if penguin && target.monster == nil {
+			return
+		}
+		if penguin && skill.ActionArea.Shape == 3 {
+			dir, to := relative(from, primary.at), relative(from, target.at)
+			if dir.x*to.x+dir.z*to.z < 0 {
+				return
+			}
+		}
 		if target.gid == primary.gid || targets[target.gid].gid != 0 {
 			return
 		}
-		if step.trained != nil && step.trained.rend && rt.LineOfSight != nil {
+		if (penguin || step.trained != nil && step.trained.rend) && rt.LineOfSight != nil {
 			world, _ := step.state.follower.Presentation()
 			if !rt.LineOfSight(from, world.LiveOwnerAt(step.nowMs), target.at) {
 				return
@@ -141,6 +152,7 @@ func (rt *Runtime) strikePetTargets(step petCombatStep, primary petCombatTarget,
 		return petStrikeResult{}, false
 	}
 	strikes := []monsterStrike{first.strike}
+	hpDamage := first.hpDamage
 	var wolfTargets []uint32
 	if primary.monster != nil && petStrikeDamaged(first.strike) {
 		wolfTargets = append(wolfTargets, primary.gid)
@@ -153,6 +165,7 @@ func (rt *Runtime) strikePetTargets(step petCombatStep, primary petCombatTarget,
 			continue
 		}
 		strikes = append(strikes, hit.strike)
+		hpDamage += hit.hpDamage
 		if target.monster != nil && petStrikeDamaged(hit.strike) {
 			wolfTargets = append(wolfTargets, target.gid)
 		}
@@ -161,7 +174,7 @@ func (rt *Runtime) strikePetTargets(step petCombatStep, primary petCombatTarget,
 	}
 	token := rt.petStrikeToken(step)
 	cast := wire.SkillCastSuccess{SkillId: skill.ID, CasterGid: step.pet.GID, InstanceToken: token}
-	prepared := step.state.combat != nil && step.state.combat.castToken != 0
+	prepared := petCastPrepared(step)
 	var frame wire.Frame
 	if skill.ActionArea.Shape == 0 {
 		result := wire.NewStationarySkillCastSingleTargetResult(cast, first.strike.gid, first.strike.impacts)
@@ -190,8 +203,13 @@ func (rt *Runtime) strikePetTargets(step petCombatStep, primary petCombatTarget,
 	for _, hit := range strikes {
 		public = append(public, hit.public...)
 	}
+	rt.crowManaSpring(step, hpDamage)
+	if step.trained != nil {
+		rt.crowAfterAttack(step, wolfTargets)
+	}
+	echoFrames := rt.penguinAfterSpell(step, primary, skill, append([]petCombatTarget{primary}, secondary...), strikes)
 	rt.wolfHuntRend(step, primary, first.strike)
 	rt.wolfExecuteAttack(step.key.division, step.state.character, step.pet.GID, 0, wolfTargets, step.nowMs)
 	step.state.public = append(step.state.public, public...)
-	return petStrikeResult{frames: simFrames(append(public, actor...)), fatal: first.fatal}, true
+	return petStrikeResult{frames: append(simFrames(append(public, actor...)), echoFrames...), actor: actor, fatal: first.fatal}, true
 }

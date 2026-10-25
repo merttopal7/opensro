@@ -12,6 +12,14 @@ options (Water reflection, Metal detail), not experimental ones.
 ===========================================================================
 */
 
+import {
+	PICKUP_KIND_ALCHEMY,
+	PICKUP_KIND_EQUIPMENT,
+	PICKUP_KIND_GOLD,
+	PICKUP_KIND_OTHER,
+	PICKUP_KIND_POTIONS
+} from "@/engine/foundation/gameplay/ground-item";
+
 /*
 ================
 ExperimentalOptions
@@ -20,7 +28,14 @@ ExperimentalOptions
 export interface ExperimentalOptions {
 	// Port-only, not native. Reduced scene resolution requires explicit opt-in.
 	readonly renderScale: RenderScale;
+	// Port-only, not native: the interface drawn larger or smaller than the
+	// native 1:1 size (the platform's display scale). 100 is the native
+	// size; a missing or invalid stored value restores it.
+	readonly uiScale: number;
 	readonly chatTimestamps: boolean;
+	// Port-only, not native: use only the male warrior loading artwork.
+	// Off by default so both original loading backgrounds remain available.
+	readonly safeLoadingScreen: boolean;
 	// Port-only, not native: beginner atlas on M, explicitly enabled.
 	readonly monsterGuide: boolean;
 	readonly developerDiagnostics: boolean;
@@ -39,9 +54,10 @@ export interface ExperimentalOptions {
 	// (camera-smoothing.ts); native 68F830 snaps both. On by default (owner
 	// 2026-10-15); an explicit false is the native snap.
 	readonly smoothCamera: boolean;
-	// Port-only, not native: the unused enchant sparks on +8 and higher
-	// weapons and shields (equipmentEnchantSparks). On by default (owner
-	// 2026-10-17); an explicit false restores the native v1.150 look.
+	// Port-only, not native: "Enhanced item glow". The later client's glow
+	// tiers (+6/8/10 beside +3/5/7/9) and its per-item enchant sparks
+	// (equipmentGlowCatalog, equipmentEnchantSparks). On by default (owner
+	// 2026-10-17, 2026-10-24); an explicit false restores the native v1.150 look.
 	readonly enchantSparks: boolean;
 	// Port-only wolf skill tree controls; requires the server's matching opt-in.
 	readonly attackPetTraining: boolean;
@@ -58,6 +74,21 @@ export interface ExperimentalOptions {
 	// On unless turned off (the owner's choice, 2026-10-14); off is the
 	// previous rule, characters first.
 	readonly sharedActorRoom: boolean;
+	// Port-only, not native: the local mover's walk is drawn between its
+	// worker ticks, a little behind them, instead of extrapolated past the
+	// newest one (own-walk-interpolation.ts; Unreal's fixed-tick smoothing).
+	// No longer a row of its own (owner, 2026-10-25): always on. It presents
+	// every own walk the main-thread mover does not predict, and its step
+	// cap (drawn-step.ts) bounds the mover's corrections too. A stored false
+	// from the old row is ignored.
+	readonly interpolatedOwnWalk: boolean;
+	// Port-only, not native: the local player's ground-click walk is stepped
+	// on the main thread from the click frame (runtime/movement/local-mover.ts,
+	// Unreal's locally controlled character, epic #1437, with
+	// reconciliation #1441b). The original client predicts its own walk the
+	// same way (0x6932A0 -> StartGroundMove 0x878600). On unless turned off
+	// (the owner's choice, 2026-10-25); off is the worker-driven walk.
+	readonly mainThreadOwnWalk: boolean;
 	// Port-only, not native: a disabled tab is dimmed with a grey label (the
 	// original draws it like an unselected tab, 5376A0). On unless turned
 	// off (the owner's choice, 2026-10-15); off is the original look.
@@ -77,6 +108,11 @@ export interface ExperimentalOptions {
 	// widens that one. On unless turned off (the owner's choice,
 	// 2026-10-19); off hides them from the banner and the chat log.
 	readonly plusSevenNotices: boolean;
+	// Port-only, not native: when a unique the player damaged dies, the
+	// shard's damage ranking (0x3FBC, server SRO_UNIQUE_DAMAGE_RANK) opens
+	// in a window (unique-rank-hud.ts). Off unless turned on, so each
+	// player opts in.
+	readonly uniqueDamageRank: boolean;
 	// Port-only, not native: holding V (UIIT_STT_USER_MOSTER_BLIND) also
 	// hides other players' pets and transports. The original hides only
 	// monsters and players (8602C0, 85E550): a COS draws through its owner
@@ -103,6 +139,11 @@ export interface ExperimentalOptions {
 	// turned off (the owner's choice, 2026-10-15); off is the original,
 	// where a drop on a tab does nothing.
 	readonly dropOnBagTab: boolean;
+	// Port-only, not native: Ctrl+click, right-click or double-click a bag
+	// item stages it into the open exchange, as a drop on the table does;
+	// the original stages by drag and drop only. On unless turned off (the
+	// owner's choice, 2026-10-24); off is the original, drag-only staging.
+	readonly exchangeClickShortcuts: boolean;
 	// Port-only, not native: in the chat log, a drop or plus notice's player
 	// name links to a whisper and its item name shows the item's tooltip
 	// (foundation/gameplay/notice-links.ts). On unless turned off (the
@@ -124,6 +165,11 @@ export interface ExperimentalOptions {
 	// vectors without re-reading the target (CProjectileTrace_Process 8D8580,
 	// CProjectile_Bezier_Process 879650). Off unless turned on.
 	readonly homingProjectiles: boolean;
+	// Port-only, not native (owner 2026-10-24): the summoned trade transport
+	// drinks a transport HP potion at the auto-potion HP percentage
+	// (transport-auto-potion.ts). The original watches only the player
+	// (70C550). Off unless turned on.
+	readonly transportAutoPotion: boolean;
 	// Port-only, not native: left-clicking the attack pet's mini panel
 	// (CIFPetMiniInfo 6B3460 / 6B3760) or a companion's status portrait
 	// (CIFCOSStatus 6A9BC0) selects the companion and toggles its window
@@ -143,11 +189,34 @@ export interface ExperimentalOptions {
 	// together does not step in one frame. A9EFB0 starts every instance at 0.
 	// Off unless turned on (the owner's choice, 2026-10-21).
 	readonly spreadClothSteps: boolean;
+	// Port-only, not native (#841): an item filter for the pickup pet. Off
+	// unless turned on; off, the pet proposes exactly the native categories
+	// and the kind switches below are never read. The filter only ever
+	// narrows the client's own proposals above the server-owned category
+	// byte, so the pet window, its saved setting and other clients see
+	// native behaviour; manual pickup commands are never filtered.
+	readonly petPickupFilter: boolean;
+	// The filter's kinds (ground-item's pickupItemKind): each is collected
+	// unless explicitly turned off, and only while petPickupFilter is on.
+	readonly petFilterGold: boolean;
+	readonly petFilterEquipment: boolean;
+	readonly petFilterAlchemy: boolean;
+	readonly petFilterPotions: boolean;
+	readonly petFilterOther: boolean;
+	// Port-only, not native: a touch tap on an item or skill slot also keeps
+	// its tooltip up until the next touch elsewhere or a scroll (#1243); the
+	// tap's own action is unchanged. Touch only. On by default (the owner's
+	// choice, 2026-10-22); off is the brief hover a tap gives today.
+	readonly touchInspect: boolean;
 	// Port-only, not native: when the build publishes extra worldmap_mapinfo
 	// town pages (Alexandria) and a wider overview box, the M window uses them
 	// instead of the five native town pages and 28 x 8 overview (5758D0). Off
 	// unless turned on.
 	readonly expandedWorldMap: boolean;
+	// Port-only, not native (#840): every active quest's NPC target shows on
+	// the world map and the minimap, not only the one quest the journal
+	// tracks. Off unless turned on; off is the native tracked quest only.
+	readonly questTrackerMarkers: boolean;
 }
 
 /*
@@ -182,13 +251,58 @@ export function renderScales(): readonly RenderScale[] {
 
 /*
 ================
+UiScale
+
+Port-only, not native. The UI size slider's stops: 100 is the native 1:1
+interface, 50 and 200 its ends, in steps of 5.
+================
+*/
+export const UI_SCALE_DEFAULT = 100;
+export const UI_SCALE_MIN = 50;
+export const UI_SCALE_MAX = 200;
+export const UI_SCALE_STEP = 5;
+
+/*
+================
+uiScaleStop
+
+A UI size as a slider stop: a finite number inside the slider's range
+snapped to a step, else undefined, so each caller decides what an invalid
+value means (a stored preference restores the native 100; a UI selection
+leaves the draft intact).
+================
+*/
+export function uiScaleStop( value: unknown ): number | undefined {
+	if ( typeof value !== "number" || !Number.isFinite( value ) ) return undefined;
+	if ( value < UI_SCALE_MIN || value > UI_SCALE_MAX ) return undefined;
+	return Math.round( value / UI_SCALE_STEP ) * UI_SCALE_STEP;
+}
+
+/*
+================
+uiScaleFactor
+
+The multiple of the native UI size the preference asks the platform's
+display scale for. Exactly 1 at the native 100.
+================
+*/
+export function uiScaleFactor( options: ExperimentalOptions ): number {
+	return options.uiScale / UI_SCALE_DEFAULT;
+}
+
+/*
+================
 experimentalOptions
 
 Only an explicit true enables a toggle, except smoothCamera, enchantSparks,
-compressedTextures, sharedActorRoom, greyDisabledTabs, jobKillNotices, dropPlusNotices,
-plusSevenNotices, fitWindowLabels, dropOnBagTab, noticeLinks, shortNotices, confirmGuildBan,
-petClickOpensWindow, smartPetPickup and dungeonCharacterPvs, which only an explicit false turns off.
-Missing or invalid render scales restore full resolution; legacy Video
+compressedTextures, sharedActorRoom, mainThreadOwnWalk, greyDisabledTabs, jobKillNotices, dropPlusNotices,
+plusSevenNotices, fitWindowLabels, dropOnBagTab, exchangeClickShortcuts, noticeLinks, shortNotices, confirmGuildBan,
+petClickOpensWindow, smartPetPickup, touchInspect and dungeonCharacterPvs, which only an explicit false turns off.
+interpolatedOwnWalk is always on: it has no row, and a stored value is ignored.
+The pickup filter's kinds (petFilterGold and its siblings) also only turn off
+explicitly, and are read only while petPickupFilter is on.
+Missing or invalid render scales restore full resolution and missing or
+invalid UI sizes the native 100; legacy Video
 settings cannot enable scaling. Keys of retired rows (terrainRelief and texturedHorizon, removed at the owner's
 request on 2026-10-11) are never read, so a saved preference holding them
 loads cleanly.
@@ -201,7 +315,9 @@ export function experimentalOptions( value: unknown = null ): ExperimentalOption
 	const enabled = ( key: ExperimentalKey ) => record[key] === true;
 	return {
 		renderScale: record.renderScale === 75 || record.renderScale === 50 ? record.renderScale : DEFAULT_RENDER_SCALE,
+		uiScale: uiScaleStop( record.uiScale ) ?? UI_SCALE_DEFAULT,
 		chatTimestamps: enabled( "chatTimestamps" ),
+		safeLoadingScreen: enabled( "safeLoadingScreen" ),
 		monsterGuide: enabled( "monsterGuide" ),
 		developerDiagnostics: enabled( "developerDiagnostics" ),
 		postProcessing: enabled( "postProcessing" ),
@@ -212,28 +328,41 @@ export function experimentalOptions( value: unknown = null ): ExperimentalOption
 		hdrToneMap: enabled( "hdrToneMap" ),
 		sunShadow: enabled( "sunShadow" ),
 		perPixelLighting: enabled( "perPixelLighting" ),
-		predictedRunUp: enabled( "predictedRunUp" ),
+		predictedRunUp: record.predictedRunUp !== false,
 		smoothCamera: record.smoothCamera !== false,
 		enchantSparks: record.enchantSparks !== false,
 		compressedTextures: record.compressedTextures !== false,
 		sharedActorRoom: record.sharedActorRoom !== false,
+		interpolatedOwnWalk: true,
+		mainThreadOwnWalk: record.mainThreadOwnWalk !== false,
 		greyDisabledTabs: record.greyDisabledTabs !== false,
 		jobKillNotices: record.jobKillNotices !== false,
 		dropPlusNotices: record.dropPlusNotices !== false,
 		plusSevenNotices: record.plusSevenNotices !== false,
+		uniqueDamageRank: enabled( "uniqueDamageRank" ),
 		vHidesCompanions: enabled( "vHidesCompanions" ),
 		dungeonCharacterPvs: record.dungeonCharacterPvs !== false,
 		fitWindowLabels: record.fitWindowLabels !== false,
 		dropOnBagTab: record.dropOnBagTab !== false,
+		exchangeClickShortcuts: record.exchangeClickShortcuts !== false,
 		noticeLinks: record.noticeLinks !== false,
 		shortNotices: record.shortNotices !== false,
 		attackPetTraining: enabled( "attackPetTraining" ),
 		confirmGuildBan: record.confirmGuildBan !== false,
 		homingProjectiles: enabled( "homingProjectiles" ),
+		transportAutoPotion: enabled( "transportAutoPotion" ),
 		petClickOpensWindow: record.petClickOpensWindow !== false,
 		smartPetPickup: record.smartPetPickup !== false,
 		spreadClothSteps: enabled( "spreadClothSteps" ),
-		expandedWorldMap: enabled( "expandedWorldMap" )
+		petPickupFilter: enabled( "petPickupFilter" ),
+		petFilterGold: record.petFilterGold !== false,
+		petFilterEquipment: record.petFilterEquipment !== false,
+		petFilterAlchemy: record.petFilterAlchemy !== false,
+		petFilterPotions: record.petFilterPotions !== false,
+		petFilterOther: record.petFilterOther !== false,
+		touchInspect: record.touchInspect !== false,
+		expandedWorldMap: enabled( "expandedWorldMap" ),
+		questTrackerMarkers: enabled( "questTrackerMarkers" )
 	};
 }
 
@@ -281,6 +410,7 @@ export interface ExperimentalVideo {
 	readonly smoothCamera: boolean;
 	readonly enchantSparks: boolean;
 	readonly sharedActorRoom: boolean;
+	readonly interpolatedOwnWalk: boolean;
 	readonly vHidesCompanions: boolean;
 	readonly dungeonCharacterPvs: boolean;
 	readonly spreadClothSteps: boolean;
@@ -305,6 +435,7 @@ export function experimentalVideo( options: ExperimentalOptions ): ExperimentalV
 		smoothCamera: options.smoothCamera,
 		enchantSparks: options.enchantSparks,
 		sharedActorRoom: options.sharedActorRoom,
+		interpolatedOwnWalk: options.interpolatedOwnWalk,
 		vHidesCompanions: options.vHidesCompanions,
 		dungeonCharacterPvs: options.dungeonCharacterPvs,
 		spreadClothSteps: options.spreadClothSteps
@@ -326,6 +457,9 @@ export interface ExperimentalGameplay {
 	readonly plusSevenNotices: boolean;
 	readonly homingProjectiles?: boolean;
 	readonly smartPetPickup?: boolean;
+	// The pickup pet filter's kind mask (ground-item's PICKUP_KIND bits);
+	// undefined while the filter row is off, which is the native loop.
+	readonly petPickupKinds?: number;
 }
 
 /*
@@ -340,6 +474,13 @@ export function experimentalGameplay( options: ExperimentalOptions ): Experiment
 		dropPlusNotices: options.dropPlusNotices,
 		plusSevenNotices: options.plusSevenNotices,
 		homingProjectiles: options.homingProjectiles,
-		smartPetPickup: options.smartPetPickup
+		smartPetPickup: options.smartPetPickup,
+		petPickupKinds: options.petPickupFilter ?
+			(options.petFilterGold ? PICKUP_KIND_GOLD : 0) |
+			(options.petFilterEquipment ? PICKUP_KIND_EQUIPMENT : 0) |
+			(options.petFilterAlchemy ? PICKUP_KIND_ALCHEMY : 0) |
+			(options.petFilterPotions ? PICKUP_KIND_POTIONS : 0) |
+			(options.petFilterOther ? PICKUP_KIND_OTHER : 0) :
+			undefined
 	};
 }

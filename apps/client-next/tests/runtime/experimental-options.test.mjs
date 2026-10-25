@@ -16,14 +16,18 @@ import assert from "node:assert/strict";
 const experimentalModule = await import(
 	"../../src/engine/foundation/ui/experimental-options.ts"
 );
-const { experimentalGameplay, experimentalOptions, experimentalVideo, renderScales } = experimentalModule;
+const { experimentalGameplay, experimentalOptions, experimentalVideo, renderScales, uiScaleFactor } =
+	experimentalModule;
 const { createExperimentalHud, EXPERIMENTAL_TABS } = await import(
 	"../../src/engine/runtime/ui/hud/experimental-hud.ts"
 );
 
 const OFF = Object.freeze( {
 	renderScale: 100,
+	// Native 1:1 interface size.
+	uiScale: 100,
 	chatTimestamps: false,
+	safeLoadingScreen: false,
 	monsterGuide: false,
 	developerDiagnostics: false,
 	postProcessing: false,
@@ -34,7 +38,9 @@ const OFF = Object.freeze( {
 	hdrToneMap: false,
 	sunShadow: false,
 	perPixelLighting: false,
-	predictedRunUp: false,
+	// On by default (owner 2026-10-25): a press walks at once and stops
+	// where the server casts.
+	predictedRunUp: true,
 	// On by default (owner 2026-10-15): the camera eases its height and release.
 	smoothCamera: true,
 	// On by default (owner 2026-10-17): +8 and higher weapons and shields wear enchant sparks.
@@ -43,6 +49,10 @@ const OFF = Object.freeze( {
 	compressedTextures: true,
 	// On by default (owner 2026-10-14): near effects outrank far characters.
 	sharedActorRoom: true,
+	// Always on, no row (owner 2026-10-25): the fallback own-walk presenter.
+	interpolatedOwnWalk: true,
+	// On by default (owner 2026-10-25): the own walk is stepped on the main thread.
+	mainThreadOwnWalk: true,
 	// On by default (owner 2026-10-15): a disabled tab is dimmed.
 	greyDisabledTabs: true,
 	// On by default (owner 2026-10-15): the shard's job-kill notices show.
@@ -51,6 +61,8 @@ const OFF = Object.freeze( {
 	dropPlusNotices: true,
 	// On by default (owner 2026-10-19): the shard's +7 notices show.
 	plusSevenNotices: true,
+	// Off by default: each player opts in to the unique damage ranking.
+	uniqueDamageRank: false,
 	// Off by default: V hides only monsters and players, as the original does.
 	vHidesCompanions: false,
 	// On by default (port-only, not native): hides characters in dungeon blocks the active block does not draw.
@@ -59,6 +71,8 @@ const OFF = Object.freeze( {
 	fitWindowLabels: true,
 	// On by default (owner 2026-10-15): a drop on a bag tab moves the item there.
 	dropOnBagTab: true,
+	// On by default (owner 2026-10-24): click shortcuts stage into an exchange.
+	exchangeClickShortcuts: true,
 	// On by default (owner 2026-10-15): a notice's player and item are links.
 	noticeLinks: true,
 	// On by default (owner 2026-10-15): the notice banner shows for 5 s.
@@ -68,6 +82,8 @@ const OFF = Object.freeze( {
 	confirmGuildBan: true,
 	// Off by default: straight projectiles keep their launch-captured endpoint (8D8580).
 	homingProjectiles: false,
+	// Off by default: the automatic potion watches only the player (70C550).
+	transportAutoPotion: false,
 	// On by default (owner 2026-10-18, BUG-086): clicking CIFPetMiniInfo opens CIFCos;
 	// off restores the native no-op click (6B3760).
 	petClickOpensWindow: true,
@@ -76,15 +92,59 @@ const OFF = Object.freeze( {
 	smartPetPickup: true,
 	// Off by default: every cloth instance starts its accumulator at 0 (A9EFB0).
 	spreadClothSteps: false,
+	// Off by default (#841): the pickup pet proposes the native categories
+	// until the item filter is turned on.
+	petPickupFilter: false,
+	// The filter's kinds include everything unless one is explicitly off;
+	// they are read only while the filter itself is on.
+	petFilterGold: true,
+	petFilterEquipment: true,
+	petFilterAlchemy: true,
+	petFilterPotions: true,
+	petFilterOther: true,
+	// On by default (owner 2026-10-22, #1243): a touch tap keeps an item or skill tooltip up.
+	touchInspect: true,
 	// Off by default: the M window shows only the five native towns and 28 x 8 overview.
-	expandedWorldMap: false
+	expandedWorldMap: false,
+	// Off by default (#840): the maps mark the tracked quest's targets only.
+	questTrackerMarkers: false
 } );
+
+test("touch inspection defaults on and only an explicit false turns it off", () => {
+	for (
+		const value of [ undefined, null, {}, { touchInspect: true }, { touchInspect: "false" }, { touchInspect: 0 } ]
+	) {
+		assert.equal( experimentalOptions( value ).touchInspect, true, JSON.stringify( value ) );
+	}
+	assert.equal( experimentalOptions( { touchInspect: false } ).touchInspect, false );
+});
 
 test("only an explicit boolean enables chat timestamps", () => {
 	for ( const value of [ undefined, null, [], {}, true, { chatTimestamps: "true" }, { chatTimestamps: 1 } ] ) {
 		assert.equal( experimentalOptions( value ).chatTimestamps, false );
 	}
 	assert.equal( experimentalOptions( { chatTimestamps: true, developerDiagnostics: false } ).chatTimestamps, true );
+});
+
+test("safe loading defaults off and persists only after Confirm", () => {
+	for ( const value of [ undefined, null, {}, { safeLoadingScreen: "true" }, { safeLoadingScreen: 1 } ] ) {
+		assert.equal( experimentalOptions( value ).safeLoadingScreen, false );
+	}
+	assert.equal( experimentalOptions( { safeLoadingScreen: true } ).safeLoadingScreen, true );
+	const hud = createExperimentalHud();
+	hud.open();
+	hud.toggle( "safeLoadingScreen" );
+	assert.equal( hud.state().saved.safeLoadingScreen, false );
+	hud.open();
+	assert.equal( hud.state().draft.safeLoadingScreen, false, "closing discards the unconfirmed toggle" );
+	hud.toggle( "safeLoadingScreen" );
+	const saved = hud.confirm();
+	const restored = createExperimentalHud();
+	restored.restore( experimentalOptions( JSON.parse( JSON.stringify( saved ) ) ) );
+	assert.equal( restored.state().saved.safeLoadingScreen, true );
+	restored.reset();
+	assert.equal( restored.state().saved.safeLoadingScreen, true, "Default only changes the draft" );
+	assert.equal( restored.confirm().safeLoadingScreen, false );
 });
 
 test("experimental drafts require Confirm and Default only changes the draft", () => {
@@ -161,6 +221,8 @@ test("every video stage defaults off and only an explicit true enables it", () =
 		enchantSparks: true,
 		// The shared actor room is on by default (owner 2026-10-14).
 		sharedActorRoom: true,
+		// Interpolated own movement is always on, no row (owner 2026-10-25).
+		interpolatedOwnWalk: true,
 		vHidesCompanions: false,
 		dungeonCharacterPvs: true,
 		spreadClothSteps: false
@@ -237,7 +299,7 @@ Tabs
 test("the window's tabs cover every preference once and Open returns to Image", () => {
 	assert.deepEqual(
 		EXPERIMENTAL_TABS.map( tab => tab.title ),
-		[ "Image", "World", "Lighting", "Game", "Notices", "Other", "Pets" ]
+		[ "Image", "World", "Lighting", "Game", "Notices", "Other", "Pets", "Pickup" ]
 	);
 	// Lighting keeps the direct-light stages; render scale joins Image without
 	// changing the indices used to reopen the existing tabs.
@@ -245,9 +307,10 @@ test("the window's tabs cover every preference once and Open returns to Image", 
 		EXPERIMENTAL_TABS[2].rows.map( row => row.key ),
 		[ "sunShadow", "perPixelLighting", "enchantSparks", "dungeonCharacterPvs" ]
 	);
-	for ( const tab of EXPERIMENTAL_TABS ) assert.ok( tab.rows.length <= 6, "At most six rows a tab" );
+	for ( const tab of EXPERIMENTAL_TABS ) assert.ok( tab.rows.length <= 7, "At most seven rows a tab" );
 	const keys = EXPERIMENTAL_TABS.flatMap( tab => tab.rows.map( row => row.key ) ).sort();
-	assert.deepEqual( keys, Object.keys( OFF ).sort() );
+	// interpolatedOwnWalk is always on and has no row (owner 2026-10-25).
+	assert.deepEqual( keys, Object.keys( OFF ).filter( key => key !== "interpolatedOwnWalk" ).sort() );
 	const ids = EXPERIMENTAL_TABS.flatMap( tab => tab.rows.map( row => row.id ) );
 	assert.equal( new Set( ids ).size, ids.length );
 	const hud = createExperimentalHud();
@@ -277,6 +340,58 @@ test("render scale accepts only explicit numeric selections and reaches the rend
 	for ( const legacy of [ undefined, null, [], {}, { chatTimestamps: true } ] ) {
 		assert.equal( experimentalOptions( legacy ).renderScale, 100 );
 	}
+});
+
+/*
+================
+UI size preferences
+================
+*/
+test("UI size defaults to the native 100 and only an in-range stop restores", () => {
+	assert.equal( experimentalOptions().uiScale, 100 );
+	for ( const uiScale of [ undefined, null, true, false, "150", 0, 49, 201, 999, NaN, Infinity, [], {} ] ) {
+		assert.equal( experimentalOptions( { uiScale } ).uiScale, 100 );
+	}
+	for ( const uiScale of [ 50, 55, 75, 100, 125, 150, 200 ] ) {
+		const saved = experimentalOptions( JSON.parse( JSON.stringify( { uiScale } ) ) );
+		assert.equal( saved.uiScale, uiScale );
+	}
+	// A stored value between stops snaps to the nearest one.
+	assert.equal( experimentalOptions( { uiScale: 137 } ).uiScale, 135 );
+	assert.equal( experimentalOptions( { uiScale: 138 } ).uiScale, 140 );
+	// The platform factor is exactly 1 at the native size.
+	assert.equal( uiScaleFactor( experimentalOptions() ), 1 );
+	assert.equal( uiScaleFactor( experimentalOptions( { uiScale: 200 } ) ), 2 );
+	assert.equal( uiScaleFactor( experimentalOptions( { uiScale: 50 } ) ), 0.5 );
+	assert.equal( "uiScale" in experimentalVideo( experimentalOptions( { uiScale: 150 } ) ), false );
+	assert.equal( "uiScale" in experimentalGameplay( experimentalOptions( { uiScale: 150 } ) ), false );
+});
+
+/*
+================
+UI size draft selection
+================
+*/
+test("UI size selections remain drafts until Confirm and reject values off the slider", () => {
+	const hud = createExperimentalHud();
+	hud.restore( experimentalOptions( { uiScale: 150 } ) );
+	hud.open();
+	assert.equal( hud.state().draft.uiScale, 150 );
+	hud.setUiScale( 75 );
+	assert.equal( hud.state().draft.uiScale, 75 );
+	assert.equal( hud.state().saved.uiScale, 150 );
+	hud.open();
+	assert.equal( hud.state().draft.uiScale, 150 );
+	hud.setUiScale( 999 );
+	hud.setUiScale( 25 );
+	hud.setUiScale( NaN );
+	assert.equal( hud.state().draft.uiScale, 150 );
+	hud.setUiScale( 200 );
+	assert.equal( hud.confirm().uiScale, 200 );
+	hud.reset();
+	assert.equal( hud.state().draft.uiScale, 100 );
+	assert.equal( hud.state().saved.uiScale, 200 );
+	assert.equal( hud.confirm().uiScale, 100 );
 });
 
 /*
@@ -348,19 +463,22 @@ test("render scale selections remain drafts until Confirm and reject unsupported
 Gameplay rows
 ================
 */
-test("the predicted run-up defaults off and reaches only the worker's slice", () => {
-	// The native press (6FCD50) never walks before the server answers.
+test("the predicted run-up defaults on and reaches only the worker's slice", () => {
+	// Owner 2026-10-25: on by default. The native press (6FCD50) never
+	// walks before the server answers, so the row remains the off switch.
 	assert.deepEqual( experimentalGameplay( experimentalOptions() ), {
-		predictedRunUp: false,
+		predictedRunUp: true,
 		jobKillNotices: true,
 		dropPlusNotices: true,
 		plusSevenNotices: true,
 		homingProjectiles: false,
-		smartPetPickup: true
+		smartPetPickup: true,
+		petPickupKinds: undefined
 	} );
 	for ( const value of [ 1, "true", null, {} ] ) {
-		assert.equal( experimentalOptions( { predictedRunUp: value } ).predictedRunUp, false );
+		assert.equal( experimentalOptions( { predictedRunUp: value } ).predictedRunUp, true );
 	}
+	assert.equal( experimentalOptions( { predictedRunUp: false } ).predictedRunUp, false );
 	const on = experimentalOptions( { predictedRunUp: true } );
 	assert.deepEqual( experimentalGameplay( on ), {
 		predictedRunUp: true,
@@ -368,9 +486,53 @@ test("the predicted run-up defaults off and reaches only the worker's slice", ()
 		dropPlusNotices: true,
 		plusSevenNotices: true,
 		homingProjectiles: false,
-		smartPetPickup: true
+		smartPetPickup: true,
+		petPickupKinds: undefined
 	} );
 	assert.equal( "predictedRunUp" in experimentalVideo( on ), false );
+});
+
+test("the pickup pet item filter is off by default and only narrows inside itself", () => {
+	// ground-item's PICKUP_KIND bits: gold 1, equipment 2, alchemy 4,
+	// potions 8, other 16; the mask reaches the worker only while the
+	// filter row is on, so off is the native loop.
+	for ( const value of [ undefined, null, {}, { petPickupFilter: "true" }, { petPickupFilter: 1 } ] ) {
+		const options = experimentalOptions( value );
+		assert.equal( options.petPickupFilter, false, JSON.stringify( value ) );
+		assert.equal( experimentalGameplay( options ).petPickupKinds, undefined );
+	}
+	const on = experimentalOptions( { petPickupFilter: true } );
+	assert.equal( experimentalGameplay( on ).petPickupKinds, 31 );
+	// Kinds narrow only on an explicit false, never on a stored non-boolean.
+	for ( const value of [ "false", 0, null ] ) {
+		assert.equal(
+			experimentalGameplay( experimentalOptions( { petPickupFilter: true, petFilterGold: value } ) )
+				.petPickupKinds,
+			31,
+			JSON.stringify( value )
+		);
+	}
+	assert.equal(
+		experimentalGameplay( experimentalOptions( { petPickupFilter: true, petFilterGold: false } ) )
+			.petPickupKinds,
+		30
+	);
+	assert.equal(
+		experimentalGameplay( experimentalOptions( {
+			petPickupFilter: true,
+			petFilterGold: false,
+			petFilterEquipment: false,
+			petFilterAlchemy: false,
+			petFilterPotions: false,
+			petFilterOther: false
+		} ) ).petPickupKinds,
+		0
+	);
+	// Kind switches stored without the master row still change nothing.
+	assert.equal(
+		experimentalGameplay( experimentalOptions( { petFilterGold: false } ) ).petPickupKinds,
+		undefined
+	);
 });
 
 test("compressed textures are on unless explicitly false, and the stored reader parses the saved key", () => {
@@ -466,6 +628,17 @@ test("drop on bag tabs is on unless explicitly false and stays out of the worker
 	assert.equal( "dropOnBagTab" in experimentalGameplay( experimentalOptions( {} ) ), false );
 });
 
+test("exchange click shortcuts are on unless explicitly false and stay out of the worker's slices", () => {
+	for (
+		const value of [ undefined, null, {}, { exchangeClickShortcuts: 1 }, { exchangeClickShortcuts: "false" } ]
+	) {
+		assert.equal( experimentalOptions( value ).exchangeClickShortcuts, true );
+	}
+	assert.equal( experimentalOptions( { exchangeClickShortcuts: false } ).exchangeClickShortcuts, false );
+	assert.equal( "exchangeClickShortcuts" in experimentalVideo( experimentalOptions( {} ) ), false );
+	assert.equal( "exchangeClickShortcuts" in experimentalGameplay( experimentalOptions( {} ) ), false );
+});
+
 test("smooth camera is on unless explicitly false and reaches the renderer's slice", () => {
 	for ( const value of [ undefined, null, {}, { smoothCamera: 1 }, { smoothCamera: "false" } ] ) {
 		assert.equal( experimentalOptions( value ).smoothCamera, true );
@@ -546,4 +719,38 @@ test("spread cloth steps default off (native accumulator start) and reach only t
 	const on = experimentalOptions( { spreadClothSteps: true } );
 	assert.equal( experimentalVideo( on ).spreadClothSteps, true );
 	assert.ok( EXPERIMENTAL_TABS.some( tab => tab.rows.some( row => row.key === "spreadClothSteps" ) ) );
+});
+
+test("interpolated own movement is always on, has no row, and reaches the renderer's video options", () => {
+	for ( const value of [ undefined, null, {}, { interpolatedOwnWalk: false }, { interpolatedOwnWalk: "false" } ] ) {
+		assert.equal( experimentalOptions( value ).interpolatedOwnWalk, true );
+	}
+	assert.equal(
+		experimentalVideo( experimentalOptions( { interpolatedOwnWalk: false } ) ).interpolatedOwnWalk,
+		true
+	);
+	assert.ok( !EXPERIMENTAL_TABS.some( tab => tab.rows.some( row => row.key === "interpolatedOwnWalk" ) ) );
+});
+
+test("main-thread own movement defaults on, turns off only on an explicit false, and stays out of the worker's and renderer's slices", () => {
+	for ( const value of [ undefined, null, {}, { mainThreadOwnWalk: 1 }, { mainThreadOwnWalk: "false" } ] ) {
+		const options = experimentalOptions( value );
+		assert.equal( options.mainThreadOwnWalk, true );
+		assert.equal( "mainThreadOwnWalk" in experimentalGameplay( options ), false );
+		assert.equal( "mainThreadOwnWalk" in experimentalVideo( options ), false );
+	}
+	assert.equal( experimentalOptions( { mainThreadOwnWalk: false } ).mainThreadOwnWalk, false );
+	assert.ok( EXPERIMENTAL_TABS.some( tab => tab.rows.some( row => row.key === "mainThreadOwnWalk" ) ) );
+});
+
+test("quest target markers default off (tracked quest only) and stay out of the worker's slices", () => {
+	for ( const value of [ undefined, null, {}, { questTrackerMarkers: 1 }, { questTrackerMarkers: "true" } ] ) {
+		const options = experimentalOptions( value );
+		assert.equal( options.questTrackerMarkers, false );
+		assert.equal( "questTrackerMarkers" in experimentalGameplay( options ), false );
+		assert.equal( "questTrackerMarkers" in experimentalVideo( options ), false );
+	}
+	const on = experimentalOptions( { questTrackerMarkers: true } );
+	assert.equal( on.questTrackerMarkers, true );
+	assert.ok( EXPERIMENTAL_TABS.some( tab => tab.rows.some( row => row.key === "questTrackerMarkers" ) ) );
 });

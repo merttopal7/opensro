@@ -16,6 +16,11 @@ lifecycles that belong in separate owners (see the size ledger).
 ===========================================================================
 */
 import {
+	createPenguinBolts,
+	penguinEffectActors,
+	PENGUIN_EFFECT_SOUND
+} from "@/engine/foundation/animation/penguin-effects";
+import {
 	PET_BOND_TRANSFER_SOUND,
 	PET_BOND_REVIVE_SOUND,
 	PET_ROAR_SOUND,
@@ -77,7 +82,7 @@ import type { EffectCatalog, EffectStage, EffectVisual, EffectTrigger } from "@/
 import { importedModelBasis, nativeRootOffset } from "@/engine/foundation/rendering/world-math";
 import { SPINE_AIM_BONE } from "@/engine/foundation/animation/spine-aim";
 import { createSpineAims } from "./spine-aims";
-import type { GameplayState } from "@/engine/contracts/gameplay";
+import type { GameplayState, Pose } from "@/engine/contracts/gameplay";
 import type { EntityState } from "@/engine/contracts/world";
 import { characterHeadingYaw, nativeHeadingYaw, radians, type Radians } from "@/engine/foundation/math/angles";
 import { hawkInitial, hawkEvent, hawkAnimation, stepHawk, type HawkState } from "@/engine/foundation/animation/hawk";
@@ -136,6 +141,7 @@ const CAPTURED_MONSTER_TYPE = 6 << 11;
 // (trimToEffectBudget); only a cast arriving with every slot taken by
 // other casts skips its visuals.
 const EFFECT_ACTOR_BUDGET = 2048;
+const CROW_EFFECT_LIMIT = 64;
 // A one-shot whose model is still not resident this long after its spawn is dropped.
 const UNREADY_ONE_SHOT_SECONDS = 15;
 // 8DE74C loads [0xC14E6C], -pi/2 as a float, as the fYaw of every AT_TARGET
@@ -336,6 +342,13 @@ export function createCharacterEffects(
 		}
 	>();
 	let externalSerial = 0;
+	const crowEffects: {
+		pose: CharacterActor["pose"];
+		gids: number[];
+		cue: number;
+		book: number;
+		started?: number;
+	}[] = [];
 	let catalog: EffectCatalog | null = null,
 		models:
 			| Record<string, {
@@ -483,6 +496,7 @@ export function createCharacterEffects(
 			shockCoreGid: number;
 		}
 	>();
+	const penguinBolts = createPenguinBolts( allocate );
 	// Wolf Hunting Howl (actions 1..3) and Savage Rend (4..6) on the wolf's GID.
 	const wolfSkills = new Map<
 		number,
@@ -1009,8 +1023,26 @@ export function createCharacterEffects(
 	return {
 		/*
 		================
+		crowEffect
+		A bounded, fixed-origin gust outlives the despawned clone.
+		================
+		*/
+		crowEffect(
+			source: Extract<import("@/engine/contracts/orb").VisualFeedback, { kind: "pet-crow-effect"; }>["source"],
+			cue = 0,
+			book = 1
+		) {
+			if ( crowEffects.length >= CROW_EFFECT_LIMIT ) return;
+			crowEffects.push( {
+				pose: { ...source, yaw: nativeHeadingYaw( 0 ) },
+				cue,
+				book,
+				gids: Array.from( { length: cue === 1 || cue === 4 ? 12 : 7 }, allocate )
+			} );
+		},
+		/*
+		================
 		item
-		Queues an external item effect (a used item's visual) for the next step.
 		================
 		*/
 		item( event: import("@/engine/contracts/orb").ItemEffectFeedback ) {
@@ -1066,7 +1098,11 @@ export function createCharacterEffects(
 			effectDetail = 2,
 			bloodEnabled = true,
 			// The trade bandits' published dress by RefObjID (861720).
-			banditTable: ReadonlyMap<number, { readonly imbue: number; }> = new Map()
+			banditTable: ReadonlyMap<number, { readonly imbue: number; }> = new Map(),
+			// The frame's drawn poses (presentation-poses.ts). The local
+			// player's anchors sit on the body as drawn; absent in direct
+			// test drives, which keep anchoring on gameplay.pose as before.
+			drawnPoses?: ReadonlyMap<number, Pose>
 		) {
 			/*
 			================
@@ -1150,13 +1186,28 @@ export function createCharacterEffects(
 				const castStates = new Map( gameplay?.casts.map( cast => [ cast.token, cast ] ) ?? [] );
 				const current = new Set( castStates.keys() );
 				const byGid = new Map( entities.map( entity => [ entity.gid, entity ] ) );
+				// All effect anchors sit on the body as drawn (#1442): the local
+				// player's anchor is the frame's drawn pose when the frame
+				// resolved one, else the movement owner's logical pose. The map
+				// supplies only the position: the heading stays the movement
+				// owner's, as the composed map's local row is built the same
+				// way (presentation-events' drawnLocal). The hawk's mechanical
+				// holder below is the one exception: it is game logic, not a
+				// drawn anchor, and keeps the logical pose.
+				const localLogical = gameplay?.localGid !== undefined ? gameplay.pose ?? undefined : undefined;
+				const localDrawn = gameplay?.localGid !== undefined ?
+					drawnPoses?.get( gameplay.localGid ) :
+					undefined;
+				const localPose = localDrawn && localLogical ?
+					{ ...localDrawn, angle: localLogical.angle } :
+					localDrawn ?? localLogical;
 				// The local movement owner advances gameplay.pose; the entity row
 				// retains its wire/spawn position. All effect anchors (including
 				// bone-less victims, returns and chain hops) need the live pose.
 				const local = gameplay?.localGid ? byGid.get( gameplay.localGid ) : undefined;
-				if ( local && gameplay?.pose ) {
+				if ( local && localPose ) {
 					// The movement snapshot may retain old entity metadata; only its coordinates own this anchor.
-					const pose = gameplay.pose;
+					const pose = localPose;
 					byGid.set( local.gid, {
 						...local,
 						regionId: pose.regionId,
@@ -1514,8 +1565,8 @@ export function createCharacterEffects(
 								if ( !entity ) {
 									continue;
 								}
-								const pose = entity.gid === gameplay?.localGid && gameplay.pose ?
-									gameplay.pose :
+								const pose = entity.gid === gameplay?.localGid && localPose ?
+									localPose :
 									{
 										regionId: entity.regionId,
 										x: entity.x,
@@ -1540,8 +1591,8 @@ export function createCharacterEffects(
 								// caster's model matrix (+0x98 vfunc +0x18) at that moment; the victim
 								// only places it, so the victim's heading never turns the effect.
 								const casterAngle = caster ?
-									(caster.gid === gameplay?.localGid && gameplay?.pose ?
-										gameplay.pose.angle :
+									(caster.gid === gameplay?.localGid && localPose ?
+										localPose.angle :
 										caster.heading) :
 									undefined;
 								const victimFacing = !returning && !targetLocal && !flying && stage.damageEvent &&
@@ -2050,6 +2101,137 @@ export function createCharacterEffects(
 					}
 				}
 				const result: CharacterActor[] = [];
+				for ( let i = crowEffects.length - 1; i >= 0; i-- ) {
+					const burst = crowEffects[i]!;
+					burst.started ??= now;
+					const age = now - burst.started;
+					if ( age >= 1.2 ) {
+						crowEffects.splice( i, 1 );
+						continue;
+					}
+					if ( burst.cue > 0 ) {
+						// Native unlit materials bypass instance tint; recovery colors live in the textures.
+						const model = burst.cue === 1 ?
+							"/assets/effects/crow-heal-wisp" :
+							burst.cue === 4 ?
+							"/assets/effects/crow-mana-wisp" :
+							"/assets/effects/crow-feather";
+						if ( !ready( model ) ) continue;
+						const tint: readonly [number, number, number] = burst.cue === 2 ?
+							[ .8, .65, .4 ] :
+							burst.cue >= 6 && burst.cue <= 7 ?
+							[ 1, .83, .4 ] :
+							[ .8, .9, .83 ];
+						const recovery = burst.cue === 1 || burst.cue === 4;
+						const u = age / 1.2, count = (3 + burst.book) * (recovery ? 2 : 1);
+						for ( let feather = 0; feather < count; feather++ ) {
+							const mote = recovery && feather % 2 === 1;
+							if ( recovery ) {
+								const phase = (u + feather * .61803398875) % 1;
+								const mana = burst.cue === 4, angle = feather * 2.39996323 + phase * (mana ? 2.4 : .8);
+								const radius = mana ? 1 + 9 * (1 - phase) : 3 + Math.sin( feather * 1.7 ) * 1.4;
+								result.push( {
+									gid: burst.gids[feather]!,
+									model,
+									clip: "effect",
+									time: age,
+									loop: false,
+									scale: mote ? .6 : 1.1 + burst.book * .1,
+									absoluteEffectScale: true,
+									effectEntity: true,
+									pickable: false,
+									opacity: Math.sin( Math.PI * u ) * Math.sin( Math.PI * phase ) * (mote ? .3 : .55),
+									pose: {
+										...burst.pose,
+										x: burst.pose.x + Math.cos( angle ) * radius,
+										y: burst.pose.y + (mana ? 7 + phase * 7 : 2 + phase * 23),
+										z: burst.pose.z + Math.sin( angle ) * radius,
+										yaw: radians( -angle )
+									}
+								} );
+								continue;
+							}
+							const angle = age * (burst.cue === 5 ? 7 : 4) + feather * Math.PI * 2 / count;
+							const radius = burst.cue === 2 ?
+								8 + 2 * u :
+								burst.cue === 6 ?
+								10 :
+								burst.cue === 8 ?
+								8 + 30 * u :
+								burst.cue === 3 ?
+								6 + 22 * u :
+								5 + 11 * u;
+							const height = burst.cue === 2 ?
+								1 + Math.sin( u * Math.PI ) * 2 :
+								burst.cue === 5 ?
+								2 + Math.sin( u * Math.PI ) * 5 :
+								burst.cue === 6 ?
+								24 + Math.sin( u * Math.PI ) * 3 :
+								burst.cue === 8 ?
+								5 :
+								5 + u * 22;
+							result.push( {
+								gid: burst.gids[feather]!,
+								model,
+								clip: "effect",
+								time: age,
+								loop: false,
+								scale: burst.cue === 7 ? 4 : 2.2 + burst.book * .3,
+								absoluteEffectScale: true,
+								effectEntity: true,
+								pickable: false,
+								opacity: .65 * Math.sin( Math.PI * u ),
+								materialTint: tint,
+								pose: {
+									...burst.pose,
+									x: burst.pose.x + Math.cos( angle ) * radius,
+									y: burst.pose.y + height,
+									z: burst.pose.z + Math.sin( angle ) * radius,
+									yaw: radians( -angle )
+								}
+							} );
+						}
+						continue;
+					}
+					if ( !ready( "/assets/effects/crow-wind-burst" ) ) continue;
+					for ( let band = 0; band < 3; band++ ) {
+						const u = (age - band * .1) / .9;
+						if ( u < 0 || u >= 1 ) continue;
+						result.push( {
+							gid: burst.gids[band]!,
+							model: "/assets/effects/crow-wind-burst",
+							clip: "effect",
+							time: age,
+							loop: false,
+							scale: 8 + 72 * u,
+							absoluteEffectScale: true,
+							effectEntity: true,
+							pickable: false,
+							opacity: .24 * Math.sin( Math.PI * u ),
+							materialTint: [ .8, .9, .86 ],
+							pose: {
+								...burst.pose,
+								y: burst.pose.y + 1 + band * 2,
+								yaw: radians( age * 5 + band * 2 )
+							}
+						} );
+					}
+				}
+				const penguin = gameplay?.petTraining?.skills.some( skill => skill.id >= 31 && skill.id <= 45 ) ?
+					gameplay.petTraining.gid :
+					0;
+				for (
+					const actor of penguinBolts.step(
+						gameplay?.casts ?? [],
+						penguin,
+						byGid,
+						presentation,
+						now,
+						gameplay?.petTraining?.skills.find( skill => skill.queued )?.id ?? 0
+					)
+				) {
+					if ( ready( actor.model ) ) result.push( actor );
+				}
 				// Port-only: quiet Resolve ring follows the bear; never changes its action.
 				for ( const entity of byGid.values() ) {
 					const resolve = entity.petResolve;
@@ -2820,6 +3002,9 @@ export function createCharacterEffects(
 										position: point( { ...hawk.state.position, regionId: hawk.region } )
 									};
 									hawk.region = region;
+									// The hawk steers by its mechanical holder: game
+									// logic, so it keeps the movement owner's logical
+									// pose; only its visual rides the drawn holder.
 									const mechanical = holder.gid === gameplay?.localGid && gameplay.pose ?
 										gameplay.pose :
 										holder;
@@ -2882,7 +3067,7 @@ export function createCharacterEffects(
 					budgetGaveWay += trimToEffectBudget(
 						result,
 						EFFECT_ACTOR_BUDGET - active.size,
-						gameplay?.pose ?? undefined
+						localPose
 					);
 				}
 				for ( const [gid, original] of active ) {
@@ -3265,8 +3450,8 @@ export function createCharacterEffects(
 					}
 					let pose = flightPose ?? visual.actor.pose;
 					if ( visual.attachment.kind === "entity" && entity ) {
-						const anchor = entity.gid === gameplay?.localGid && gameplay.pose ?
-							gameplay.pose :
+						const anchor = entity.gid === gameplay?.localGid && localPose ?
+							localPose :
 							{ regionId: entity.regionId, x: entity.x, y: entity.y, z: entity.z, angle: entity.heading };
 						const offset = nativeRootOffset(
 							characterHeadingYaw( anchor.angle ),
@@ -3606,7 +3791,8 @@ export function createCharacterEffects(
 				for ( const entity of entities ) {
 					const action = entity.emote?.action ?? 0;
 					if (
-						!(entity.kind === "cos" && action >= 1 && action <= 6) && !(action >= 0xf0 && action <= 0xf4)
+						!(entity.kind === "cos" && action >= 1 && action <= 6) && !(action >= 0xf0 && action <= 0xf4) &&
+						!(action >= 0xd0 && action <= 0xd6)
 					) {
 						continue;
 					}
@@ -3630,20 +3816,29 @@ export function createCharacterEffects(
 				}
 				for ( const [gid, skill] of [ ...wolfSkills ] ) {
 					const entity = byGid.get( gid );
-					if ( !entity || entity.emote?.revision !== skill.revision ) {
+					const elapsed = Math.max( 0, now - skill.startedAt );
+					const frost = skill.action >= 0xd0 && skill.action <= 0xd6;
+					// Ground frost outlives its victim; retain the latched pose for its bounded lifetime.
+					if (
+						!frost && (!entity || entity.emote?.revision !== skill.revision) ||
+						!entity && elapsed >= WOLF_EFFECT_SECONDS
+					) {
 						wolfSkills.delete( gid );
 						continue;
 					}
-					const elapsed = Math.max( 0, now - skill.startedAt );
-					const parts = wolfEffectParts( skill.action );
-					const kind = wolfEffectKind( skill.action );
+					const parts = frost ? [] : wolfEffectParts( skill.action );
+					const kind = skill.action >= 0xd0 && skill.action <= 0xd6 ?
+						"victim" :
+						wolfEffectKind( skill.action );
 					// Keep the consumed revision until the entity leaves or a new emote arrives.
 					if ( elapsed >= WOLF_EFFECT_SECONDS ) continue;
 					const live = presentation.get( gid )?.pose ?? skill.pose;
 					// Victims keep where they were struck; a dead monster may already be gone.
 					const pose = kind === "victim" ? skill.pose : live;
-					const owner = entity.ownerGid !== undefined ? presentation.get( entity.ownerGid )?.pose : undefined;
-					const cue = wolfEffectSound( skill.action );
+					const owner = entity?.ownerGid !== undefined ?
+						presentation.get( entity.ownerGid )?.pose :
+						undefined;
+					const cue = PENGUIN_EFFECT_SOUND[skill.action] ?? wolfEffectSound( skill.action );
 					if ( !skill.sounded && cue && elapsed >= cue.at ) {
 						skill.sounded = true;
 						if ( elapsed - cue.at < .25 ) {
@@ -3663,6 +3858,12 @@ export function createCharacterEffects(
 								periodMs: 20
 							} );
 						}
+					}
+					if ( frost ) {
+						for ( const actor of penguinEffectActors( skill.action, elapsed, pose, skill.gids ) ) {
+							if ( ready( actor.model ) ) result.push( actor );
+						}
+						continue;
 					}
 					// A short blood-red flare at the strike, a slower one for the howl.
 					const glow = kind === "howl" ?
@@ -3997,6 +4198,7 @@ export function createCharacterEffects(
 		*/
 		reset() {
 			external.clear();
+			crowEffects.length = 0;
 			externalSerial = 0;
 			hitLights.reset();
 			activations.length = 0;
@@ -4009,6 +4211,7 @@ export function createCharacterEffects(
 			hwan.clear();
 			roars.clear();
 			wolfSkills.clear();
+			penguinBolts.reset();
 			roarAppearances.clear();
 			shields.clear();
 			spiritRings.clear();
@@ -4043,6 +4246,7 @@ export function createCharacterEffects(
 		*/
 		dispose() {
 			external.clear();
+			crowEffects.length = 0;
 			hitLights.reset();
 			activations.length = 0;
 			hawkImpacts.length = 0;
@@ -4055,6 +4259,7 @@ export function createCharacterEffects(
 			roars.clear();
 			wolfSkills.clear();
 			roarAppearances.clear();
+			penguinBolts.reset();
 			shields.clear();
 			statuses.clear();
 			cameraEvents.length = 0;

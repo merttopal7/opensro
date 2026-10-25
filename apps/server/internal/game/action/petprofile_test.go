@@ -29,12 +29,10 @@ func TestManualPetStatusAbilitiesAndSharedCooldown(t *testing.T) {
 	}{
 		{"bite", "COS_P_WOLF_040", 4, abnormal.Bleeding},
 		{"nova", "COS_P_PENGUIN_040", 31, abnormal.Frostbite},
-		{"freeze", "COS_P_PENGUIN_040", 34, abnormal.Freeze},
-		{"mark", "COS_P_RAVEN_040", 49, abnormal.Decay},
+		{"storm-II", "COS_P_PENGUIN_040", 35, abnormal.Frostbite},
 		{"bite-III", "COS_P_WOLF_040", 6, abnormal.Bleeding},
 		{"nova-III", "COS_P_PENGUIN_040", 33, abnormal.Frostbite},
-		{"freeze-III", "COS_P_PENGUIN_040", 36, abnormal.Freeze},
-		{"mark-III", "COS_P_RAVEN_040", 51, abnormal.Decay},
+		{"storm-III", "COS_P_PENGUIN_040", 36, abnormal.Frostbite},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			rt, clock, c, mob := newPetCombatRuntime(t, 100000, attackPetBand)
@@ -43,7 +41,7 @@ func TestManualPetStatusAbilitiesAndSharedCooldown(t *testing.T) {
 				level = 90
 			}
 			makeTrainedPet(rt, c, tc.code, level)
-			if tc.code == "COS_P_WOLF_040" {
+			if tc.code == "COS_P_WOLF_040" || tc.code == "COS_P_PENGUIN_040" {
 				mob = roarField(t, rt, c, clock)
 			}
 			rt.AttackPetExpansion = true
@@ -66,13 +64,14 @@ func TestManualPetStatusAbilitiesAndSharedCooldown(t *testing.T) {
 
 /*
 ================
-TestManualCrowMendHealsWithoutEnemy
+TestManualCrowPlumeHealsWithoutEnemy
 ================
 */
-func TestManualCrowMendHealsWithoutEnemy(t *testing.T) {
+func TestManualCrowPlumeHealsWithoutEnemy(t *testing.T) {
 	rt, clock, c, _ := newPetCombatRuntime(t, 100000, attackPetBand)
 	makeTrainedPet(rt, c, "COS_P_RAVEN_040", 40)
 	rt.AttackPetExpansion = true
+	roarField(t, rt, c, clock)
 	companion.UpgradeTree(c.ActiveCOS)
 	if msg := companion.Learn(c.ActiveCOS, 46); msg != "" {
 		t.Fatal(msg)
@@ -92,12 +91,14 @@ TestPetProfileAndGearScaleActualSkillDamage
 ================
 */
 func TestPetProfileAndGearScaleActualSkillDamage(t *testing.T) {
-	rt, clock, c, mob := newPetCombatRuntime(t, 100000, attackPetBand)
+	rt, clock, c, _ := newPetCombatRuntime(t, 100000, attackPetBand)
 	makeTrainedPet(rt, c, "COS_P_PENGUIN_040", 40)
 	rt.AttackPetExpansion = true
-	ref, _ := rt.cosReference(c.ActiveCOS)
-	state := rt.petSessionFor(testDivision, c.Name, c.ActiveCOS.GID)
-	step := petCombatStep{pet: c.ActiveCOS, snapshot: c, state: state, ref: ref, nowMs: clock.NowMs()}
+	mob := roarField(t, rt, c, clock)
+	step, ok := rt.penguinCompanion(testDivision, c, clock.NowMs())
+	if !ok {
+		t.Fatal("field penguin not ready")
+	}
 	skill := enterworld.SkillRow{Attack: enterworld.SkillAttack{Flags: 4, Min: 100, Max: 200, Percent: 100}}
 	target := petCombatTarget{monster: &mob}
 	native, _ := rt.petTrainedDecide(step, skill, target)
@@ -105,10 +106,12 @@ func TestPetProfileAndGearScaleActualSkillDamage(t *testing.T) {
 		t.Fatalf("magic role: %+v", native.Attack)
 	}
 	companion.UpgradeTree(c.ActiveCOS)
-	if msg := companion.Learn(c.ActiveCOS, 37); msg != "" {
+	if msg := companion.Learn(c.ActiveCOS, 40); msg != "" {
 		t.Fatal(msg)
 	}
+	c.ActiveCOS.ArcaneMagicPercent = 10
 	c.ActiveCOS.Training.Gear[0] = domain.PetGear{RefObjID: companion.D.Gear[0].Items[0].ID}
+	step, _ = rt.penguinCompanion(testDivision, c, clock.NowMs())
 	boosted, _ := rt.petTrainedDecide(step, skill, target)
 	if boosted.Attack.Min <= native.Attack.Min {
 		t.Fatal("mastery and gear did not improve actual magical skill damage")

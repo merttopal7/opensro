@@ -154,7 +154,10 @@ func (rt *Runtime) planAreaVictims(in areaPlanInput) (areaStrikePlan, bool) {
 				plan.formulas = append(plan.formulas, formula)
 				continue
 			}
-			formula, err := rt.resolvePlayerImpact(in.division, in.snapshot.Name, in.skill, in.attacker, defender, in.now, in.chained && index > 0)
+			attacker := in.attacker
+			_, precision := rt.crowPlayerBonuses(in.division, in.snapshot, target.Gid, in.skill, in.now)
+			attacker.HitRate *= 1 + precision/100
+			formula, err := rt.resolvePlayerImpact(in.division, in.snapshot.Name, in.skill, attacker, defender, in.now, in.chained && index > 0)
 			if err != nil {
 				return areaStrikePlan{}, false
 			}
@@ -163,6 +166,14 @@ func (rt *Runtime) planAreaVictims(in areaPlanInput) (areaStrikePlan, bool) {
 			plan.formulas = append(plan.formulas, formula)
 		}
 		percent = percent * uint64(100-in.reduction) / fullAreaPercent
+		rt.penguinOwnerShatter(in.division, in.snapshot, target, plan.formulas, in.now)
+		rt.crowPlayerDamage(in.division, in.snapshot, target, in.skill, plan.formulas, in.now)
+		total = 0
+		for _, f := range plan.formulas {
+			if !f.Blocked {
+				total += uint64(f.Damage)
+			}
+		}
 		if in.poseAll || total >= uint64(target.CurrentHP) || index == 0 && in.posePrimary {
 			mover, found := rt.Monsters.Mover(in.division, target.Gid)
 			if !found {
@@ -692,6 +703,22 @@ func (rt *Runtime) acceptSkillAreaAt(division string, character, snapshot *enter
 	public = append(public, battleFrames...)
 	out := OpResult{Frames: actor, Broadcast: public, ActorPrivate: private,
 		Recipients: append(commit.settlements.others, published.recipients...)}
+	for _, victim := range plan.victims {
+		if victim.sequence < 0 {
+			continue
+		}
+		damaged := false
+		for _, impact := range commit.committed[victim.sequence] {
+			damaged = damaged || impact.Damage > 0
+		}
+		if !damaged {
+			continue
+		}
+		frames := rt.tailwindDamage(division, character, victim.target.gid, nowMs)
+		out.Frames = append(out.Frames, frames...)
+		out.Broadcast = append(out.Broadcast, frames...)
+		break
+	}
 	if rootID == 0 {
 		var targets []uint32
 		for _, victim := range plan.victims {
@@ -705,7 +732,17 @@ func (rt *Runtime) acceptSkillAreaAt(division string, character, snapshot *enter
 				}
 			}
 		}
+		var penguinVictims []monster.Instance
+		var penguinHits []combat.Result
+		for _, victim := range plan.victims {
+			if victim.sequence >= 0 {
+				penguinVictims = append(penguinVictims, *victim.target.monster)
+				penguinHits = append(penguinHits, victim.formulas...)
+			}
+		}
+		rt.penguinOwnerHit(division, character, skill, penguinVictims, penguinHits, nowMs)
 		rt.wolfExecuteAttack(division, character, 0, 1, targets, nowMs)
+		rt.crowPlayerAttack(division, character, skill, targets, nowMs)
 	}
 	return mergeOpResults(out, published.returned), skillCastAccepted
 }

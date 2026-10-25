@@ -41,17 +41,18 @@ Counters are observed server state, never inferred from animation or elapsed tim
 */
 export function petSkillStack( state: PetTraining, design: PetSkillDesign, skill: PetTrainingSkill ): number | null {
 	if ( !skill.live || skill.level === 0 || !skill.action && !skill.slotted ) return null;
-	if ( design.family === "Mark Prey" ) return state.rows[design.row]?.left ?? 0;
+	if ( design.family === "Stormbrood" ) return state.rows[design.row]?.left ?? 0;
+	if ( design.family === "Tailwind" ) return state.tailwind?.stacks ?? 0;
 	const c = state.counters;
 	if ( !c ) return null;
 	if ( design.family === "Unbroken Spirit" ) return c.resolve;
+	if ( design.family === "Arcane Resonance" ) return c.penguinResonance ?? null;
+	if ( design.family === "Frozen Hourglass" ) return c.hourglass ?? null;
 	if ( design.family === "Bloodscent" ) return c.wolfBlood ?? null;
 	if ( design.family === "Blood Hunt" ) return c.hunt ?? null;
 	if ( design.family === "Execute" && design.option === 3 ) return c.wolfExecute ?? null;
 	if ( design.family === "Crushing Paw" ) return c.bearHits;
-	if ( design.family === "Murder of Crows" ) {
-		return c.attacks % (design.option > 1 || skill.effectiveLevel >= PET_DESIGN.rules.rank2Level ? 8 : 10);
-	}
+	if ( design.family === "Guiding Feathers" ) return state.guidance?.stacks ?? 0;
 	return null;
 }
 
@@ -95,7 +96,15 @@ export function petOwnerStacks( state: PetTraining | undefined ) {
 		const design = PET_DESIGN.treeSkills.find( d => d.id === skill.id );
 		if ( !design || !skill.live || !skill.slotted || skill.level === 0 || design.option < 2 ) return [];
 		let count: number | undefined, maximum: number, readyText: string;
-		if ( design.family === "Bloodscent" ) {
+		if ( design.family === "Arcane Resonance" ) {
+			count = counters.ownerResonance;
+			maximum = 5;
+			readyText = "Maximum magical attack stacks";
+		} else if ( design.family === "Frozen Hourglass" ) {
+			count = counters.hourglass;
+			maximum = 5;
+			readyText = "Next penguin active recovers 2 seconds of cooldown";
+		} else if ( design.family === "Bloodscent" ) {
 			count = counters.ownerBlood;
 			maximum = design.option === 3 ? 10 : 8;
 			readyText = "Maximum damage stacks";
@@ -113,15 +122,19 @@ export function petOwnerStacks( state: PetTraining | undefined ) {
 			readyText = "Next qualifying hit releases the stun";
 		} else return [];
 		if ( count === undefined ) return [];
-		const ready = count >= maximum - ([ "Bloodscent", "Blood Hunt" ].includes( design.family ) ? 0 : 1);
+		const ready = count >=
+			maximum -
+				([ "Bloodscent", "Blood Hunt", "Arcane Resonance", "Frozen Hourglass" ].includes( design.family ) ?
+					0 :
+					1);
 		const status = ready ? readyText : "Building stacks";
 		return [ {
 			design,
 			count,
 			maximum,
 			ready,
-			label: `Owner ${design.name}: ${count}/${maximum} — ${status}`,
-			helpText: `Owner · ${design.name}\n${count} / ${maximum}\n${status}\n` +
+			label: `Owner ${design.name}: ${count}/${maximum} â€” ${status}`,
+			helpText: `Owner Â· ${design.name}\n${count} / ${maximum}\n${status}\n` +
 				(design.family === "Blood Hunt" ?
 					"Shared prey mark. Rend the marked enemy; expires after 8 s. Switching prey resets charges." :
 					design.family === "Bloodscent" ?
@@ -150,8 +163,8 @@ export function petRowHelp( state: PetTraining, row: number, now: number ): stri
 				"Recharge: " + (petRowCooldown( state, row, now ) || "Ready")
 			] :
 			[
-				"Click to select a learned book.",
-				"One passive book per row.",
+				"Highest learned book is always active.",
+				"Earlier books are replaced automatically.",
 				chosen ? "Active: " + d?.name : "No passive active"
 			]),
 		"Unlocks at pet 10 / 40 / 90.",
@@ -211,8 +224,9 @@ export function petRowHelp( state: PetTraining, row: number, now: number ): stri
 			);
 		}
 	}
-	if ( d?.family === "Mark Prey" ) lines.push( "Top right: attacks to recharge." );
-	if ( d?.family === "Murder of Crows" ) lines.push( "Top right: attacks toward burst." );
+	if ( d?.family === "Guiding Feathers" ) {
+		lines.push( "Top right: Precision stacks.", "Five stacks: next damaging skill empowered." );
+	}
 	if ( d?.pet === "Bear" ) lines.push( "PvE only; unavailable in town.", "No jobs, PvP or instances." );
 	if ( d?.family === "Challenging Roar" ) {
 		lines.push( "No target required; no damage.", "Unique monsters resist taunt." );

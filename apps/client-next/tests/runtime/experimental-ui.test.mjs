@@ -1,10 +1,11 @@
 /*
 ===========================================================================
 
-experimental-ui.test.mjs - render scale through the production Experimental UI
+experimental-ui.test.mjs - numeric rows through the production Experimental UI
 
-Numeric choices share the existing draft lifecycle. Controls publish their
-selection, Confirm persists it, and every cancellation path discards edits.
+Numeric choices (render scale, UI size) share the existing draft lifecycle.
+Controls publish their selection, Confirm persists it, and every
+cancellation path discards edits.
 
 ===========================================================================
 */
@@ -46,7 +47,17 @@ function fixture( initial = experimentalOptions() ) {
 		latest = f.ui.step( f.state, now += STEP_MS ) ?? latest;
 		return defined( latest );
 	}
-	return { ...f, saved, activate };
+	/*
+	================
+	edit
+	================
+	*/
+	function edit( id, value ) {
+		f.ui.event( { kind: "edit", id, value, start: value.length, end: value.length, composing: false } );
+		latest = f.ui.step( f.state, now += STEP_MS ) ?? latest;
+		return defined( latest );
+	}
+	return { ...f, saved, activate, edit };
 }
 
 /*
@@ -88,6 +99,68 @@ test("Experimental renders all numeric choices and only Confirm persists selecti
 		} finally {
 			restored.dispose();
 		}
+	} finally {
+		f.dispose();
+	}
+});
+
+test("the Safe loading screen checkbox defaults off, cancels and persists on Confirm", () => {
+	const selected = view =>
+		defined( view.controls.find( control => control.id === "experimental-safe-loading-screen" ) )
+			.selected;
+	const f = fixture();
+	try {
+		assert.equal( selected( f.activate( "open-window:Experimental" ) ), false );
+		assert.ok( f.hasText( "Safe loading screen" ) );
+		assert.equal( selected( f.activate( "experimental-safe-loading-screen" ) ), true );
+		assert.equal( f.saved.length, 0 );
+		f.activate( "experimental-cancel" );
+		assert.equal( selected( f.activate( "open-window:Experimental" ) ), false );
+		f.activate( "experimental-safe-loading-screen" );
+		f.activate( "experimental-confirm" );
+		assert.deepEqual( f.saved, [ experimentalOptions( { safeLoadingScreen: true } ) ] );
+		assert.equal( selected( f.activate( "open-window:Experimental" ) ), true );
+		f.activate( "experimental-safe-loading-screen" );
+		f.activate( "experimental-confirm" );
+		assert.equal( f.saved[1].safeLoadingScreen, false );
+	} finally {
+		f.dispose();
+	}
+});
+
+/*
+================
+UI size slider
+================
+*/
+test("the UI size slider drafts until Confirm, and 100 is its native stop", () => {
+	const slider = view => view.controls.find( control => control.id === "experimental-ui-scale" );
+	const f = fixture();
+	try {
+		const opened = slider( f.activate( "open-window:Experimental" ) );
+		assert.ok( opened );
+		assert.equal( opened.kind, "range" );
+		assert.equal( opened.min, 50 );
+		assert.equal( opened.max, 200 );
+		assert.equal( opened.value, "100" );
+		assert.ok( f.hasText( "UI size" ) );
+		// A dragged size is only a draft; off-slider values leave it intact.
+		assert.equal( slider( f.edit( "experimental-ui-scale", "150" ) ).value, "150" );
+		assert.equal( slider( f.edit( "experimental-ui-scale", "137" ) ).value, "135" );
+		assert.equal( slider( f.edit( "experimental-ui-scale", "999" ) ).value, "135" );
+		assert.equal( f.saved.length, 0 );
+		f.activate( "experimental-confirm" );
+		assert.deepEqual( f.saved, [ experimentalOptions( { uiScale: 135 } ) ] );
+		assert.equal( slider( f.activate( "open-window:Experimental" ) ).value, "135" );
+		// Cancel discards a new draft; Default drafts the native 100.
+		f.edit( "experimental-ui-scale", "75" );
+		f.activate( "experimental-cancel" );
+		assert.equal( f.saved.length, 1 );
+		assert.equal( slider( f.activate( "open-window:Experimental" ) ).value, "135" );
+		f.activate( "experimental-default" );
+		assert.equal( f.saved.length, 1 );
+		f.activate( "experimental-confirm" );
+		assert.deepEqual( f.saved[1], experimentalOptions() );
 	} finally {
 		f.dispose();
 	}

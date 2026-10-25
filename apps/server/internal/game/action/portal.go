@@ -385,6 +385,9 @@ func (rt *Runtime) ConfigurePortals(dir string) error {
 	if rt.gatePulleys, err = loadGatePulleys(dir); err != nil {
 		return err
 	}
+	if rt.structureUpgrades, err = loadStructureUpgrades(dir); err != nil {
+		return err
+	}
 	rt.fortressForges = fortressForgeRows()
 	for i := range rt.NpcRoster {
 		for _, row := range fortresses {
@@ -593,6 +596,7 @@ func (rt *Runtime) commitGateTravel(travel gateTravel, admit func() (int64, OpRe
 		})
 		return portalFailure(2)
 	}
+	rt.noteTeleportArrival(division, c)
 	rt.bindResidentRegion(key, rt.Now().UnixMilli())
 	if rt.WalkInZoneAt != nil {
 		rt.walkInZones.Store(key, rt.walkInZoneAt(destination))

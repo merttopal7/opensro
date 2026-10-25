@@ -40,6 +40,8 @@ export function createPetTraining(
 	item: ( refObjId: number, slot: number, magic: readonly string[] ) => InventoryItem | null
 ) {
 	let state: PetTraining | undefined;
+	let tailwind: PetTraining["tailwind"];
+	let guidance: PetTraining["guidance"];
 	const text = new TextDecoder( "utf-8", { fatal: true } );
 	return {
 		/*
@@ -51,15 +53,47 @@ a protocol error, never a partial one.
 ================
 		*/
 		receive( frame: WireFrame, now: number ): boolean {
+			if ( frame.opcode === 0x3fb9 ) {
+				const p = frame.payload;
+				if ( p.length !== 8 ) throw Error( "Invalid Guiding Feathers length" );
+				const v = new DataView( p.buffer, p.byteOffset, p.byteLength );
+				const gid = v.getUint32( 0, true ),
+					book = p[4]!,
+					stacks = p[5]!,
+					hitPercent = v.getUint16( 6, true ) / 10;
+				if (
+					!gid || (book !== 0 && (book < 58 || book > 60)) || stacks > 5 ||
+					(book === 0 && (stacks !== 0 || hitPercent !== 0)) || (stacks === 0 && hitPercent !== 0)
+				) throw Error( "Invalid Guiding Feathers state" );
+				guidance = book ? { gid, book, stacks, hitPercent } : undefined;
+				return true;
+			}
+			if ( frame.opcode === 0x3fb7 ) {
+				const p = frame.payload;
+				if ( p.length !== 8 ) throw Error( "Invalid Tailwind state length" );
+				const v = new DataView( p.buffer, p.byteOffset, p.byteLength );
+				const gid = v.getUint32( 0, true ),
+					book = p[4]!,
+					stacks = p[5]!,
+					speedPercent = v.getUint16( 6, true ) / 10;
+				if (
+					!gid || (book !== 0 && (book < 55 || book > 57)) || stacks > 10 ||
+					(book === 0 && (stacks !== 0 || speedPercent !== 0)) || (stacks === 0 && speedPercent !== 0)
+				) throw Error( "Invalid Tailwind state" );
+				tailwind = book ? { gid, book, stacks, speedPercent } : undefined;
+				return true;
+			}
 			if ( frame.opcode === OP_PET_SKILL_COUNTERS ) {
 				const p = frame.payload;
 				if (
-					(p.length !== 8 && p.length !== 10 && p.length !== 12 && p.length !== 17) || p[4]! >= 40 ||
+					(p.length !== 8 && p.length !== 10 && p.length !== 12 && p.length !== 17 && p.length !== 20) ||
+					p[4]! >= 40 ||
 					p[5]! >= 10 ||
 					p[6]! >= 10 || p[7]! > 10 ||
 					(p.length >= 10 && (p[8]! >= 7 || p[9]! >= 7)) ||
 					(p.length >= 12 && (p[10]! > 10 || p[11]! > 10)) ||
-					(p.length === 17 &&
+					(p.length === 20 && (p[17]! > 5 || p[18]! > 5 || p[19]! > 5)) ||
+					(p.length >= 17 &&
 						(p[12]! > 4 ||
 							(p[12] === 0) !==
 								(new DataView( p.buffer, p.byteOffset, p.byteLength ).getUint32( 13, true ) === 0)))
@@ -72,12 +106,15 @@ a protocol error, never a partial one.
 						...state,
 						counters: {
 							attacks: p[4]!,
+							...(p.length === 20 ?
+								{ penguinResonance: p[17]!, ownerResonance: p[18]!, hourglass: p[19]! } :
+								{}),
 							bearHits: p[5]!,
 							ownerHits: p[6]!,
 							resolve: p[7]!,
 							...(p.length >= 10 ? { wolfExecute: p[8]!, ownerExecute: p[9]! } : {}),
 							...(p.length >= 12 ? { wolfBlood: p[10]!, ownerBlood: p[11]! } : {}),
-							...(p.length === 17 ?
+							...(p.length >= 17 ?
 								{
 									hunt: p[12]!,
 									huntTarget: new DataView( p.buffer, p.byteOffset, p.byteLength ).getUint32(
@@ -168,7 +205,9 @@ a protocol error, never a partial one.
 			};
 			return true;
 		},
-		state: () => state,
+		state: () => state && (tailwind || guidance) ? { ...state, tailwind, guidance } : state,
+		guidance: () => guidance,
+		tailwind: () => tailwind,
 		/*
 ================
 clear
@@ -176,6 +215,8 @@ clear
 		*/
 		clear() {
 			state = undefined;
+			tailwind = undefined;
+			guidance = undefined;
 		}
 	};
 }

@@ -162,9 +162,7 @@ func newGameplayPlane(
 	if err := items.ConfigureStallNetwork(devPaths.TextdataDir); err != nil {
 		return nil, err
 	}
-	if err := items.ConfigureNameFilter(devPaths.TextdataDir); err != nil {
-		return nil, err
-	}
+	items.NameFilter = textdata.NameFilter
 	// SRO_SHOP_EXTRA_GOODS (port-only, not native): operator NPC shop goods;
 	// "off" is the v1.150 stock (commerce/extragoods.go).
 	extraGoods, err := commerce.ExtraGoodsFromEnv()
@@ -190,8 +188,10 @@ func newGameplayPlane(
 	if items.ElixirDrops.Off() {
 		log.Infof("loot: elixir drops OFF (%s): the shop sells them", progression.EnvElixirDropsOff)
 	}
-	// SRO_ALCHEMY_MATERIAL_DROPS_OFF (port-only, not native): alchemy
-	// materials leave every monster drop. Nothing needs them on the beta.
+	// SRO_ALCHEMY_MATERIAL_DROPS_OFF (port-only, not native): with the
+	// switch on, alchemy materials leave every monster drop. The deployed
+	// default is off (community vote, 2026-10-24): the stone chain uses
+	// them again.
 	items.MaterialDrops = progression.MaterialDropsFromEnv()
 	if items.MaterialDrops.Off() {
 		log.Infof("loot: alchemy material drops OFF (%s)", progression.EnvAlchemyMaterialDropsOff)
@@ -265,6 +265,7 @@ func newGameplayPlane(
 		return nil, err
 	}
 	water.SetClosedObjectRescue(movement.ClosedObjectRescueFromEnv())
+	water.SetDeepWaterRefusal(movement.DeepWaterRefusalFromEnv())
 	// Native dungeon interest is the 3x3 message-block neighbourhood of each
 	// dungeon's DOF grid (worldgeom dungeon_grid.go). Installed before the
 	// first session so every interest query sees the same table.
@@ -374,7 +375,7 @@ func newGameplayPlane(
 	items.RewardParties = func(division string) []action.RewardParty {
 		var out []action.RewardParty
 		for _, p := range parties.Registry().RewardSnapshots(division) {
-			row := action.RewardParty{Order: p.ObjectOrder, Options: p.OptionBits}
+			row := action.RewardParty{Order: p.ObjectOrder, Options: p.OptionBits, LeaderID: p.LeaderID}
 			for _, m := range p.Members {
 				row.Members = append(row.Members, m.MemberID)
 			}
@@ -382,18 +383,7 @@ func newGameplayPlane(
 		}
 		return out
 	}
-	items.CanPickupOwnedDrop = func(divisionID, characterName string, ownerJID uint32) bool {
-		snapshot, ok := parties.Registry().PartyOf(divisionID, characterName)
-		if !ok || snapshot.OptionBits&party.PartyOptionItemShare == 0 {
-			return false
-		}
-		for _, member := range snapshot.Members {
-			if member.MemberID == ownerJID {
-				return true
-			}
-		}
-		return false
-	}
+	items.CanPickupOwnedDrop = parties.Registry().CanPickupOwnedDrop
 	guildInvites := guild.NewInviteRuntime(deps, presence)
 	guildInvites.Unions = unions
 	mentorInvites := mentor.NewInviteRuntime(deps, presence)
@@ -411,6 +401,7 @@ func newGameplayPlane(
 		return 1
 	}
 	matches.PartyListingAuthority = parties.ListingAuthority
+	matches.PartyListingOwnerFor = parties.MatchListingOwner
 	matches.PartyJoinPrecheck = parties.MatchJoinPrecheck
 	matches.CommitPartyJoin = parties.AdmitMatchJoin
 	matches.PartyMemberInfoFor = parties.MaskedMemberInfoFor
@@ -480,7 +471,7 @@ func appendGroundObjectRows(deps *enterworld.Deps, items *action.Runtime) {
 		if npcRows != nil {
 			rows = npcRows(divisionID, character, entry)
 		}
-		rows = append(rows, enterworld.GroundObjectListRows(items.CharacterGroundItems(divisionID, character))...)
+		rows = append(rows, items.GroundObjectRows(divisionID, character, entry)...)
 		return append(rows, items.SkillObjectRows(divisionID, character, entry)...)
 	}
 }
@@ -502,11 +493,13 @@ func connectInvitationLanes(
 ) {
 	resurrections := items.ResurrectionConsent()
 	exchanges := items.ExchangeConsent()
+	instanceInvites := items.InstanceInviteConsent()
 	parties.AddConsentArm(exchanges)
 	parties.AddConsentArm(guildInvites)
 	parties.AddConsentArm(unions)
 	parties.AddConsentArm(mentorInvites)
 	parties.AddConsentArm(resurrections)
+	parties.AddConsentArm(instanceInvites)
 
 	// A player holds one unanswered proposal at a time, whatever its
 	// lane (TransactionMgr_InsertUnique 46F420): every lane refuses to
@@ -517,29 +510,34 @@ func connectInvitationLanes(
 			unions.HasPendingInvite(divisionID, name) ||
 			mentorInvites.HasPendingInvite(divisionID, name) ||
 			resurrections.HasPendingInvite(divisionID, name) ||
-			exchanges.HasPendingInvite(divisionID, name)
+			exchanges.HasPendingInvite(divisionID, name) ||
+			instanceInvites.HasPendingInvite(divisionID, name)
 	}
 	unions.PeerPending = func(divisionID, name string) bool {
 		return partyPending(divisionID, name) ||
 			guildInvites.HasPendingInvite(divisionID, name) ||
 			mentorInvites.HasPendingInvite(divisionID, name) ||
 			resurrections.HasPendingInvite(divisionID, name) ||
-			exchanges.HasPendingInvite(divisionID, name)
+			exchanges.HasPendingInvite(divisionID, name) ||
+			instanceInvites.HasPendingInvite(divisionID, name)
 	}
 	mentorInvites.PeerPending = func(divisionID, name string) bool {
 		return partyPending(divisionID, name) ||
 			guildInvites.HasPendingInvite(divisionID, name) ||
 			unions.HasPendingInvite(divisionID, name) ||
 			resurrections.HasPendingInvite(divisionID, name) ||
-			exchanges.HasPendingInvite(divisionID, name)
+			exchanges.HasPendingInvite(divisionID, name) ||
+			instanceInvites.HasPendingInvite(divisionID, name)
 	}
 	items.ProposalPending = func(divisionID, name string) bool {
 		return partyPending(divisionID, name) ||
 			guildInvites.HasPendingInvite(divisionID, name) ||
 			unions.HasPendingInvite(divisionID, name) ||
 			mentorInvites.HasPendingInvite(divisionID, name) ||
-			exchanges.HasPendingInvite(divisionID, name)
+			exchanges.HasPendingInvite(divisionID, name) ||
+			instanceInvites.HasPendingInvite(divisionID, name)
 	}
+	parties.PartyChanged = items.NotePartyChanged
 }
 
 /*
@@ -602,6 +600,11 @@ func (game *gameplayPlane) register(hub *transport.Hub, loadQuests questDefiniti
 	if game.items.MostWantedBountyTransfer {
 		log.Infof("job: most wanted bounties paid from the victim's gold (%s)", action.EnvMostWantedBountyTransfer)
 	}
+	// Port-only, not native: the killer hears its progress per counted kill.
+	game.items.MostWantedStreakNotice = action.MostWantedStreakNoticeFromEnv()
+	if game.items.MostWantedStreakNotice {
+		log.Infof("job: most wanted progress notice per counted kill ON (%s)", action.EnvMostWantedStreakNotice)
+	}
 	// Port-only, not native: a trader's goods stay in the world when the
 	// trader dies riding or disconnects in the field.
 	game.items.TraderCargoDrop = action.TraderCargoDropFromEnv()
@@ -610,6 +613,12 @@ func (game *gameplayPlane) register(hub *transport.Hub, loadQuests questDefiniti
 	}
 	// Port-only, not native: caravans rated by cargo gold, Jangan route profit.
 	game.deps.TradeTiers = game.items.TradeTiers
+	// SRO_TELEPORT_GRACE (port-only, not native): teleport arrivals get the
+	// revival's untouchable grace from game-ready.
+	game.items.TeleportGrace = action.TeleportGraceFromEnv()
+	if game.items.TeleportGrace {
+		log.Infof("action: teleport arrivals are untouchable for the revival's grace (%s, port-only, not native)", action.EnvTeleportGrace)
+	}
 	if game.items.TradeTiers {
 		log.Infof("trade: stars by cargo gold and Jangan route profit (%s)", action.EnvTradeTiers)
 	}
@@ -629,6 +638,11 @@ func (game *gameplayPlane) register(hub *transport.Hub, loadQuests questDefiniti
 	game.deps.FastDenReturn = game.items.FastDenReturn
 	if game.items.FastDenReturn {
 		log.Infof("return: Bandit Den scroll countdown halved (%s)", action.EnvFastDenReturn)
+	}
+	// Port-only, not native: a unique's attackers see its damage ranking.
+	game.items.UniqueDamageRank = action.UniqueDamageRankFromEnv()
+	if game.items.UniqueDamageRank {
+		log.Infof("unique: damage ranking shown at each unique kill (%s)", action.EnvUniqueDamageRank)
 	}
 	// Port-only, not native: shard notices for seal drops, high plus and job
 	// kills (announce.go).
@@ -656,6 +670,15 @@ func (game *gameplayPlane) register(hub *transport.Hub, loadQuests questDefiniti
 	if game.items.GMSetSpeed {
 		log.Infof("gm: /SETSPEED ON (%s)", action.EnvGMSetSpeed)
 	}
+	// Capture the Flag (native): the daily start and the house minimum.
+	flagWar, err := action.FlagWarSettingsFromEnv()
+	if err != nil {
+		return err
+	}
+	game.items.FlagWar = flagWar
+	log.Infof("flag war: daily start %02d:%02d UTC, minimum %d players (%s, %s)",
+		flagWar.StartMinuteOfDay/60, flagWar.StartMinuteOfDay%60, flagWar.MinPlayers,
+		action.EnvFlagWarStartUTC, action.EnvFlagWarMinPlayers)
 	// A team death revives in place natively; "off" is the port-only town rule.
 	teamDeathRevive, err := action.TeamDeathReviveFromEnv()
 	if err != nil {
@@ -681,6 +704,10 @@ func (game *gameplayPlane) register(hub *transport.Hub, loadQuests questDefiniti
 	game.items.TransportFollow = action.TransportFollowFromEnv()
 	if game.items.TransportFollow {
 		log.Infof("cos: a dismounted trade transport follows its trader (%s)", action.EnvTransportFollow)
+	}
+	game.items.TransportFollowTether = action.TransportFollowTetherFromEnv()
+	if game.items.TransportFollow && game.items.TransportFollowTether {
+		log.Infof("cos: a following transport keeps its trader within 100 m (%s)", action.EnvTransportFollowTether)
 	}
 	// Port-only, not native: town teleports admit a trader's transport.
 	game.items.JobGoodsTeleport = action.JobGoodsTeleportFromEnv()
@@ -752,6 +779,17 @@ func (game *gameplayPlane) register(hub *transport.Hub, loadQuests questDefiniti
 		return fmt.Errorf("quest runtime: %w", err)
 	}
 	game.quests = quests
+	game.items.InstanceEventSink = func(event action.InstanceEvent) {
+		quests.DispatchInstanceEvent(quest.InstanceEvent{
+			Kind:       quest.InstanceEventKind(event.Kind),
+			Division:   event.Division,
+			Definition: event.Definition,
+			World:      event.World,
+			Name:       event.Name,
+			Gid:        event.Gid,
+			Accepted:   event.Accepted,
+		})
+	}
 	if quests.InstantInventoryExpansion = quest.InstantInventoryExpansionFromEnv(); quests.InstantInventoryExpansion {
 		log.Infof("quest: instant inventory expansion ON (%s, port-only): reward slots are usable at the turn-in", quest.EnvInstantInventoryExpansion)
 	}

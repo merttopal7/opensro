@@ -11,6 +11,8 @@ undefined shop closes it; other fields belong to the newest snapshot.
 
 ===========================================================================
 */
+import type { MoverPublication } from "./mover-publication";
+export type { MovementAim } from "./mover-publication";
 
 /*
 ================
@@ -204,6 +206,8 @@ export type GameplayCommand =
 		readonly notice: import("@/engine/foundation/gameplay/system-notices").SystemNotice;
 	}
 	| { readonly kind: "recall-appoint"; readonly gid: number; }
+	// The flag-war talk row (5D3630 action 0x38): one 0x7753 toggle send.
+	| { readonly kind: "flagwar-register"; }
 	| { readonly kind: "return-cancel"; }
 	| { readonly kind: "gathering-cancel"; }
 	| { readonly kind: "effect-cancel"; readonly skillId: number; readonly token: number; }
@@ -211,6 +215,10 @@ export type GameplayCommand =
 	| { readonly kind: "avatar-move"; readonly equip: boolean; readonly source: number; readonly destination: number; }
 	| import("@/engine/foundation/gameplay/party-matching").PartyMatchCommand
 	| { readonly kind: "gm-command"; readonly line: string; }
+	// The debug console's weather rows: a mode to set (mode 1 releases the
+	// console hold; absent only tunes the live amount) and the amount,
+	// into the worker's console weather slot (event-environment.ts).
+	| { readonly kind: "debug-weather"; readonly mode?: 1 | 2 | 3; readonly amount: number; }
 	| { readonly kind: "gm-catalog-ack"; }
 	| { readonly kind: "whisper-block"; readonly name: string; readonly blocked: boolean; }
 	| { readonly kind: "cos-name"; readonly gid: number; readonly name: string; }
@@ -229,6 +237,9 @@ export type GameplayCommand =
 		readonly settings: import("@/engine/foundation/gameplay/auto-potion").AutoPotionSettings;
 	}
 	| { readonly kind: "rebirth"; readonly choice: 1 | 2; }
+	// An arrow key's press or release (#1574): Up walks the facing, Left and
+	// Right turn it (arrow-keys.ts).
+	| { readonly kind: "arrow-key"; readonly key: "up" | "left" | "right"; readonly down: boolean; }
 	| {
 		readonly kind: "ground-move";
 		readonly query: import("./navigation").GroundPickQuery;
@@ -246,6 +257,16 @@ export type GameplayCommand =
 	| { readonly kind: "fortress-war-status"; readonly gid: number; }
 	| { readonly kind: "fortress-staff"; readonly gid: number; readonly fortress: number; readonly flag?: number; }
 	| { readonly kind: "fortress-schedule"; readonly gid: number; readonly fortress: number; }
+	// The battle aide's fortress map (fortress-map.ts): the structure list
+	// 0x18 that opens it, an upgrade or construction 0x0B and a repair 0x0C.
+	| {
+		readonly kind: "fortress-structure";
+		readonly gid: number;
+		readonly fortress: number;
+		readonly action: number;
+		readonly zone?: number;
+		readonly type?: number;
+	}
 	// 0x71E1 actions 0 (query), 1 (rate) and 2 (collect) from the tax window.
 	| { readonly kind: "fortress-tax"; readonly gid: number; readonly fortress: number; }
 	// The structure target window's delete (517CA0): dismiss 0x16 or demolish 0x17.
@@ -378,6 +399,9 @@ export type GameplayCommand =
 		readonly kind: "move";
 		readonly destination: Pose;
 	}
+	// /GetPos (690C40 case 3): flip the local player's body visual state
+	// (appearanceState[2], the 85EC00 byte) between 0 and 1, locally only.
+	| { readonly kind: "debug-body-visual"; }
 	| {
 		readonly kind: "select";
 		readonly gid: number;
@@ -615,6 +639,18 @@ an empty slot), from the latest server state.
 ================
 */
 export interface PetTraining {
+	readonly guidance?: {
+		readonly gid: number;
+		readonly book: number;
+		readonly stacks: number;
+		readonly hitPercent: number;
+	};
+	readonly tailwind?: {
+		readonly gid: number;
+		readonly book: number;
+		readonly stacks: number;
+		readonly speedPercent: number;
+	};
 	readonly counters?: {
 		readonly attacks: number;
 		readonly wolfExecute?: number;
@@ -623,6 +659,9 @@ export interface PetTraining {
 		readonly ownerBlood?: number;
 		readonly hunt?: number;
 		readonly huntTarget?: number;
+		readonly penguinResonance?: number;
+		readonly ownerResonance?: number;
+		readonly hourglass?: number;
 		readonly bearHits: number;
 		readonly ownerHits: number;
 		readonly resolve: number;
@@ -687,16 +726,22 @@ Worker publications may omit unchanged catalog, social and shop values.
 Presentation owns the derived skillIndex; it never travels back to simulation.
 ================
 */
-export interface GameplayState {
+export interface GameplayState extends MoverPublication {
 	readonly itemMall?: import("./item-mall").MallState;
 	readonly betaPlayers?: readonly BetaMapPlayer[];
+	// Port-only damage ranking of the latest unique kill (unique-rank.ts).
+	readonly uniqueDamageRank?: import("./unique-rank").UniqueDamageRank | null;
 	// Port-only wolf skill tree of the pet window's wolf (pet-training.ts).
 	readonly petTraining?: PetTraining;
+	readonly petTailwind?: PetTraining["tailwind"];
+	readonly petGuidance?: PetTraining["guidance"];
 	/** RefObjIDs the server never spends (the beta starter kit), drawn as unlimited. */
 	readonly unlimitedItems?: readonly number[];
 	readonly returnScroll?: import("@/engine/foundation/gameplay/return-scroll").ReturnScrollCast;
 	readonly huntingPoints?: readonly import("@/engine/foundation/gameplay/hunting").HuntingPoint[];
 	readonly npcConversation?: import("@/engine/foundation/gameplay/npc-dialogue").NpcConversation;
+	// Hiding CIFNpcWindow does not release the selected NPC or its service lock.
+	readonly npcWindow?: { readonly hidden: boolean; readonly revision: number; };
 	readonly restorationRevision?: number;
 	readonly buffSlots?: readonly import("@/engine/foundation/gameplay/buff-slots").BuffSlot[];
 	readonly attachedEffects?: readonly import("@/engine/foundation/gameplay/attached-effects").AttachedEffect[];
@@ -770,6 +815,10 @@ export interface GameplayState {
 	readonly stall?: import("@/engine/foundation/gameplay/stall").StallState;
 	readonly magicOption?: import("./item-process").MagicOptionGrantState;
 	readonly targetCapabilities?: number;
+	// The selected NPC's flag-war row mode (1 sign-up, 2 cancel).
+	readonly targetFlagWarMode?: number;
+	// The flag-war timer and carrier, owned by the gameplay worker.
+	readonly flagWar?: { readonly timerEndsAt: number; readonly carrierGid: number; };
 	readonly targetTaxRate?: number;
 	readonly shopCompletionRevision?: number;
 	readonly shop?: import("@/engine/foundation/gameplay/commerce").ShopState;
@@ -825,6 +874,10 @@ export interface GameplayState {
 	readonly navigationRequestId?: number;
 	readonly navigationFailure?: { readonly region: number; readonly requestId?: number; readonly error: string; };
 	readonly navigationRegion?: number;
+	// The local mover's navigation owner (a deck or dungeon cell), as the
+	// worker's movement owner holds it; the main-thread mover (#1440) starts
+	// its walk from it.
+	readonly navigationOwner?: import("@/engine/foundation/navigation/dungeon-ownership").NavOwner;
 	readonly navigationBlock?: number;
 	readonly activeCos?: {
 		readonly gid: number;

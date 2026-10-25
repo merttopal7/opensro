@@ -210,7 +210,8 @@ effects, then the streak's (port-only).
 func (rt *Runtime) statModifierWrites(division string, c *enterworld.Character) []paramkeeper.Write {
 	writes := append(rt.effects.ModifierWrites(division, c.Name), rt.mostWantedWrites(c)...)
 	writes = append(writes, rt.wolfHowlWrites(division, c)...)
-	return append(writes, rt.wolfBloodWrites(division, c)...)
+	writes = append(writes, rt.wolfBloodWrites(division, c)...)
+	return append(writes, rt.penguinMagicWrites(division, c)...)
 }
 
 /*
@@ -352,6 +353,7 @@ func (rt *Runtime) mostWantedKillInDoor(division string, killer, victim *enterwo
 	killer.MostWanted.Streak += rt.mostWantedStreakStep()
 	log.WithFields(log.Fields{"division": division, "killer": killer.Name, "victim": victim.Name,
 		"streak": killer.MostWanted.Streak}).Info("most wanted: kill counted")
+	actor = append(actor, rt.mostWantedStreakNotice(killer)...)
 	if level := mostWantedLevel(killer); level != before {
 		stats, speed := rt.mostWantedRefresh(division, killer, now)
 		actor, public = append(actor, stats...), speed

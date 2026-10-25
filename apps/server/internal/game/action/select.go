@@ -268,6 +268,12 @@ func (rt *Runtime) HandleObjectSelect(divisionID string, character *enterworld.C
 		return refusedSelect(err.Error())
 	}
 
+	// Capture the Flag arena objects (flagwar_arena.go) live outside
+	// every roster; the match owner answers their selects itself.
+	if outcome, handled := rt.flagWarSelect(divisionID, character, gid); handled {
+		return outcome
+	}
+
 	// Capture the pointer list before entering the read door. The source
 	// returns an owned slice; peer fields are inspected only while the door
 	// is held, without recursively acquiring the store read lock.
@@ -326,12 +332,15 @@ func (rt *Runtime) HandleObjectSelect(divisionID string, character *enterworld.C
 		flags = target.npc.TalkFlags | rt.reverseReturnCapability(*target.npc, character)
 	}
 	if target.npc != nil {
-		// npcExtra 0: no forced action-0x38 menu row. Every live authored NPC
-		// receives a typed result, including a legitimate zero-capability row;
-		// silence used to leave the client's previous NPC binding alive.
+		// npcExtra is the native event byte (the reference server's event writer): only the Capture
+		// the Flag registration NPC carries it, and only while sign-up is
+		// open - 1 invites registration, 2 offers its cancel (flagwar.go).
+		// Every live authored NPC receives a typed result, including a
+		// legitimate zero-capability row; silence used to leave the
+		// client's previous NPC binding alive.
 		outcome.Frames = []wire.Frame{{
 			Opcode:  wire.OpObjectSelectResult,
-			Payload: wire.EncodeNpcObjectSelectResult(gid, flags, 0),
+			Payload: wire.EncodeNpcObjectSelectResult(gid, flags, rt.flagWarSelectByte(divisionID, character, *target.npc)),
 		}}
 	}
 	if target.npc != nil && target.npc.Teleport != nil {

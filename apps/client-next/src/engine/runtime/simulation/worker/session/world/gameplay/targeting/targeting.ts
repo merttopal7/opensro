@@ -33,7 +33,7 @@ createTargeting
 ================
 */
 export function createTargeting( send: ( frame: WireFrame ) => void ) {
-	let capabilities = 0, taxRate = 0;
+	let capabilities = 0, taxRate = 0, flagWarMode = 0;
 	let localSelection = false;
 	let target = 0, pending: Pending | null = null, error: string | null = null;
 	/*
@@ -63,6 +63,7 @@ select
 			if ( kind === "local-player" ) {
 				target = gid;
 				capabilities = 0;
+				flagWarMode = 0;
 				taxRate = 0;
 				error = null;
 				localSelection = true;
@@ -91,6 +92,7 @@ select
 			} else {
 				target = gid;
 				capabilities = 0;
+				flagWarMode = 0;
 				taxRate = 0;
 			}
 			return frame;
@@ -109,6 +111,7 @@ release
 			target = 0;
 			localSelection = false;
 			capabilities = 0;
+			flagWarMode = 0;
 			taxRate = 0;
 			error = null;
 			return frame;
@@ -118,6 +121,18 @@ release
 step
 ================
 		*/
+		/*
+================
+waitingSince
+
+When the pending select or release left (its deadline less the reply
+window), or undefined: the world session's stall detector reads it with
+the other lanes' (#1472).
+================
+		*/
+		waitingSince(): number | undefined {
+			return pending ? pending.deadline - REPLY_TIMEOUT_MS : undefined;
+		},
 		step( now: number ) {
 			if ( !pending || now < pending.deadline ) return false;
 			// B4B3 has no identity. Reusing this channel after a missing release
@@ -131,6 +146,7 @@ step
 			target = 0;
 			localSelection = false;
 			capabilities = 0;
+			flagWarMode = 0;
 			taxRate = 0;
 			error = "Target selection was not confirmed; select again";
 			return true;
@@ -148,6 +164,7 @@ receive
 				target = 0;
 				localSelection = false;
 				capabilities = 0;
+				flagWarMode = 0;
 				taxRate = 0;
 				pending = null;
 				error = null;
@@ -183,6 +200,9 @@ receive
 				p.length === 11 ?
 				new DataView( p.buffer, p.byteOffset, p.byteLength ).getUint32( 6, true ) :
 				0;
+			// The NPC grant's trailing byte is the flag-war row mode
+			// (the reference server's event byte: 1 offers sign-up, 2 offers cancel, else no row).
+			flagWarMode = !gate && p.length === 11 && p[5] === 0 ? p[10]! : 0;
 			pending = null;
 			error = null;
 			return true;
@@ -197,6 +217,7 @@ remove
 				target = 0;
 				localSelection = false;
 				capabilities = 0;
+				flagWarMode = 0;
 				taxRate = 0;
 			}
 			// Preserve a release barrier until its untagged acknowledgement arrives.
@@ -216,6 +237,7 @@ NPC function opened through it (an open warehouse) stay as they are.
 			target = 0;
 			localSelection = false;
 			capabilities = 0;
+			flagWarMode = 0;
 			taxRate = 0;
 			error = null;
 		},
@@ -228,6 +250,7 @@ clear
 			target = 0;
 			localSelection = false;
 			capabilities = 0;
+			flagWarMode = 0;
 			taxRate = 0;
 			pending = null;
 			error = null;
@@ -251,7 +274,8 @@ target window lags the grant too, yet an immediate press casts.
 			targetTaxRate: taxRate,
 			target,
 			targetPending: pending?.gid ?? 0,
-			...(capabilities ? { targetCapabilities: capabilities } : {})
+			...(capabilities ? { targetCapabilities: capabilities } : {}),
+			...(flagWarMode ? { targetFlagWarMode: flagWarMode } : {})
 		})
 	};
 }

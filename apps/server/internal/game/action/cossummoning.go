@@ -75,13 +75,20 @@ record and 4E8FC0 toggles the existing actor. Family admission is 4FCEF0.
 */
 func (rt *Runtime) usePersistentSummoner(use persistentSummonUse, result *OpResult) bool {
 	c, row := use.character, &use.character.MissionInventory[use.row]
-	if row.StackCount != 1 || rt.PlayerAttackLocked(use.division, c.Name) || rt.objectActionCommitted(use.division, c.Name) {
+	if row.StackCount != 1 {
 		return false
 	}
 	// 493140..49314C: only teleport mode 1 refuses. A free countdown (mode 2,
 	// the Bandit Den scroll) summons, as the transport summoner already does.
 	if c.NativeTeleportMode == teleportModeBlocking {
 		*result = itemUseFailure(cosSummonTeleporting)
+		return false
+	}
+	// The reference server's summon handler tests the seated motion
+	// before the battle state: a player seated in a fight hears the
+	// silent busy answer, not the battle notice below.
+	if rt.playerMotionState(use.division, c, use.nowMs) == simulation.MotionSitting {
+		*result = itemUseFailure(cosSummonBusy)
 		return false
 	}
 	// Native for pets too: CGItemCOSSummoner_Use (493100) tests the battle
@@ -91,6 +98,14 @@ func (rt *Runtime) usePersistentSummoner(use persistentSummonUse, result *OpResu
 	// but the server sends it for attack and pickup pets as well.
 	if inBattleState(c, use.nowMs) {
 		*result = itemUseFailure(cosSummonInBattle)
+		return false
+	}
+	// Only then the busy tests, which answer 5 (silent in the client): the
+	// reference server tests a casting motion, the motion-change lock and a
+	// standing wall after the battle state, so a player casting in a fight
+	// hears the battle notice above, and busy only once the fight is over.
+	if rt.PlayerAttackLocked(use.division, c.Name) || rt.objectActionCommitted(use.division, c.Name) {
+		*result = itemUseFailure(cosSummonBusy)
 		return false
 	}
 	refs, ok := rt.deps.ItemReferences().(enterworld.CharacterRefSource)
@@ -168,6 +183,7 @@ func (rt *Runtime) usePersistentSummoner(use persistentSummonUse, result *OpResu
 	}
 	pet.SummonGeneration++
 	pet.ResolveStacks = 0
+	pet.ArcaneMagicPercent = 0
 	if rt.AttackPetExpansion && ref.TidWord>>11 == attackPetBand {
 		pet.CurrentHP = min(pet.CurrentHP, ref.MaxHP)
 	}

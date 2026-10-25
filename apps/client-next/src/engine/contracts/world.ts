@@ -211,9 +211,9 @@ export type WorldEvent =
 	| { readonly kind: "ui-sound"; readonly handle: UiSoundHandle; readonly at: number; }
 	| { readonly kind: "gameplay"; readonly state: GameplayState; }
 	| { readonly kind: "synchronized"; readonly epoch: number; }
-	| { readonly kind: "reset"; readonly epoch: number; }
+	| { readonly kind: "reset"; readonly epoch: number; readonly resync?: boolean; }
 	| { readonly kind: "item-sound"; readonly cue: ItemSoundRequest; readonly at: number; }
-	| { readonly kind: "spawn"; readonly entity: EntityState; }
+	| { readonly kind: "spawn"; readonly entity: EntityState; readonly resync?: boolean; }
 	| { readonly kind: "state"; readonly entity: EntityState; }
 	| { readonly kind: "despawn"; readonly gid: number; }
 	| { readonly kind: "native"; readonly opcode: number; readonly payload: Uint8Array; }
@@ -229,4 +229,9 @@ Sequence establishes publication order independently of renderer frames.
 export interface WorldBatch {
 	readonly sequence: number;
 	readonly events: readonly WorldEvent[];
+	// Simulation milliseconds between the oldest queued event and this
+	// publication. A live batch spans one publication interval; a long span
+	// means the main thread could not consume (hidden or stalled tab), so
+	// the batch's one-shot presentation is older than its natural lifetime.
+	readonly spanMs?: number;
 }

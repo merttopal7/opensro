@@ -57,6 +57,9 @@ type Runtime struct {
 	berserkActors    sync.Map // derived expiry index; character store owns state
 	battleActors     sync.Map // battle-state expiry index (battlestate.go)
 	aggressionActors sync.Map // scheduled counters; character owns aggression entries
+	// instanceWorlds tracks the instanced layers opened on demand
+	// (instance_world.go): the owning lease and deadline per layer.
+	instanceWorlds sync.Map // instanceWorldKey -> trackedInstanceWorld
 	// jobWeeks holds, per division, the last week JobWeekTick handed to the
 	// store (jobrank.go).
 	jobWeeks sync.Map
@@ -64,6 +67,16 @@ type Runtime struct {
 	gmSpeeds sync.Map
 	// GMSetSpeed admits /SETSPEED (port-only, SRO_GM_SETSPEED; off is native).
 	GMSetSpeed bool
+	// FlagWar is the Capture the Flag schedule (native; flagwar.go):
+	// SRO_FLAGWAR_START_UTC and SRO_FLAGWAR_MIN_PLAYERS, wired from env.
+	FlagWar FlagWarSettings
+	// FlagWarMatchStart is the Capture the Flag match owner's entry
+	// point, installed by NewRuntime (flagwar_match.go).
+	FlagWarMatchStart func(registrants []FlagWarRegistrant) []simulation.DivisionFrames
+	flagWar           flagWarEvent
+	// flagWarLive is the live Capture the Flag match book, keyed by
+	// division (flagwar_match.go).
+	flagWarLive flagWarMatches
 	// TeamDeathTownRule sends a team death to the town rule (port-only,
 	// SRO_TEAM_DEATH_REVIVE off; the zero value is native, teamdeath.go).
 	TeamDeathTownRule bool
@@ -77,6 +90,10 @@ type Runtime struct {
 	// instead of tethering it (port-only, SRO_TRANSPORT_FOLLOW; false is
 	// native, transportfollow.go).
 	TransportFollow bool
+	// TransportFollowTether keeps the 100 m tether on a following
+	// transport (port-only, SRO_TRANSPORT_FOLLOW_TETHER; acts only with
+	// TransportFollow on, transportfollow.go).
+	TransportFollowTether bool
 	// JobGoodsTeleport lets a trader with a transport out use town gates,
 	// return scrolls and the reverse return (port-only,
 	// SRO_JOB_GOODS_TELEPORT; false is native, goodsteleport.go).
@@ -95,6 +112,7 @@ type Runtime struct {
 	PetPolicies         companion.Policies
 	returnGeneration    atomic.Uint64
 	returnCasts         sync.Map // simulation.WorldKey -> pendingReturn; division lock owns changes
+	teleportArrivals    sync.Map // simulation.WorldKey -> struct{}: arrivals awaiting game-ready (teleportprotection.go)
 	playerDisplacements sync.Map // simulation.WorldKey -> playerDisplacement; a struck player's hold
 	jobDresses          sync.Map // simulation.WorldKey -> jobDress (jobdress.go)
 	jobActivations      sync.Map // simulation.WorldKey -> int64 end ms (jobdress.go)
@@ -192,6 +210,9 @@ type Runtime struct {
 	// gatePulleys maps a gate pulley's RefObjID to its gate's event zone
 	// (ConfigurePortals, fortress_gates.go).
 	gatePulleys map[uint32]uint32
+	// structureUpgrades is the siege structure upgrade table by codename
+	// (ConfigurePortals, fortress_upgrade.go).
+	structureUpgrades structureUpgradeTable
 	// Fortresses is the fortress occupation and war-mode authority
 	// (ConfigurePortals installs it from siegefortress.txt).
 	Fortresses *fortress.Authority
@@ -226,6 +247,9 @@ type Runtime struct {
 	FortressStore     enterworld.FortressStore
 	fortressPersistMu sync.Mutex
 	fortressPersist   fortressPersistence
+	// fortressRoster times the structure rosters (fortress_roster.go).
+	fortressRosterMu sync.Mutex
+	fortressRoster   fortressRosterClock
 
 	// GachaCatalog is the strict v1.150 gachaitemset/gachanpcmap authority.
 	// The composition root installs it before Register admits 0x7338/0x7053.
@@ -251,6 +275,7 @@ type Runtime struct {
 	petSessions map[petOwnerKey]*petSession
 	petShields  petShieldStore
 	wolfHowls   wolfHowlStore
+	tailwinds   tailwindStore
 
 	// Admission precedes game-ready/pet binding; teardown follows this owner.
 	characterAdmissions sync.Map // simulation.WorldKey -> populationAdmission
@@ -360,6 +385,11 @@ type Runtime struct {
 	// countdown (denreturn.go; port-only, not native). False is native.
 	DenNoTransportSummon bool
 
+	// UniqueDamageRank shows a unique's damage ranking to everyone who
+	// damaged it (uniquedamagerank.go; port-only, not native). False, the
+	// default, is native.
+	UniqueDamageRank bool
+
 	// Announce selects the port-only shard notices (announce.go); the zero
 	// value is native: none.
 	Announce  Announcements
@@ -388,6 +418,10 @@ type Runtime struct {
 	// MostWantedBountyTransfer pays the bounty from the victim's gold, not
 	// new gold (mostwanted.go; port-only, not native). False mints it.
 	MostWantedBountyTransfer bool
+	// MostWantedStreakNotice tells the killer its progress after every
+	// counted kill (mostwantednotice.go; port-only, not native). False is
+	// the current rule: nothing until a level.
+	MostWantedStreakNotice bool
 
 	// TraderCargoDrop keeps a loaded transport's goods in the world when
 	// its trader dies riding or disconnects in the field
@@ -396,6 +430,9 @@ type Runtime struct {
 	// TradeTiers rates caravans by cargo gold and raises Jangan route profit
 	// (tradetiers.go; port-only, not native). False is native.
 	TradeTiers bool
+	// TeleportGrace makes a teleport arrival untouchable for the revival's
+	// grace (teleportprotection.go; port-only, not native). False is native.
+	TeleportGrace bool
 	// tradeOrigins is each trade good's home town, from the shops.
 	tradeOrigins map[uint32]tradeTown
 
@@ -673,11 +710,22 @@ type Runtime struct {
 	Stalls          *stall.Registry
 	StallCategories map[[4]int64]uint32
 	// NameFilter is the native name filter (AbuseFilter.txt) player-chosen
-	// names pass (namefilter.go); ConfigureNameFilter loads it.
+	// names pass (namefilter.go), shared with character creation at startup.
 	NameFilter *namefilter.Filter
 	// resurrections holds the unanswered resurrection proposals, one per
 	// dead player (resurrection.go).
 	resurrections resurrectionOffers
+	// instanceInvites holds the unanswered instance invitations, one
+	// per invited party member (instance_invite.go).
+	instanceInvites instanceInviteBook
+	// InstanceEventSink receives instanced-world lifecycle events for
+	// the quest handler registry (instance_events.go); the composition
+	// root points it at the quest runtime's dispatch.
+	InstanceEventSink func(InstanceEvent)
+	// instanceEvents queues lifecycle occurrences for delivery at the
+	// next division-lock release: handlers never run under the lock
+	// (instance_events.go).
+	instanceEvents instanceEventQueue
 
 	// nextSweepAtMs rate-limits the TTL sweep to grounditem.SweepInterval:
 	// the simulation tick calls the hook every 100ms, but the peek+sweep only
@@ -731,6 +779,14 @@ func NewRuntime(deps Dependencies, monsters *simulation.MonsterState) *Runtime {
 	if monsters != nil {
 		monsters.SetAbnormalContext(monsterAbnormalContext{rt})
 	}
+
+	// Instance lifecycle occurrences are delivered when a division
+	// lane is released, with no lock held (instance_events.go).
+	rt.operations.onRelease = rt.flushInstanceEvents
+
+	// The Capture the Flag match owner (flagwar_match.go) consumes
+	// the registration queue at the daily start instant.
+	rt.FlagWarMatchStart = rt.startFlagWarMatch
 
 	return rt
 }

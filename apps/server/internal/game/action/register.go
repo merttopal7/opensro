@@ -11,6 +11,8 @@ calling gameplay handlers and publish complete ordered response batches.
 package action
 
 import (
+	"encoding/json"
+
 	log "github.com/sirupsen/logrus"
 	"opensro.online/server/internal/domain"
 	"opensro.online/server/internal/game/enterworld"
@@ -102,6 +104,8 @@ func (rt *Runtime) Register(hub *transport.Hub) {
 	// refusals are silent - the B06D error channel below would be a wrong
 	// conversation for a select.
 	rt.registerObjectSelect(hub)
+	// 0x7753 toggles Capture the Flag registration (flagwar.go).
+	hub.Handle(wire.OpFlagWarRegisterRequest, rt.hubHandler(hub, rt.HandleFlagWarRegister))
 	// 0x74B3 releases only the exact selection recorded by 0x745A and
 	// answers retail's 0xB4B3 mode-1 close sweep.
 	rt.registerTargetRelease(hub)
@@ -143,14 +147,18 @@ Adapts a runtime operation onto the hub: resolve the bound character
 the acting session, and fan the broadcast frames to source observers -
 the origin excluded, it already holds its own burst.
 
-A request that arrives while the session's scene is loading is discarded
-unanswered. Every scene reset (entry, relocation, recall, a return) begins
-loading, and only the client's game-ready (0x3012) ends it; the client
-sends nothing while it loads. Such a request was sent before the client saw
-the reset, so its answer would land in a world that never asked (a mall
-projection after the bootstrap reset the mall: "Unexpected mall
-projection"). A loading PC answers nothing; the client retired the
-request with its bootstrap.
+A request that arrives while the session's scene is loading is never
+executed: its world is being rebuilt, and an answer computed against it
+would land in a world that never asked (a mall projection after the
+bootstrap reset the mall: "Unexpected mall projection"). Every scene
+reset (entry, relocation, recall, a return) begins loading, and only the
+client's game-ready (0x3012) ends it server-side - but the client retires
+its loading screen on its own send, so it can already hold a pending
+answer when the request gets here. The refusal therefore still answers,
+with the opcode's native failure frame (sceneLoadingRefusal), so that
+pending retires the way any refused request retires it; a bootstrap
+later rebuilds the state the refusal left alone. Opcodes with no failure
+conversation hold no pending answer and stay silent.
 ================
 */
 func (rt *Runtime) hubHandler(hub *transport.Hub, op opFunc) transport.HandlerFunc {
@@ -171,7 +179,10 @@ func (rt *Runtime) hubHandler(hub *transport.Hub, op opFunc) transport.HandlerFu
 		// waited on it sees that reset here instead of answering into it.
 		if _, live := s.SceneRevision(); !live {
 			// Info, not debug: a client that sends while loading is a bug to see.
-			log.Infof("action: 0x%04X from %s discarded: the scene is loading", opcode, character.Name)
+			if refusal := sceneLoadingRefusal(opcode); len(refusal) > 0 {
+				sendFrames(s, refusal)
+			}
+			log.Infof("action: 0x%04X from %s refused: the scene is loading", opcode, character.Name)
 			return
 		}
 		result := op(divisionID, character, payload)
@@ -197,6 +208,44 @@ func (rt *Runtime) hubHandler(hub *transport.Hub, op opFunc) transport.HandlerFu
 			}
 		}
 	}
+}
+
+/*
+================
+sceneLoadingRefusal
+
+The native failure answer for a request the loading gate refuses, or nil
+when the opcode has none. The v1.150 client's 0xB06D handler retires its
+item-move pending on any result frame before it parses one, and its
+failure arm reads exactly [2, code]; its 0xB5BD handler likewise reads a
+non-success result byte and one code byte and shows the notice - so the
+generic invalid-request notice ends the client's wait the way every
+other refused request does.
+================
+*/
+func sceneLoadingRefusal(opcode uint16) []wire.Frame {
+	switch opcode {
+	case wire.OpItemMoveRequest:
+		return failureResult(wire.ErrCodeInvalidRequest).Frames
+	case wire.OpItemUseRequest:
+		return itemUseFailure(wire.ErrCodeInvalidRequest).Frames
+	case opNpcRepairRequest:
+		// 0x746F waits on 0xB46F; its failure arm reads [2, notice] and
+		// retires the repair pending (689420 parses either arm first).
+		return repairRefusal(wire.ErrCodeInvalidRequest).Frames
+	case 0x77e7:
+		// A retail buyback waits on its own result lane (0xB7E7); answer
+		// with the same [2, code] refusal the buyback itself raises.
+		return []wire.Frame{{Opcode: 0xB7E7, Payload: []byte{2, wire.ErrCodeInvalidRequest}}}
+	case opMallCatalog:
+		// The browser's catalogue request waits on its projection lane
+		// (extension opcode 15); an error projection retires the request
+		// the way a failed native purchase retires its own pending lane.
+		if payload, err := json.Marshal(mallProjection{Version: 1, Error: "mall is unavailable while entering"}); err == nil {
+			return []wire.Frame{{Opcode: opMallCatalog, Payload: payload}}
+		}
+	}
+	return nil
 }
 
 /*
@@ -237,15 +286,25 @@ func BroadcastObservedFrames(hub *transport.Hub, division string, exceptSession 
 				continue
 			}
 		}
-		run := frames[start:i]
-		batch := make([]transport.Frame, len(run))
-		for j, f := range run {
-			batch[j] = transport.Frame{Opcode: f.Opcode, Payload: f.Payload, Current: f.Current, Scope: transport.ScopeChanges(f.Scope)}
-		}
-		hub.BroadcastObserved(division, exceptSession, currentSource, batch)
+		hub.BroadcastObserved(division, exceptSession, currentSource, transportFrames(frames[start:i]))
 		start = i
 		currentSource = nextSource
 	}
+}
+
+/*
+================
+transportFrames
+
+The game lane's frames as the transport queues them, scope changes included.
+================
+*/
+func transportFrames(frames []wire.Frame) []transport.Frame {
+	batch := make([]transport.Frame, len(frames))
+	for i, f := range frames {
+		batch[i] = transport.Frame{Opcode: f.Opcode, Payload: f.Payload, Current: f.Current, Scope: transport.ScopeChanges(f.Scope)}
+	}
+	return batch
 }
 
 // SendFrames publishes a complete action result, including scene replacement,
@@ -256,10 +315,7 @@ SendFrames
 ================
 */
 func SendFrames(s *transport.Session, frames []wire.Frame) {
-	batch := make([]transport.Frame, len(frames))
-	for i, f := range frames {
-		batch[i] = transport.Frame{Opcode: f.Opcode, Payload: f.Payload, Current: f.Current, Scope: transport.ScopeChanges(f.Scope)}
-	}
+	batch := transportFrames(frames)
 	var err error
 	if len(batch) > 0 && (batch[0].Opcode == enterworld.OpcodeResetClient || batch[0].Opcode == 0x366a) {
 		err = s.SendSceneReset(batch)

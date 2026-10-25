@@ -62,6 +62,10 @@ var unlistedSettings = map[string]string{
 	"SRO_TRADE_JOB_TRADER_PERCENT_CAP":        "shown in the trade job bonus rule",
 	"SRO_TRADE_JOB_HUNTER_PERCENT_PER_TRADER": "shown in the trade job bonus rule",
 	"SRO_TRADE_JOB_HUNTER_PERCENT_CAP":        "shown in the trade job bonus rule",
+	// Deployment plumbing: how the shard's transport is served, not a
+	// rule players meet (their client is offered the same world either
+	// way).
+	"SRO_WEBTRANSPORT_PUBLIC": "operator transport serving switch, not a gameplay rule",
 }
 
 /*
@@ -89,6 +93,7 @@ func publicRules() publicstats.RulesResponse {
 	shopGoods, _ := commerce.ExtraGoodsFromEnv()
 	mallGoods, _ := commerce.MallExtraGoodsFromEnv()
 	rideFactor, rideOn, _ := enterworld.MallRideSpeedFromEnv()
+	flagWar, _ := action.FlagWarSettingsFromEnv()
 	settings := tunables.Current()
 	testKills := settings.Int(tunables.MostWantedTestKills)
 	return publicstats.RulesResponse{
@@ -121,6 +126,10 @@ func publicRules() publicstats.RulesResponse {
 				Native: "Retail experience, skill point and drop rates.",
 				Now:    "Raised beta rates for experience, skill points and drops.",
 				Why:    "A beta lasts weeks, not years; testers need to reach the content."},
+			{Flag: progression.EnvBetaGrowthBands, On: growth.Enabled && growth.Bands.Count > 0,
+				Native: "Every level earns experience and skill points at the retail rate.",
+				Now:    growth.Bands.Describe(),
+				Why:    "Fast early levels, then a steadier climb through the cap-110 levels."},
 			{Flag: progression.EnvBetaDropMix, On: progression.BetaGrowthFromEnv().Enabled && dropMix != nil,
 				Native: "Every kind of item drops at the retail rate.",
 				Now:    "Each item kind has its own beta drop rate; by default equipment keeps the raised rate while potions, pills, scrolls, arrows and alchemy materials drop at the retail rate.",
@@ -180,7 +189,7 @@ func publicRules() publicstats.RulesResponse {
 			{Flag: progression.EnvAlchemyMaterialDropsOff, On: progression.MaterialDropsFromEnv().Off(),
 				Native: "Monsters drop alchemy materials (claws, hides and other monster parts).",
 				Now:    "Alchemy materials no longer drop.",
-				Why:    "On the beta the stones they once made are bought, so the materials only piled up on the ground."},
+				Why:    "A community vote brought the parts back, so they drop as in the original; this only applies if the removal is switched back on."},
 			{Flag: action.EnvBetaSilk, On: silkRate > 0,
 				Native: "Silk is bought for the account.",
 				Now:    "Every full hour in the world earns silk, up to a cap.",
@@ -257,6 +266,10 @@ func publicRules() publicstats.RulesResponse {
 				Native: "A trade transport you step off stays where it stands, and you cannot walk more than 100 m away from it.",
 				Now:    "A trade transport you step off follows you on foot, like a pet.",
 				Why:    "Requested for the beta so a trader or a thief can fight or loot beside the cargo; the original returns with one setting."},
+			{Flag: action.EnvTransportFollowTether, On: action.TransportFollowFromEnv() && action.TransportFollowTetherFromEnv(),
+				Native: "A trade transport you step off stays put; the 100 m limit holds you near where it stands.",
+				Now:    "While your transport follows you, you still cannot walk more than 100 m away from it.",
+				Why:    "So a trader cannot run far ahead of a transport held back by a fight; it applies only while transports follow."},
 			{Flag: action.EnvJobGoodsTeleport, On: action.JobGoodsTeleportFromEnv(),
 				Native: "With a trade transport out you cannot use a town gate, a return scroll or the reverse return (ferries are allowed).",
 				Now:    "You can use town gates, return scrolls and the reverse return with a trade transport out; the transport travels with you.",
@@ -276,6 +289,10 @@ func publicRules() publicstats.RulesResponse {
 				Native: "There is no bounty; a kill moves no gold.",
 				Now:    "A wanted player's bounty comes out of their own gold: the killer takes up to 100,000,000 per wanted level, never more than the wanted player carries. No new gold enters the game.",
 				Why:    "Requested for the beta so a bounty puts the wanted player's own gold at stake; the original returns with one setting."},
+			{Flag: action.EnvMostWantedStreakNotice, On: action.MostWantedFromEnv() && action.MostWantedStreakNoticeFromEnv(),
+				Native: "There is no Most Wanted rule.",
+				Now:    "After every job kill that counts toward Most Wanted, you see your progress to the next wanted level, such as \"Most Wanted: 3/10 to LV 1\". Only you see it.",
+				Why:    "Requested after players could not tell whether their kills counted; the rule without the notice returns with one setting."},
 			{Flag: action.EnvTradeTiers, On: action.TradeTiersFromEnv(),
 				Native: "Every trade good is worth 348 gold, a caravan's stars count its goods against the trader's level, and every route pays its listed price.",
 				Now: "Trade goods are worth 21 times as much (7,308 for a 348 good): buying, selling, stolen goods at the Den and the cargo value all scale, so profit, trader job EXP, hunter shares, the weekly trade pool and the fortress trade tax are 21 times larger too. " +
@@ -284,6 +301,10 @@ func publicRules() publicstats.RulesResponse {
 						settings.Int(tunables.TradeRouteDonwhangPercent), settings.Int(tunables.TradeRouteHotanPercent),
 						settings.Int(tunables.TradeRouteSamarkandPercent), settings.Int(tunables.TradeRouteConstantinoplePercent)),
 				Why: "Requested for the beta so bigger loads and longer roads pay; the original returns with one setting."},
+			{Flag: action.EnvTeleportGrace, On: action.TeleportGraceFromEnv(),
+				Native: "Only a revival makes you briefly untouchable; a scroll, gate or move arrives as attackable as you left.",
+				Now:    "After a return scroll, reverse return scroll, gate or move, you are untouchable for 6 seconds (11 in a fortress war) once loading ends: monsters ignore you and you cannot attack.",
+				Why:    "Requested so a slow load cannot end with monsters already attacking; the original returns with one setting."},
 			{Flag: action.EnvJobSuitHidesArmor, On: action.JobSuitHidesArmorFromEnv(),
 				Native: "Only a thief suit hides the armour worn under it; trader and hunter suits are drawn over it.",
 				Now:    "Trader and hunter suits hide worn armour too.",
@@ -296,10 +317,18 @@ func publicRules() publicstats.RulesResponse {
 				Native: "The Bandit Den Return Scroll counts down 5 minutes before the thief arrives.",
 				Now:    "It counts down 2 minutes 30 seconds.",
 				Why:    "Owner-approved for the beta; the original countdown returns with one setting."},
+			{Flag: action.EnvUniqueDamageRank, On: action.UniqueDamageRankFromEnv(),
+				Native: "When a unique dies, the shard is told only who killed it.",
+				Now:    "Everyone who damaged it also sees the twelve players who did the most damage, with each one's share and party place, and their own place.",
+				Why:    "So every attacker sees what their part was. Off by default; the original notice alone is the native setting."},
 			{Flag: movement.EnvClosedObjectRescue, On: movement.ClosedObjectRescueFromEnv(),
 				Native: "A character that logs in inside a tree trunk or a rock stays there and cannot walk out.",
 				Now:    "Logging in inside one moves the character to the nearest open ground.",
 				Why:    "A player was stuck inside a tree with every move refused; the original returns with one setting."},
+			{Flag: movement.EnvDeepWaterRefusal, On: movement.DeepWaterRefusalFromEnv(),
+				Native: "A character can walk anywhere the ground allows, including along the bottom of deep water.",
+				Now:    "A click on a spot more than 12 units under water is refused.",
+				Why:    "An early port rule kept characters out of deep water; the original returns with one setting."},
 			{Flag: action.EnvDenNoTransportSummon, On: action.DenNoTransportSummonFromEnv(),
 				Native: "A transport can be summoned while the Bandit Den Return Scroll counts down.",
 				Now:    "No transport can be summoned during that countdown.",
@@ -359,6 +388,15 @@ func publicRules() publicstats.RulesResponse {
 				Native: "Qin-Shi Emperor Tomb has its geometry and entrance in the v1.150 client, without monster spawns or walk-in gates; its door moves nobody.",
 				Now:    "Qin-Shi Emperor Tomb is open on all six floors: its door by Jangan admits players of level 70 and above, its gates move between floors, and its monsters are awake.",
 				Why:    "Opens the Jangan tomb dungeon shipped in the v1.150 client assets (GH #1013); the original returns with one setting."},
+			{Flag: action.EnvFlagWarStartUTC, On: true,
+				Native: "Capture the Flag runs on the reference server's event schedule.",
+				Now: fmt.Sprintf("One Capture the Flag match a day at %02d:%02d UTC; sign-up opens ten minutes before the start at Event So-Ok (level 20 and up).",
+					flagWar.StartMinuteOfDay/60, flagWar.StartMinuteOfDay%60),
+				Why: "The owner's daily slot, so the one match a day is a meeting point."},
+			{Flag: action.EnvFlagWarMinPlayers, On: true,
+				Native: "A Capture the Flag match starts when enough players have registered for two teams.",
+				Now:    fmt.Sprintf("A match starts with at least %d registered players, split evenly between the two teams; the winning team takes a trophy.", flagWar.MinPlayers),
+				Why:    "The owner's house minimum."},
 		},
 		Deviations: []publicstats.Deviation{
 			{Title: "Storage Ctrl+click",

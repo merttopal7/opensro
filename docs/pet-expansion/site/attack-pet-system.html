@@ -88,11 +88,11 @@ Content is a dated implementation snapshot; operator settings live in ../ATTACK-
 </ul></details></article>
 <article class="pet-card"><p class="role">Penguin · Magic</p><h3>Control the battlefield</h3><p>Strong magical offense with less health and physical defense. Magical attack improves its damage; defensive gear helps it survive.</p>
 <details open><summary>Penguin skill families</summary><ul class="skill-list">
-<li><strong>Active · Frost Nova</strong><span>A commanded area strike that attempts frostbite on nearby targets. Native resistance rules determine status success.</span></li>
-<li><strong>Active · Deep Freeze</strong><span>A targeted commanded strike that attempts freeze. Duration and resistance depend on the pet and target; bosses have no guaranteed slow fallback.</span></li>
-<li><strong>Passive · Cold Mastery</strong><span>Increases magical attack.</span></li>
-<li><strong>Passive · Static Feathers</strong><span>Chance to spread an attack to additional enemies with reduced damage and an electric-shock attempt. It does not cast a separate chain-lightning spell.</span></li>
-<li><strong>Passive · Frost Armor</strong><span>Increases physical and magical defense. It does not automatically chill attackers.</span></li>
+<li><strong>Active · Ice Lance</strong><span>A magical bolt cast from 15 m with a frostbite chance. Later books pierce two more enemies and deal extra damage to frostbitten targets.</span></li>
+<li><strong>Active · Blizzard</strong><span>Four area hits, one second apart. Later books enlarge the storm, slow enemies and freeze those exposed to every pulse. Native resistance applies.</span></li>
+<li><strong>Passive · Shatter</strong><span>Deals more damage to chilled enemies. Later books include owner attacks and release ice shards when a frozen enemy dies.</span></li>
+<li><strong>Passive · Arcane Resonance</strong><span>Spell hits build five magical-attack stacks lasting eight seconds. Later books add separate owner stacks and let a fully charged penguin repeat its next active.</span></li>
+<li><strong>Passive · Frozen Hourglass</strong><span>Five spell-hit charges recover two seconds of the next active's cooldown. Later books add owner magic hits and longer frostbite. Echoes and storm pulses cannot generate charges.</span></li>
 </ul></details></article>
 <article class="pet-card"><p class="role">Crow · Support</p><h3>Keep your journey going</h3><p>Supports its owner with healing and enemy debuffs. Its current speed passive improves the crow's attacks, not party movement.</p>
 <details open><summary>Crow skill families</summary><ul class="skill-list">
@@ -114,7 +114,7 @@ Content is a dated implementation snapshot; operator settings live in ../ATTACK-
 </tbody></table></div>
 <p style="margin-top:14px">Each book has ten learnable ranks. Its next rank may need a higher pet level even when that book is already unlocked. The tooltip shows the exact requirement.</p>
 <p>A pet starts with one training point and earns another every two pet levels. Points are shared across all five rows: you must choose where to invest. Special test pets may have extra points; those are not normal progression.</p>
-<p>Only one book contributes from each passive row at a time. Learning a higher passive book selects it automatically; earlier books do not add a second copy of the same bonus.</p>
+<p>The highest learned book in each passive row is always active automatically. Earlier books are replaced, cannot be manually selected, and do not add another copy of the bonus.</p>
 </div></section>
 <section class="panel" id="cooldowns"><h2>Commands, quickslots &amp; cooldowns</h2><div class="body">
 <ul>
@@ -155,7 +155,7 @@ Content is a dated implementation snapshot; operator settings live in ../ATTACK-
 <p>Each modifier group can appear only once on an item. A blue must also match the slot and degree. Higher percentages are deliberately rarer; the server controls each tier's limits and roll bias. Saved item rolls do not change when future drop settings change.</p>
 </div></section>
 <section class="panel" id="care"><h2>Care for your companion</h2><div class="body">
-<ul><li>Watch <strong>HP and HGP</strong>. Low satiety can lower combat performance, so feed the pet before comparing equipment or skill damage.</li><li>A pet above its owner's level cannot be summoned normally. Keep the owner eligible while training.</li><li>Gear, learned ranks and passive selections are saved with the pet's summon item. Relogging does not grant a fresh build.</li><li>Recharge state is saved too. Timers can expire as time passes; event counters still need their specified actions.</li><li>Use weak enemies when trying a new build. A skill icon working does not make an underfed or poorly equipped pet safe against high-level monsters.</li></ul>
+<ul><li>Watch <strong>HP and HGP</strong>. Low satiety can lower combat performance, so feed the pet before comparing equipment or skill damage.</li><li>A pet above its owner's level cannot be summoned normally. Keep the owner eligible while training.</li><li>Gear and learned ranks are saved with the pet's summon item. Relogging does not grant a fresh build.</li><li>Recharge state is saved too. Timers can expire as time passes; event counters still need their specified actions.</li><li>Use weak enemies when trying a new build. A skill icon working does not make an underfed or poorly equipped pet safe against high-level monsters.</li></ul>
 </div></section>
 <section class="panel" id="questions"><h2>Common questions</h2><div class="body faq">
 <details><summary>Why can I not learn the next skill?</summary><p>Check pet level, free points, previous-book rank and combat state. Book II needs Book I maxed; Book III needs Book II maxed. Unmet tooltip requirements are red, even on unlearned skills.</p></details>

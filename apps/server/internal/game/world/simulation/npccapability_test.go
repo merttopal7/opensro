@@ -77,7 +77,8 @@ func TestTalkWordShiftsEachOptionBelowItsNumber(t *testing.T) {
 TestResolvedTalkWordAdvertisesOnlyOwnedRows
 
 A smith offers shop, talk, repair and the avatar magic grant. A guide
-offers reverse return; fortress pulleys still have no response owner.
+offers reverse return and the battle aide its structure row; fortress
+pulleys still have no response owner.
 ================
 */
 func TestResolvedTalkWordAdvertisesOnlyOwnedRows(t *testing.T) {
@@ -91,6 +92,31 @@ func TestResolvedTalkWordAdvertisesOnlyOwnedRows(t *testing.T) {
 	guide.Services = ResolveNpcServices(guide)
 	if got := ResolveNpcTalkFlags(guide); got != NpcTalkFlagTalk|NpcTalkFlagReverseReturn {
 		t.Fatalf("guide flags %#x", got)
+	}
+	// The battle aide's structure row: the client keeps it for the holding
+	// guild (5D7AD0), so the server's word carries the bit for every viewer.
+	aide := NpcDef{Codename: "NPC_CH_FORTRESS_BATTLEAIDE1"}
+	aide.Services = ResolveNpcServices(aide)
+	if got := ResolveNpcTalkFlags(aide); got != NpcTalkFlagShop|NpcTalkFlagFortressAide {
+		t.Fatalf("battle aide flags %#x", got)
+	}
+	// The rest of the fortress staff: same rule as the aide. The manager's
+	// tax/staff/service rows, the smith's production row (beside its repair)
+	// and the trainer's training row are the client's to gate.
+	manager := NpcDef{Codename: "NPC_CH_FORTRESS_MANAGER1"}
+	manager.Services = ResolveNpcServices(manager)
+	if got := ResolveNpcTalkFlags(manager); got != NpcTalkFlagFortressManager {
+		t.Fatalf("fortress manager flags %#x", got)
+	}
+	fortressSmith := NpcDef{Codename: "NPC_CH_FORTRESS_SMITH1"}
+	fortressSmith.Services = ResolveNpcServices(fortressSmith)
+	if got := ResolveNpcTalkFlags(fortressSmith); got != NpcTalkFlagFortressSmith|NpcTalkFlagRepair {
+		t.Fatalf("fortress smith flags %#x", got)
+	}
+	trainer := NpcDef{Codename: "NPC_CH_FORTRESS_TRAINER1"}
+	trainer.Services = ResolveNpcServices(trainer)
+	if got := ResolveNpcTalkFlags(trainer); got != NpcTalkFlagFortressTrainer {
+		t.Fatalf("fortress trainer flags %#x", got)
 	}
 	pulley := NpcDef{Codename: "STRUCTURE_GATE_PULLEY_JA_01"}
 	pulley.Services = ResolveNpcServices(pulley)
