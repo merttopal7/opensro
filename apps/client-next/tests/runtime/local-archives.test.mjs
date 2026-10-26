@@ -319,10 +319,32 @@ test("a file that stays taken fails after the bounded wait", async () => {
 	assert.equal( wait.waits, 60 );
 });
 
-test("a device without room for the archives is told before anything downloads", async () => {
-	const storage = memoryStorage( { quota: BASE.length } ), server = updatesServer( release( BASE ) );
-	await assert.rejects( prepared( storage, server ), /Not enough storage/ );
-	assert.deepEqual( server.requests, [ "/updates/patches.json" ] );
+test("a made-up storage estimate does not stop the download", async () => {
+	// Brave (2026-10-26) reported a quota too small for the archives on a
+	// disk with tens of GB free; the writes themselves succeed.
+	const storage = memoryStorage( { reported: 1 } );
+	const { archives } = await prepared( storage, updatesServer( release( BASE ) ) );
+	assert.equal( await text( archives, MANIFEST_URL ), MANIFEST_TEXT );
+	archives.dispose();
+});
+
+test("a full origin says how much is missing, and the download goes on once there is room", async () => {
+	// Room for Media and part of Data: the write that would pass the quota
+	// is refused as a full origin refuses it.
+	const storage = memoryStorage( { quota: Math.floor( BASE.length * 1.5 ) } );
+	await assert.rejects(
+		prepared( storage, updatesServer( release( BASE ) ) ),
+		/Not enough storage for the game files: [\d.]+ GB more are needed/
+	);
+	assert.equal( storage.files.get( "temir/Media.temir" )?.bytes.length, BASE.length );
+
+	storage.quota = 1 << 30;
+	const server = updatesServer( release( BASE ) );
+	const { archives } = await prepared( storage, server );
+	// Media was whole already; only the rest is fetched.
+	assert.ok( !server.requests.includes( "/updates/last_version/Media.temir" ) );
+	assert.deepEqual( await archives.read( MAP_URL, 1 << 20 ), PATTERN );
+	archives.dispose();
 });
 
 test("when /updates/ is out of reach, whole archives still open", async () => {

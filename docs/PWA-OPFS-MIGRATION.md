@@ -248,9 +248,15 @@ Uygulananlar:
   masaüstü bütçeleri). `updatesBaseUrl`: `SRO_UPDATES_URL` (build) veya
   sayfanın kökenindeki `/updates/`.
 - `src/engine/runtime/assets/worker/archives/archives.ts` (`loader.ts`'e
-  ait): `prepare()` önce `patches.json`'ı okur ve `storage.estimate()` ile
-  boş alanı kontrol eder. Sonra eksik arşivleri `downloadArchive` ile
-  indirir ve arşivleri açar. `read()`, `PackDownload` okumalarını karşılar.
+  ait): `prepare()` önce `patches.json`'ı okur, sonra eksik arşivleri
+  `downloadArchive` ile indirir ve arşivleri açar. Boş alan önceden
+  `storage.estimate()` ile kontrol edilmiyor: Brave parmak izi korumasında
+  uydurma bir kota bildiriyor ve onlarca GB boş diski olan bir
+  makinede ilk kurulumu "Not enough storage" ile reddetti (2026-10-26,
+  ilk üretim denemesi). Yalnızca kökenin gerçekten reddettiği bir yazma
+  (`QuotaExceededError`) sayılıyor. Hata mesajı ne kadar yer gerektiğini
+  söylüyor, son kontrol noktasına kadarki byte'lar korunuyor ve yer
+  açılınca indirme sürüyor. `read()`, `PackDownload` okumalarını karşılar.
   Tam dosya veya range okuyabilir. Yalnızca `.json.gz` varsa açar. Arşivde
   olmayan bir yol için 404 döner. Bütçe aşımında `ASSET_BYTE_LIMIT` hatası
   verir.
@@ -606,7 +612,7 @@ Her cihazda sırayla:
 | Tarayıcıda şifre çözmenin payı (tek worker'da %69) | Tek worker'da okuma ~105 MB/s ile sınırlı | A1 sonrası: paralel worker'lar veya WASM SIMD (9. bölüm) |
 | iOS web içeriği bellek sınırı | Eski iPhone'larda sessiz yeniden yükleme | A8 (gerçek cihaz) |
 | WebGPU parçalılığı (Android GPU'ları, iOS < 26) | Desteklenmeyen cihazlar oyunu açamaz | A2 kapısı + A8 |
-| Kota / boş alan (5,6 GB) | Mobilde indirme başlamaz | A3 (`estimate()`) |
+| Kota / boş alan (~4,2 GB) | Mobilde indirme yarıda durur | Yazma reddedilince ne kadar yer gerektiği söyleniyor ve indirme sonra sürüyor. `estimate()` güvenilir değil (Brave) |
 | Sunucunun `last_version`'ı yerinde değiştirmesi | Devam eden indirmede karışık parça | A3 (`If-Range` + etiket) |
 | ChaCha20'nin JS'teki hızı | Yükleme süresinde çözmenin payı | A1 |
 

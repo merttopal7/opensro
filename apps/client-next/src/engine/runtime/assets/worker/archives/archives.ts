@@ -53,9 +53,6 @@ const DIRECTORY = "temir";
 const PROGRESS_SUFFIX = ".progress";
 const MANIFEST_NAME = "patches.json";
 const MANIFEST_LIMIT = 16 << 20;
-// Space asked for beyond the missing bytes: room for patches (A6) and for
-// what else the origin stores.
-const FREE_SPACE_MARGIN = 1.1;
 const GIB = 1 << 30;
 // A reloaded page's worker can start before the old page's worker has
 // released its access handles (measured in Edge 155: the first open after a
@@ -69,7 +66,7 @@ const MAX_READERS = 4;
 ================
 ArchiveIo
 
-What prepare() needs from the worker: its fetch, its storage manager and a
+What prepare() needs from the worke0r: its fetch, its storage manager and a
 cancellable wait (the worker's timers belong to the loader). readers is
 how many reader workers read and decrypt in parallel once the archives are
 whole (readerCount; 0 reads on this worker); spawnReader stands in for the
@@ -351,23 +348,21 @@ export function createLocalArchives( io: ArchiveIo, origin: string, passphrase =
 
 	/*
 	================
-	requireSpace
+	storageFull
 
-	Refuses before downloading when the origin's quota cannot hold the
-	missing bytes: a download that fails at 90% helps nobody.
+	The error a download that ran out of room ends with. There is no check
+	before downloading: storage.estimate() is not a measure of the disk
+	(Brave reports a made-up quota against fingerprinting, and refused a
+	4.2 GB first install on a disk with tens of GB free, 2026-10-26), so
+	only a write the origin actually refuses counts. Every byte before the
+	last checkpoint stays, and the download resumes once there is room.
 	================
 	*/
-	async function requireSpace( missing: number ) {
-		if ( missing === 0 ) return;
-		const { quota, usage } = await io.storage.estimate();
-		if ( quota === undefined || usage === undefined ) return;
-		const needed = missing * FREE_SPACE_MARGIN;
-		if ( quota - usage < needed ) {
-			throw new Error(
-				`Not enough storage for the game files: ${(needed / GIB).toFixed( 1 )} GB needed, ` +
-					`${((quota - usage) / GIB).toFixed( 1 )} GB available`
-			);
-		}
+	function storageFull( missing: number ) {
+		return new Error(
+			`Not enough storage for the game files: ${(missing / GIB).toFixed( 1 )} GB more are needed. ` +
+				"Free some disk space and open the game again; the download resumes where it stopped."
+		);
 	}
 
 	/*
@@ -514,13 +509,24 @@ export function createLocalArchives( io: ArchiveIo, origin: string, passphrase =
 		================
 		obtain
 
-		One download; refused, with the reason /updates/ was out of reach,
-		when the saved manifest stands in for the server's.
+		Downloads each release of list in turn. Refused, with the reason
+		/updates/ was out of reach, when the saved manifest stands in for the
+		server's; a write the origin refuses for space ends as storageFull,
+		naming what this list still lacks.
 		================
 		*/
-		const obtain = async function*( f: OpenedRelease ): AsyncGenerator<PrepareProgress, void> {
-			if ( unreachable ) throw unreachable;
-			yield* download( base, f, signal );
+		const obtain = async function*( list: OpenedRelease[] ): AsyncGenerator<PrepareProgress, void> {
+			for ( let i = 0; i < list.length; i++ ) {
+				if ( unreachable ) throw unreachable;
+				try {
+					yield* download( base, list[i]!, signal );
+				} catch ( error ) {
+					if ( error instanceof Error && error.name === "QuotaExceededError" ) {
+						throw storageFull( missingBytes( list.slice( i ) ) );
+					}
+					throw error;
+				}
+			}
 		};
 
 		const bases: OpenedRelease[] = [];
@@ -532,8 +538,7 @@ export function createLocalArchives( io: ArchiveIo, origin: string, passphrase =
 			!current( f ) && patches.length > 0 && completeAsRecorded( f.file, f.progress )
 		);
 		const stale = bases.filter( f => !current( f ) && !behind.includes( f ) );
-		await requireSpace( missingBytes( stale ) );
-		for ( const f of stale ) yield* obtain( f );
+		yield* obtain( stale );
 		mountBases( bases );
 
 		let wanted = await wantedPatches( dir, patches, live, signal );
@@ -544,14 +549,12 @@ export function createLocalArchives( io: ArchiveIo, origin: string, passphrase =
 				close( f.progress );
 			}
 			mounted.length = 0;
-			await requireSpace( baseCost );
-			for ( const f of behind ) yield* obtain( f );
+			yield* obtain( behind );
 			mountBases( bases );
 			wanted = await wantedPatches( dir, patches, live, signal );
 		}
 		const pending = wanted.filter( f => !archiveComplete( f.release, f.file, f.progress ) );
-		await requireSpace( missingBytes( pending ) );
-		for ( const f of pending ) yield* obtain( f );
+		yield* obtain( pending );
 		const patchMounts: Mounted[] = [];
 		for ( const f of wanted ) {
 			const patch = mount( f.release.name, f.file, passphrase );
