@@ -493,14 +493,74 @@ Bekletilen (K7, yalnızca ihtiyaç olursa):
 
 ### A8. Platform matrisi ve yayın
 
+#### Ön koşullar
+
+1. **Geçerli HTTPS.** iOS ve Android, kendinden imzalı sertifikayla PWA
+   kurmuyor. WebGPU de güvenli bağlam istiyor. Test, geçerli sertifikası
+   olan bir alan adında yapılmalı (`sro.ftemir.com` ya da bir alt alan
+   adı).
+2. **Aynı köken.** Kapı build'i (`dist`) ile `/updates/` aynı kökenden
+   sunulmalı. `SRO_UPDATES_URL` başka bir köken gösterirse, Agent'ın CORS
+   ayarı o kökene izin vermeli.
+3. **Range desteği (üretimde şu an YOK).** 2026-10-26'da
+   `https://sro.ftemir.com/updates/...` adresine `Range: bytes=0-63`
+   gönderildi. Cloudflare arkasından (`cf-cache-status: DYNAMIC`) `206`
+   yerine **`200` ve dosyanın tamamı** döndü. Bu, `patches.json`'da,
+   küçük patch dosyalarında ve `last_version`'da aynı. Agent'ın kendisi
+   Range'i destekliyor (`http.ServeContent`, yerel testlerde 206). Yani
+   aradaki bir katman (hosting panelindeki nginx ya da Cloudflare)
+   başlığı düşürüyor. Sonuç: indirici doğru davranıp baştan başlıyor, ama
+   **kopan bir indirme kaldığı yerden devam edemiyor** (1,5 GB baştan
+   iner). Teşhis için sunucuda sırayla:
+   - `curl -s -D - -o /dev/null -r 0-9 http://127.0.0.1:<agent-portu>/updates/Patch002.temir` →
+     Agent (206 beklenir)
+   - aynısı nginx üzerinden (`-H "Host: sro.ftemir.com"`, nginx portu)
+   - aynısı alan adı üzerinden (Cloudflare)
+
+   Hangi adımda `200`'e dönüyorsa sorun o katmanda. nginx'te `/updates/`
+   için `proxy_set_header Range $http_range;` ve
+   `proxy_set_header If-Range $http_if_range;` eklenebilir ya da
+   `proxy_cache`/`slice` ayarlarına bakılabilir. Bir doğrulayıcı da var:
+   `Last-Modified` geliyor, `ETag` yok. İndirici `Last-Modified`'ı
+   `If-Range` olarak kullanıyor.
+4. Build:
+
+   ```
+   SRO_INSTALL_GATE=1 SRO_PWA_ICON=<kare ≥512 px PNG> pnpm --filter @sro/client-next build
+   ```
+
+   Çıktı `apps/client-next/temp/artifacts/dist` (deploy betiğinin
+   `client-dist`'i). Web kökü bu `dist`'i sunmalı. `/updates/`, `/api/` ve
+   shard yolları Agent'a gitmeli.
+
+#### Cihaz başına kontrol listesi
+
+Her cihazda sırayla:
+
+1. Sekmede açılış: kurulum sayfası doğru rotayı gösteriyor mu (Chrome/Edge:
+   düğme; iOS: Paylaş → Ana Ekrana Ekle; macOS Safari: Dosya → Dock'a Ekle;
+   Firefox: desteklenmiyor; WebGPU yoksa: uyarı)?
+2. Kurulum ve kurulu uygulamadan açılış: kapı geçiliyor mu, ilk indirme
+   yükleme ekranında "game files (Media)" olarak görünüyor mu?
+3. İndirme sırasında uygulamayı kapatıp açma: kaldığı yerden sürüyor mu
+   (yukarıdaki Range düzeltmesinden sonra)?
+4. İndirme bitince oyun açılıyor mu, ikinci açılışta hiç indirme olmuyor
+   mu?
+5. Okuyucu worker'lar: Safari ve Firefox'ta `read-only` handle var mı?
+   Yoksa geri dönüşle tek worker'da okuma sorunsuz mu?
+6. Bellek ve arka plan: (iOS/Android) uygulama arka plana alınıp geri
+   gelince ne oluyor? Yeniden yükleniyorsa arşivler yeniden inmemeli.
+7. `navigator.storage.persisted()` sonucu (DevTools ya da uzak hata
+   ayıklama).
+
 | Test | Chrome Win | Edge Win | Chrome Android | Safari iOS 26 (ana ekran) | Safari macOS (Dock) |
 |---|---|---|---|---|---|
-| Kurulum kapısı | | | | | |
+| Kurulum kapısı | ✅ (Edge 155 headless, A2) | | | | |
 | `persisted()` | | | | | |
-| 5,6 GB indirme + devam | | | | | |
-| Okuma hızı (A1 ile aynı sahne) | | | | | |
-| Bellek tepe noktası / arka plandan dönüş | | | | | |
-| Patch overlay + birleştirme | | | | | |
+| İndirme + devam | ✅ yerel sunucuyla (A3b); üretimde Range yok | | | | |
+| Okuma (tek / paralel okuyucu) | ✅ (A1, K8) | | | | |
+| Bellek / arka plandan dönüş | | | | | |
+| Patch overlay | ✅ birim testleri (A6) | | | | |
 
 ## 7. Riskler ve açık sorular
 
