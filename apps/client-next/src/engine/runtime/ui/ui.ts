@@ -107,6 +107,17 @@ import { flagWarTimerDigitTexture, flagWarTimerReading } from "@/engine/foundati
 import { returnScrollBar } from "@/engine/foundation/ui/return-scroll";
 import { nameColorRgba } from "@/engine/foundation/gameplay/name-color";
 import { containsPoint, topmostControlAt } from "@/engine/foundation/ui/hit-test";
+import {
+	JOYSTICK_BASE_RADIUS,
+	JOYSTICK_KNOB_RADIUS,
+	mobileAttackTarget,
+	mobileBuffLayout,
+	mobileCycleTarget,
+	mobileDrawerBounds,
+	mobileMenuGridLayout,
+	mobilePartyLayout,
+	mobileTargetOrigin
+} from "@/engine/foundation/ui/mobile-hud";
 import { minimapZoomTarget, advanceMinimapZoom } from "@/engine/foundation/ui/minimap-zoom";
 import { minimapTiles } from "@/engine/foundation/ui/minimap-tiles";
 import { minimapFloorQueries, minimapPoseKey, minimapSameFloor } from "@/engine/foundation/ui/minimap-floor";
@@ -1158,6 +1169,12 @@ export function createUi(
 	// Low HP/MP caution atlas (100 ms cells) animates on retained world frames too.
 	let cautionVisible = false, cautionFrame = -1;
 	let targetGradeIcon = "";
+	let mobileJoystick: {
+		active: boolean;
+		origin: readonly [number, number];
+		knob: readonly [number, number];
+	} = { active: false, origin: [ 0, 0 ], knob: [ 0, 0 ] };
+	let mobileMenuOpen = false;
 	// CIFBuffViewer owners keep their one-second diff state: the target window
 	// (581330), each quick-party slot (5BA840), the attack pet mini window
 	// (6B3920) and the local board's suppression refresh (6E12D0 timer 0xA ->
@@ -2084,6 +2101,7 @@ export function createUi(
 		}
 		const wasOpen = !!panel;
 		panel = next;
+		if ( next ) mobileMenuOpen = false;
 		if ( isMainPopupPage( next ) ) rememberedMainPopup = next;
 		// Enter hooks are shared by sidebar, menu, keyboard and contextual links.
 		if ( next === "Experimental" ) experimental.open();
@@ -2208,6 +2226,8 @@ export function createUi(
 	*/
 	function resetPanel() {
 		compactHud.reset();
+		mobileJoystick = { active: false, origin: [ 0, 0 ], knob: [ 0, 0 ] };
+		mobileMenuOpen = false;
 		closeGuide();
 		withdrawal.close();
 		blockDialog = null;
@@ -3324,6 +3344,7 @@ export function createUi(
 			id = "item-mall";
 		}
 		if ( id === "item-mall" ) {
+			mobileMenuOpen = false;
 			if ( view?.gameplay && !view.gameplay.inventoryPending ) sendGameplay( { kind: "mall-open" } );
 			itemMall.open();
 			dirty = true;
@@ -4633,8 +4654,37 @@ export function createUi(
 			guideIndexScroll = Math.max( 0, guideIndexScroll - 1 );
 		} else if ( id === "guide-down" ) guideScroll += 100;
 		else if ( id === "guide-up" ) guideScroll = Math.max( 0, guideScroll - 100 );
-		else if ( id === "hud-menu" ) setPanel( isMainPopupPage( panel ) ? "" : rememberedMainPopup );
-		else if ( id.startsWith( "compact-" ) ) {
+		else if ( id === "hud-menu" ) {
+			const isMobile = !!compactHud.layout( view.width, view.height, {
+				mobileHud: experimental.state().saved.mobileHud,
+				touch: view.touch,
+				safeArea: view.safeArea
+			} )?.mobile;
+			if ( isMobile ) {
+				if ( mobileMenuOpen ) {
+					mobileMenuOpen = false;
+				} else {
+					if ( panel ) setPanel( "" );
+					if ( itemMall.read().visible ) itemMall.close();
+					compactHud.reset();
+					mobileMenuOpen = true;
+				}
+			} else {
+				setPanel( isMainPopupPage( panel ) ? "" : rememberedMainPopup );
+			}
+		} else if ( id === "mobile-menu-close" ) mobileMenuOpen = false;
+		else if ( id.startsWith( "mobile-menu:" ) ) {
+			mobileMenuOpen = false;
+			const targetPanel = id.slice( 12 );
+			if ( targetPanel === "Mall" ) {
+				if ( panel ) setPanel( "" );
+				activate( "item-mall" );
+			} else {
+				if ( itemMall.read().visible ) itemMall.close();
+				setPanel( panelNamed( targetPanel ), "toggle" );
+			}
+		} else if ( id.startsWith( "compact-" ) ) {
+			mobileMenuOpen = false;
 			compactHud.toggle( id.slice( 8 ) );
 			focus = null;
 		} else if ( id === "chat-hide" ) chatHidden = !chatHidden;
@@ -4666,7 +4716,25 @@ export function createUi(
 		else if ( id === "minimap-out" ) minimapTarget = minimapZoomTarget( minimapTarget, -1 );
 		else if ( id === "hotbar-prev" ) hotbarPage = (hotbarPage + 3) % 4;
 		else if ( id === "hotbar-next" ) hotbarPage = (hotbarPage + 1) % 4;
-		else if ( id === "skill-cast" && view.gameplay?.skills?.includes( selectedSkill ) ) {
+		else if ( id === "mobile-pickup" ) executeAction( 1008 );
+		else if ( id === "mobile-target-cycle" && view.gameplay ) {
+			const gid = mobileCycleTarget(
+				view.entities,
+				view.gameplay.pose,
+				view.gameplay.vitals,
+				view.gameplay.target
+			);
+			if ( gid ) sendGameplay( { kind: "select", gid } );
+		} else if ( id === "mobile-attack" && view.gameplay ) {
+			const game = view.gameplay;
+			const resolved = mobileAttackTarget( view.entities, game.pose, game.vitals, game.target );
+			if ( resolved.gid ) {
+				if ( resolved.select ) sendGameplay( { kind: "select", gid: resolved.gid } );
+				const mountedOn = view.entities.find( e => e.gid === game.localGid )?.mountedOn;
+				const rideAttack = !!(game.activeCos && mountedOn === game.activeCos.gid && !game.activeCos.dead);
+				sendGameplay( { kind: rideAttack ? "cos-attack" : "attack", gid: resolved.gid } );
+			}
+		} else if ( id === "skill-cast" && view.gameplay?.skills?.includes( selectedSkill ) ) {
 			sendGameplay( {
 				kind: "skill",
 				skillId: selectedSkill,
@@ -5731,6 +5799,16 @@ export function createUi(
 			if ( event.kind === "drag-cancel" ) {
 				if ( carriedItem?.source === event.id ) carriedItem = null;
 				if ( carriedShortcut?.id === event.id ) carriedShortcut = null;
+				dirty = true;
+				return;
+			}
+			if ( event.kind === "viewport-environment" ) {
+				compactHud.environment( event.touch, event.safeArea );
+				dirty = true;
+				return;
+			}
+			if ( event.kind === "mobile-joystick" ) {
+				mobileJoystick = { active: event.active, origin: event.origin, knob: event.knob };
 				dirty = true;
 				return;
 			}
@@ -8498,6 +8576,11 @@ export function createUi(
 				dirty = true;
 			} else if ( event.kind === "key" ) {
 				if ( event.code === "Escape" ) {
+					if ( mobileMenuOpen ) {
+						mobileMenuOpen = false;
+						dirty = true;
+						return;
+					}
 					if ( goldDialog ) {
 						goldDialog = false;
 						focus = null;
@@ -9553,7 +9636,13 @@ export function createUi(
 			const fontPath = text.path();
 			if ( fontPath ) paths.push( fontPath );
 			const w = next.width, h = next.height, full: UiRect = [ 0, 0, w, h ];
-			const compact = compactHud.layout( w, h );
+			const compact = compactHud.layout( w, h, {
+				mobileHud: experimental.state().saved.mobileHud,
+				touch: next.touch,
+				safeArea: next.safeArea
+			} );
+			const mobile = compact?.mobile ?? null;
+			if ( !mobile && mobileMenuOpen ) mobileMenuOpen = false;
 			let targetBottom = 0, compactTelemetryTop = 4;
 			if ( berserkActor ) {
 				const alpha = berserkEntryFlash( now - berserkStarted );
@@ -9715,7 +9804,7 @@ export function createUi(
 				const unloaded = paths.slice( mark[3] ).filter( path => !resources.has( path ) );
 				windowMissing.push( ...unloaded );
 				const gaps = unloaded.filter( path => !contentImages.has( path ) );
-				const key = phase + ":" + w + ":" + h;
+				const key = phase + ":" + w + ":" + h + (mobile ? ":m" : "");
 				if ( !fontPath || !resources.has( fontPath ) || gaps.length ) {
 					quads.length = mark[0];
 					controls.length = mark[1];
@@ -9739,9 +9828,32 @@ export function createUi(
 					// Fit within this window before caching/publication; text behind a modal
 					// must not become a neighboring column of that modal.
 					if ( compact ) {
-						const windowBounds = owner === "item-mall" || owner === "compact-guild" || compact.top < 200 ?
-							full :
-							compact.bounds;
+						let windowBounds: UiRect =
+							owner === "item-mall" || owner === "compact-guild" || compact.top < 200 ?
+								full :
+								compact.bounds;
+						if (
+							mobile && owner === "primary" && panel !== "Map" && !withdrawal.active() && !questDetails
+						) {
+							let left = Infinity, top = Infinity, right = -Infinity, bottom = -Infinity;
+							if ( source ) {
+								left = source[0];
+								top = source[1];
+								right = source[0] + source[2];
+								bottom = source[1] + source[3];
+							} else {
+								for ( let i = mark[0]; i < quads.length; i++ ) {
+									const r = quads[i]!.rect;
+									left = Math.min( left, r[0] );
+									top = Math.min( top, r[1] );
+									right = Math.max( right, r[0] + r[2] );
+									bottom = Math.max( bottom, r[1] + r[3] );
+								}
+							}
+							windowBounds = right > left && bottom > top ?
+								mobileDrawerBounds( mobile, right - left, bottom - top ) :
+								mobile.panelDrawer;
+						}
 						fitUiGroup( quads, controls, mark[0], mark[1], windowBounds, full, {
 							blocks,
 							firstBlock: mark[2],
@@ -10912,7 +11024,16 @@ export function createUi(
 						[ "QUEST", "Quests" ],
 						[ "APPRENTICE", "Academy" ]
 					] as const
-				) authoredButton( main["GDR_BTN_" + name]!, px, py, "select-window:" + destination, destination );
+				) {
+					authoredButton( main["GDR_BTN_" + name]!, px, py, "select-window:" + destination, destination );
+					if ( mobile ) {
+						const prev = controls[controls.length - 1]!;
+						controls[controls.length - 1] = {
+							...prev,
+							rect: [ prev.rect[0] - 4, prev.rect[1] - 4, prev.rect[2] + 8, prev.rect[3] + 8 ]
+						};
+					}
+				}
 			}
 			const x = Math.max( 0, Math.round( (w - 380) / 2 ) ), y = Math.max( 0, Math.round( (h - 520) / 2 ) );
 			const operationStatus = next.frontend?.creation?.status ?? next.frontend?.status;
@@ -11109,9 +11230,10 @@ export function createUi(
 			} else {
 				const gauge = next.berserkGauge;
 				const character = roster.find( c => c.name === next.session?.character ), hudData = hud.data();
+				const [playerOx, playerOy] = mobile ? mobile.playerOffset : [ 0, 0 ];
 				if ( compact && hudData ) {
 					const player = hudData.root.GDR_PLAYER_MINI_INFO!.rect;
-					targetBottom = player[1] + player[3] + 4;
+					targetBottom = player[1] + playerOy + player[3] + 4;
 				}
 				if ( hudData ) {
 					const hpMax = game?.progression?.stats?.maxHp ?? local?.maxHp ?? character?.maxHp,
@@ -11141,6 +11263,8 @@ export function createUi(
 						layoutResourcesRevision,
 						w,
 						h,
+						playerOx,
+						playerOy,
 						hover,
 						pressed,
 						focus,
@@ -11173,9 +11297,12 @@ export function createUi(
 						berserkFrame,
 						...(abilityDetails ? Object.values( game?.progression?.stats ?? {} ) : [])
 					], () => {
-						const root = hudData.root.GDR_PLAYER_MINI_INFO!, p = hudData.player, [px, py] = root.rect;
-						authoredImage( root, 0, 0 );
-						blocks.push( authoredRect( root, 0, 0 ) );
+						const root = hudData.root.GDR_PLAYER_MINI_INFO!,
+							p = hudData.player,
+							px = root.rect[0] + playerOx,
+							py = root.rect[1] + playerOy;
+						authoredImage( root, playerOx, playerOy );
+						blocks.push( authoredRect( root, playerOx, playerOy ) );
 						// GDR_PMI_SELECT (ID 200) frames the whole panel while the local
 						// character is the target, as GDR_QPS_SELECT frames a party slot.
 						if ( game?.localGid && game.target === game.localGid ) {
@@ -11189,7 +11316,7 @@ export function createUi(
 								id: "self-target",
 								label: "Select yourself",
 								kind: "button",
-								rect: authoredRect( root, 0, 0 )
+								rect: authoredRect( root, playerOx, playerOy )
 							} );
 						}
 						for ( const vital of [ "HP", "MP" ] as const ) {
@@ -11425,22 +11552,22 @@ export function createUi(
 					null;
 				const petPanel = hudData?.player.GDR_PMI_PET_MINI_INFO, petLayout = hudData?.windows.ifpetminiinfo;
 				if ( hudData && pet && petPanel && petLayout ) {
+					const player = hudData.root.GDR_PLAYER_MINI_INFO!.rect,
+						px = player[0] + playerOx,
+						py = player[1] + playerOy;
 					if ( compact ) {
-						const player = hudData.root.GDR_PLAYER_MINI_INFO!.rect;
-						const petBounds = authoredRect( petPanel, player[0], player[1] );
+						const petBounds = authoredRect( petPanel, px, py );
 						targetBottom = Math.max( targetBottom, petBounds[1] + petBounds[3] + 4 );
 					}
 					if ( experimental.state().saved.petClickOpensWindow ) {
-						const player = hudData.root.GDR_PLAYER_MINI_INFO!.rect;
 						controls.push( {
 							id: "pet-mini-open",
 							label: pet.name?.length ? pet.name : hudCopy( "UIIT_STT_COSNEWUI_TITLE" ),
 							kind: "button",
-							rect: authoredRect( petPanel, player[0], player[1] )
+							rect: authoredRect( petPanel, px, py )
 						} );
 					}
-					const [px, py] = hudData.root.GDR_PLAYER_MINI_INFO!.rect,
-						hpPath = ROOT + "interface/playerminiinfo/pmi_pet_hp.png",
+					const hpPath = ROOT + "interface/playerminiinfo/pmi_pet_hp.png",
 						hgpPath = ROOT + "interface/playerminiinfo/pmi_pet_hgp.png",
 						facePath = ROOT + "interface/playerminiinfo/pmi_pet_face.png",
 						icon = iconPath( pet.icon ),
@@ -11456,6 +11583,8 @@ export function createUi(
 					retainedHud( petLayoutCache, [
 						hudData,
 						layoutResourcesRevision,
+						playerOx,
+						playerOy,
 						pet.gid,
 						pet.name,
 						pet.level,
@@ -11556,6 +11685,7 @@ export function createUi(
 						}
 					}
 				}
+				let leftColumnBottom = targetBottom;
 				if ( hudData && game && hudData.root.GDR_MAGICSTATEBOARD ) {
 					const origin = authoredRect( hudData.root.GDR_MAGICSTATEBOARD, 0, 0 );
 					if ( game.buffSlots?.length ) paths.push( "/assets/images/Media_extracted/icon/buf_effect.png" );
@@ -11563,17 +11693,24 @@ export function createUi(
 							game.cosRecords?.some( pet => pet.gid === game.petTraining?.gid && pet.hp > 0 ) ?
 						game.petTraining :
 						undefined;
-					for (
-						const icon of buffBoard(
-							game,
-							next.simulationTimeMs ?? 0,
-							boardSuppressed,
-							ownerPet,
-							experimental.state().saved.attackPetTraining
-						)
-					) {
+					const rawBuffs = buffBoard(
+						game,
+						next.simulationTimeMs ?? 0,
+						boardSuppressed,
+						ownerPet,
+						experimental.state().saved.attackPetTraining
+					);
+					const mobileBuffs = mobile ?
+						mobileBuffLayout( rawBuffs, [ mobile.buffOrigin[0], targetBottom ], mobile.buffColumns ) :
+						null;
+					if ( mobileBuffs && mobileBuffs.icons.length > 0 ) {
+						leftColumnBottom = Math.max( leftColumnBottom, mobileBuffs.bottom + 4 );
+					}
+					for ( const icon of mobileBuffs ? mobileBuffs.icons : rawBuffs ) {
 						if ( !icon.path ) continue;
-						const r: UiRect = [ origin[0] + icon.x, origin[1] + icon.y, 20, 20 ];
+						const r: UiRect = mobileBuffs ?
+							[ icon.x, icon.y, 20, 20 ] :
+							[ origin[0] + icon.x, origin[1] + icon.y, 20, 20 ];
 						paths.push( icon.path );
 						if ( icon.departure ) {
 							const sprite = "/assets/images/Media_extracted/icon/buf_effect.png",
@@ -11712,8 +11849,16 @@ export function createUi(
 						slot = hudData.windows.ifquickpartyslot!,
 						localPose = partyLocalPose( game, next.entities );
 					for ( const shadeImage of partyShadeImages() ) paths.push( ROOT + shadeImage );
+					const partyRows = partyOverlay( game, next.entities, h, origin[0], origin[1], options.partyBuffs );
 					for (
-						const row of partyOverlay( game, next.entities, h, origin[0], origin[1], options.partyBuffs )
+						const row of mobile ?
+							mobilePartyLayout(
+								partyRows,
+								[ mobile.partyOrigin[0], leftColumnBottom ],
+								compact!.top,
+								options.partyBuffs
+							) :
+							partyRows
 					) {
 						const [x, y] = row.position;
 						authoredImage(
@@ -11826,13 +11971,14 @@ export function createUi(
 				}
 				if ( hudData && panel !== "Chat" && (!compact || compact.overlay === "chat") ) {
 					const lines = game?.chat?.lines ?? [],
+						chatBottom = mobile ? h - mobile.chatPreview[1] + 4 : compact?.bottom,
 						key: unknown[] = [
 							hudData,
 							layoutResourcesRevision,
 							w,
 							h,
 							chatRows,
-							compact?.bottom,
+							chatBottom,
 							chatTab,
 							chatText,
 							hover,
@@ -11865,8 +12011,11 @@ export function createUi(
 								noticeLinks: experimental.state().saved.noticeLinks,
 								compact: compact ?
 									{
-										bottom: compact.bottom,
-										maxRows: Math.max( 1, Math.floor( (h - compact.bottom - 100) / 56 ) )
+										bottom: chatBottom ?? compact.bottom,
+										maxRows: Math.max(
+											1,
+											Math.floor( (h - (chatBottom ?? compact.bottom) - 100) / 56 )
+										)
 									} :
 									undefined,
 								layout: hudData.chat,
@@ -12006,19 +12155,30 @@ export function createUi(
 							targetGradeIcon
 						);
 					const playerRect = hudData.root.GDR_PLAYER_MINI_INFO!.rect;
+					const playerRight = playerRect[0] + playerOx + playerRect[2];
 					const compactOutput = compact && nativeOutput ?
-						compactTargetStatus( nativeOutput, shown.kind, w - playerRect[0] - playerRect[2] - 8 ) :
+						compactTargetStatus(
+							nativeOutput,
+							shown.kind,
+							mobile ? mobile.targetBand[2] : w - playerRight - 8
+						) :
 						null;
 					const output = compactOutput ?? nativeOutput;
 					if ( output ) {
 						targetGradeIcon = output.gradeIcon;
 						// A narrow target shares the player's row; neither bitmap font is shrunk.
-						const tx = compactOutput ? w - output.width - 4 : Math.trunc( (w - output.width) / 2 );
-						let ty = compact && !compactOutput && tx < playerRect[0] + playerRect[2] + 4 ?
-							playerRect[1] + playerRect[3] + 4 :
-							7;
-						if ( compact && pet && petPanel && petLayout ) {
-							const petRect = authoredRect( petPanel, playerRect[0], playerRect[1] );
+						const [tx, baseTy] = mobile ?
+							mobileTargetOrigin( mobile, output.width ) :
+							[ compactOutput ? w - output.width - 4 : Math.trunc( (w - output.width) / 2 ), 7 ];
+						let ty = compact && !mobile && !compactOutput && tx < playerRight + 4 ?
+							playerRect[1] + playerOy + playerRect[3] + 4 :
+							baseTy;
+						if ( compact && !mobile && pet && petPanel && petLayout ) {
+							const petRect = authoredRect(
+								petPanel,
+								playerRect[0] + playerOx,
+								playerRect[1] + playerOy
+							);
 							if (
 								tx < petRect[0] + petRect[2] + 4 && tx + output.width + 4 > petRect[0] &&
 								ty < petRect[1] + petRect[3] + 4 && ty + output.height + 4 > petRect[1]
@@ -12191,6 +12351,39 @@ export function createUi(
 							authoredSkillPoints( bar.GDR_STATIC_SP!, barX, barY, game.progression.skillPoints );
 						}
 					} );
+				} else if ( hudData && mobile ) {
+					const [expX, expY, expW, expH] = mobile.expBar;
+					const required = levels.get( game?.progression?.level ?? 0 )?.[0];
+					const expRatio = required && game?.progression?.experience !== undefined ?
+						Math.max(
+							0,
+							Math.min(
+								1,
+								Number( game.progression.experience ) / Math.max( 1, Number( required ) )
+							)
+						) :
+						0;
+					rect( mobile.expBar, [ 0.04, 0.05, 0.07, 0.85 ] );
+					blocks.push( mobile.expBar );
+					if ( expRatio > 0 ) {
+						rect(
+							[ expX, expY, Math.max( 1, Math.round( expW * expRatio ) ), expH ],
+							[ 0.92, 0.72, 0.18, 0.95 ]
+						);
+					}
+					if ( game?.progression?.experience !== undefined && game.progression.level !== undefined ) {
+						const expLabel = "EXP " +
+							experienceReadout( game.progression.experience, game.progression.level, levels );
+						quads.push(
+							...text.quads(
+								expLabel,
+								[ expX, expY - 12, expW, 12 ],
+								full,
+								[ 0.95, 0.92, 0.78, 0.85 ],
+								{ hAlign: 1, vAlign: 1 }
+							)
+						);
+					}
 				} else if ( hudData && compact && compact.exp ) {
 					const expW = compact.exp[2];
 					retainedHud( barLayoutCache, [
@@ -12483,7 +12676,189 @@ export function createUi(
 					}
 					itemCount( item, r );
 				}
-				if ( compact ) {
+				if ( mobile ) {
+					// 1. Top-left menu button inside the player panel's lower-left corner.
+					const menuRect = mobile.menuButton;
+					button(
+						"hud-menu",
+						"Menu",
+						menuRect[0],
+						menuRect[1],
+						menuRect[2],
+						false,
+						isMainPopupPage( panel )
+					);
+					controls[controls.length - 1] = { ...controls[controls.length - 1]!, rect: menuRect };
+
+					// 2. Bottom-left chat preview strip (toggles the chat overlay).
+					const chatRect = mobile.chatPreview;
+					const lastChat = game?.chat?.lines.at( -1 );
+					const chatCaption = compact?.overlay === "chat" ?
+						"Close Chat" :
+						lastChat ?
+						(lastChat.name ? lastChat.name + ": " + lastChat.text : lastChat.text) :
+						"Chat";
+					rect( chatRect, [ 0.05, 0.06, 0.08, 0.72 ] );
+					rect( [ chatRect[0], chatRect[1], chatRect[2], 1 ], [ 0.75, 0.65, 0.38, 0.55 ] );
+					rect( [ chatRect[0], chatRect[1] + chatRect[3] - 1, chatRect[2], 1 ], [ 0.75, 0.65, 0.38, 0.55 ] );
+					quads.push(
+						...text.quads(
+							chatCaption,
+							[ chatRect[0] + 8, chatRect[1] + 4, chatRect[2] - 16, chatRect[3] - 8 ],
+							chatRect,
+							[ 0.96, 0.94, 0.86, 1 ],
+							{ hAlign: 0, vAlign: 1, overflow: "ellipsis" }
+						)
+					);
+					controls.push( {
+						id: "compact-chat",
+						label: "Chat",
+						kind: "button",
+						rect: chatRect,
+						selected: compact?.overlay === "chat"
+					} );
+					blocks.push( chatRect );
+
+					// 3. Bottom-left floating virtual joystick (does not push to blocks so world taps pass through).
+					const joyOrigin = mobileJoystick.active ?
+						mobileJoystick.origin :
+						([
+							mobile.joystickZone[0] + JOYSTICK_BASE_RADIUS + 16,
+							mobile.chatPreview[1] - JOYSTICK_BASE_RADIUS - 12
+						] as const);
+					const joyKnob = mobileJoystick.active ? mobileJoystick.knob : joyOrigin;
+					const baseAlpha = mobileJoystick.active ? 0.45 : 0.22;
+					const ringAlpha = mobileJoystick.active ? 0.75 : 0.38;
+					const knobAlpha = mobileJoystick.active ? 0.88 : 0.42;
+					const baseBox: UiRect = [
+						Math.round( joyOrigin[0] - JOYSTICK_BASE_RADIUS ),
+						Math.round( joyOrigin[1] - JOYSTICK_BASE_RADIUS ),
+						JOYSTICK_BASE_RADIUS * 2,
+						JOYSTICK_BASE_RADIUS * 2
+					];
+					rect( baseBox, [ 0.04, 0.06, 0.09, baseAlpha ] );
+					rect( [ baseBox[0], baseBox[1], baseBox[2], 1 ], [ 0.82, 0.7, 0.36, ringAlpha ] );
+					rect( [ baseBox[0], baseBox[1] + baseBox[3] - 1, baseBox[2], 1 ], [ 0.82, 0.7, 0.36, ringAlpha ] );
+					rect( [ baseBox[0], baseBox[1], 1, baseBox[3] ], [ 0.82, 0.7, 0.36, ringAlpha ] );
+					rect( [ baseBox[0] + baseBox[2] - 1, baseBox[1], 1, baseBox[3] ], [ 0.82, 0.7, 0.36, ringAlpha ] );
+					const knobBox: UiRect = [
+						Math.round( joyKnob[0] - JOYSTICK_KNOB_RADIUS ),
+						Math.round( joyKnob[1] - JOYSTICK_KNOB_RADIUS ),
+						JOYSTICK_KNOB_RADIUS * 2,
+						JOYSTICK_KNOB_RADIUS * 2
+					];
+					rect( knobBox, [ 0.88, 0.72, 0.28, knobAlpha ] );
+					rect(
+						[ Math.round( joyKnob[0] - 6 ), Math.round( joyKnob[1] - 6 ), 12, 12 ],
+						[ 1, 0.94, 0.72, knobAlpha ]
+					);
+
+					// 4. Bottom-right 6 skill slots (slots 1..6 on the active quickslot page).
+					const mobileDrawerOpen = !windowWarm.active() && (panel !== "" || itemMall.read().visible);
+					if ( (!mobileDrawerOpen && !mobileMenuOpen) || carriedShortcut !== null ) {
+						for ( let i = 0; i < mobile.actionCluster.skills.length; i++ ) {
+							const n = i + 1;
+							const r = mobile.actionCluster.skills[i]!;
+							const node = hudData?.bar["GDR_TMPQS_" + n];
+							if ( !node || !hudData ) continue;
+							const backing = hudData.root.GDR_UNDERBAR!;
+							image( [ r[0] + 2, r[1] + 2, 40, 40 ], backing.texture, white, [
+								(node.rect[0] - 4) / backing.rect[2],
+								(node.rect[1] - 4) / backing.rect[3],
+								40 / backing.rect[2],
+								40 / backing.rect[3]
+							] );
+							blocks.push( r );
+							quickSlotCell(
+								hotbarSlot( hotbarPage, n ),
+								[ r[0] + 6, r[1] + 6, 32, 32 ],
+								String( n )
+							);
+							controls[controls.length - 1] = { ...controls[controls.length - 1]!, rect: r };
+							const number = hudData.bar["GDR_QS_NUMBER_" + n];
+							if ( number ) {
+								authoredImage( number, r[0] + 6 - node.rect[0], r[1] + 6 - node.rect[1] );
+							}
+						}
+					}
+
+					// 5. Primary Attack button + Target Cycle + Pickup + Quickslot Page toggle.
+					/*
+					================
+					mobileActionButton
+					================
+					*/
+					const mobileActionButton = (
+						id: string,
+						labelText: string,
+						caption: string,
+						r: UiRect,
+						actionId?: number,
+						primary = false
+					) => {
+						const down = pressed === id && hover === id;
+						const bg: readonly [number, number, number, number] = primary ?
+							(down ? [ 0.38, 0.12, 0.1, 0.92 ] : [ 0.24, 0.08, 0.08, 0.86 ]) :
+							(down ? [ 0.16, 0.18, 0.22, 0.9 ] : [ 0.08, 0.1, 0.14, 0.84 ]);
+						const border = primary ?
+							([ 0.95, 0.72, 0.28, 0.95 ] as const) :
+							([ 0.72, 0.64, 0.42, 0.85 ] as const);
+						rect( r, bg );
+						rect( [ r[0], r[1], r[2], 1 ], border );
+						rect( [ r[0], r[1] + r[3] - 1, r[2], 1 ], border );
+						rect( [ r[0], r[1], 1, r[3] ], border );
+						rect( [ r[0] + r[2] - 1, r[1], 1, r[3] ], border );
+						const actionIcon = actionId !== undefined ?
+							iconPath( hudData?.actions.find( a => a.id === actionId )?.icon ) :
+							undefined;
+						if ( actionIcon ) {
+							const iconSize = primary ? 32 : 20;
+							const ix = r[0] + Math.floor( (r[2] - iconSize) / 2 );
+							const iy = r[1] + (primary ? 8 : 3);
+							image( [ ix, iy, iconSize, iconSize ], actionIcon );
+						}
+						const textBox: UiRect = actionIcon ?
+							[ r[0] + 2, r[1] + r[3] - 16, r[2] - 4, 14 ] :
+							[ r[0] + 2, r[1] + 2, r[2] - 4, r[3] - 4 ];
+						quads.push(
+							...text.quads( caption, textBox, r, [ 0.98, 0.95, 0.84, 1 ], {
+								hAlign: 1,
+								vAlign: 1
+							} )
+						);
+						controls.push( { id, label: labelText, kind: "button", rect: r } );
+						blocks.push( r );
+					};
+					if ( !mobileDrawerOpen && !mobileMenuOpen ) {
+						mobileActionButton(
+							"mobile-attack",
+							"Attack",
+							"ATK",
+							mobile.actionCluster.attack,
+							1002,
+							true
+						);
+						mobileActionButton(
+							"mobile-target-cycle",
+							"Next target",
+							"Target",
+							mobile.actionCluster.targetCycle
+						);
+						mobileActionButton(
+							"mobile-pickup",
+							"Pick up item",
+							"Pick",
+							mobile.actionCluster.pickup,
+							1008
+						);
+						mobileActionButton(
+							"hotbar-next",
+							"Next quickslot bar",
+							"F" + (hotbarPage + 1),
+							mobile.actionCluster.pageToggle
+						);
+					}
+				} else if ( compact ) {
 					const tools = [
 						[ "hud-menu", "Menu" ],
 						[ "toggle-window:System", "Opts" ],
@@ -12504,31 +12879,37 @@ export function createUi(
 						blocks.push( r );
 					} );
 				}
-				for ( let n = 0; n <= 10; n++ ) {
-					const node = hudData?.bar["GDR_TMPQS_" + n];
-					if ( !node ) continue;
-					if ( compact ) {
-						const r = compact.slots[n]!;
-						const backing = hudData!.root.GDR_UNDERBAR!;
-						image( [ r[0] + 2, r[1] + 2, 40, 40 ], backing.texture, white, [
-							(node.rect[0] - 4) / backing.rect[2],
-							(node.rect[1] - 4) / backing.rect[3],
-							40 / backing.rect[2],
-							40 / backing.rect[3]
-						] );
-						blocks.push( r );
-					}
-					quickSlotCell(
-						hotbarSlot( hotbarPage, n ),
-						compact ?
-							[ compact.slots[n]![0] + 6, compact.slots[n]![1] + 6, 32, 32 ] :
-							authoredRect( node, barX, barY ),
-						n === 0 ? "M" : String( n % 10 )
-					);
-					const number = hudData!.bar["GDR_QS_NUMBER_" + (n === 0 ? "M" : n % 10)];
-					if ( number ) {
-						const r = compact?.slots[n];
-						authoredImage( number, r ? r[0] + 6 - node.rect[0] : barX, r ? r[1] + 6 - node.rect[1] : barY );
+				if ( !mobile ) {
+					for ( let n = 0; n <= 10; n++ ) {
+						const node = hudData?.bar["GDR_TMPQS_" + n];
+						if ( !node ) continue;
+						if ( compact ) {
+							const r = compact.slots[n]!;
+							const backing = hudData!.root.GDR_UNDERBAR!;
+							image( [ r[0] + 2, r[1] + 2, 40, 40 ], backing.texture, white, [
+								(node.rect[0] - 4) / backing.rect[2],
+								(node.rect[1] - 4) / backing.rect[3],
+								40 / backing.rect[2],
+								40 / backing.rect[3]
+							] );
+							blocks.push( r );
+						}
+						quickSlotCell(
+							hotbarSlot( hotbarPage, n ),
+							compact ?
+								[ compact.slots[n]![0] + 6, compact.slots[n]![1] + 6, 32, 32 ] :
+								authoredRect( node, barX, barY ),
+							n === 0 ? "M" : String( n % 10 )
+						);
+						const number = hudData!.bar["GDR_QS_NUMBER_" + (n === 0 ? "M" : n % 10)];
+						if ( number ) {
+							const r = compact?.slots[n];
+							authoredImage(
+								number,
+								r ? r[0] + 6 - node.rect[0] : barX,
+								r ? r[1] + 6 - node.rect[1] : barY
+							);
+						}
 					}
 				}
 				// The skill that casts next, over shortcut slot 1 (skill-press-feedback.ts).
@@ -12536,7 +12917,9 @@ export function createUi(
 				if ( slotOne ) {
 					const chip = skillQueueChip(
 						game,
-						compact ?
+						mobile ?
+							[ mobile.actionCluster.skills[0]![0] + 6, mobile.actionCluster.skills[0]![1] + 6, 32, 32 ] :
+							compact ?
 							[ compact.slots[1]![0] + 6, compact.slots[1]![1] + 6, 32, 32 ] :
 							authoredRect( slotOne, barX, barY ),
 						full,
@@ -12711,12 +13094,20 @@ export function createUi(
 					closeButton,
 					image
 				} );
-				if ( hudData && (!compact || compact.overlay === "map") ) {
+				if (
+					hudData &&
+					(!compact || (mobile && (panel === "" || windowWarm.active()) && !itemMall.read().visible) ||
+						compact.overlay === "map")
+				) {
 					const mapMark = [ quads.length, controls.length, blocks.length ] as const;
 					const root = hudData.root.GDR_MINIMAP!,
 						nodes = hudData.minimap,
-						mx = Math.max( 0, w - 129 ),
-						my = compact ? Math.max( hudData.root.GDR_PLAYER_MINI_INFO!.rect[3] + 4, targetBottom ) : 0;
+						mx = mobile ? mobile.minimap.origin[0] : Math.max( 0, w - 129 ),
+						my = mobile ?
+							mobile.minimap.origin[1] :
+							compact ?
+							Math.max( hudData.root.GDR_PLAYER_MINI_INFO!.rect[3] + 4, targetBottom ) :
+							0;
 					hudCorner = [ mx, my, root.rect[2], root.rect[3] ];
 					authoredImage( root, mx - root.rect[0], my - root.rect[1] );
 					blocks.push( hudCorner );
@@ -12806,10 +13197,18 @@ export function createUi(
 							);
 						}
 					}
+					authoredButton( nodes.GDR_MINIMAP_BTN_TOG_MAP!, mx, my, "toggle-window:Map", "Map" );
+					if ( mobile ) {
+						// Tapping either the circular minimap disc or the M button opens the World Map;
+						// zoom buttons are pushed after and sit above the disc's bottom-right corner.
+						controls[controls.length - 1] = {
+							...controls[controls.length - 1]!,
+							rect: [ mx + 14, my + 47, 109, 115 ]
+						};
+					}
 					authoredButton( nodes.GDR_MINIMAP_ZOOMIN!, mx, my, "minimap-in", "Zoom in" );
 					authoredButton( nodes.GDR_MINIMAP_ZOOMOUT!, mx, my, "minimap-out", "Zoom out" );
-					authoredButton( nodes.GDR_MINIMAP_BTN_TOG_MAP!, mx, my, "toggle-window:Map", "Map" );
-					if ( compact ) {
+					if ( compact && !mobile ) {
 						fitUiGroup(
 							quads,
 							controls,
@@ -13902,6 +14301,18 @@ export function createUi(
 								hudCopy( node.id === 14 ? "PARAM_STR" : "PARAM_INT" ),
 								(p?.statPoints ?? 0) === 0
 							);
+							if ( mobile ) {
+								const prev = controls[controls.length - 1]!;
+								controls[controls.length - 1] = {
+									...prev,
+									rect: [
+										prev.rect[0] - 6,
+										prev.rect[1] - 6,
+										Math.max( 32, prev.rect[2] + 12 ),
+										Math.max( 28, prev.rect[3] + 12 )
+									]
+								};
+							}
 						}
 					}
 					endWindow( admission );
@@ -14560,6 +14971,18 @@ export function createUi(
 						"inventory-gold",
 						hudCopy( "UIIT_STT_GOLD" )
 					);
+					if ( mobile ) {
+						const prev = controls[controls.length - 1]!;
+						controls[controls.length - 1] = {
+							...prev,
+							rect: [
+								prev.rect[0] - 8,
+								prev.rect[1] - 8,
+								Math.max( 32, prev.rect[2] + 16 ),
+								Math.max( 32, prev.rect[3] + 16 )
+							]
+						};
+					}
 					authoredText( bag.GDR_INVENTORY_STA_GOLD!, bx, by, hudCopy( "UIIT_STT_GOLD" ) );
 					if ( game?.progression?.gold !== undefined ) {
 						const money = moneyPresentation( game.progression.gold );
@@ -20635,6 +21058,79 @@ export function createUi(
 						);
 					}
 					endWindow( admission );
+				}
+				if ( mobile && mobileMenuOpen && !windowWarm.active() && hudData ) {
+					paths.push( ...commonWindowPaths );
+					const grid = mobileMenuGridLayout( mobile );
+					windowBox(
+						hudCopy( "UIIT_CTL_MENU" ) || "Menu",
+						grid.frame[0],
+						grid.frame[1],
+						grid.frame[2],
+						grid.frame[3]
+					);
+					const closeVisual: UiRect = [ grid.frame[0] + grid.frame[2] - 26, grid.frame[1] + 10, 16, 16 ];
+					if ( resources.has( CLOSE ) && resources.has( CLOSE_PRESS ) && resources.has( CLOSE_FOCUS ) ) {
+						rect(
+							closeVisual,
+							white,
+							pressed === "mobile-menu-close" ?
+								CLOSE_PRESS :
+								hover === "mobile-menu-close" ?
+								CLOSE_FOCUS :
+								CLOSE
+						);
+					}
+					controls.push( {
+						id: "mobile-menu-close",
+						label: hudCopy( "UIIT_CTL_CLOSE" ) || "Close",
+						kind: "button",
+						rect: grid.close
+					} );
+					blocks.push( grid.close );
+					const mainBtns = hudData.windows.ifmainpopup;
+					const barBtns = hudData.bar;
+					for ( const cell of grid.cells ) {
+						const down = pressed === cell.id && hover === cell.id;
+						const r = cell.rect;
+						const bg: readonly [number, number, number, number] = down ?
+							[ 0.18, 0.2, 0.24, 0.94 ] :
+							[ 0.1, 0.12, 0.15, 0.88 ];
+						const border = down ?
+							([ 0.95, 0.78, 0.35, 0.95 ] as const) :
+							([ 0.68, 0.6, 0.38, 0.82 ] as const);
+						rect( r, bg );
+						rect( [ r[0], r[1], r[2], 1 ], border );
+						rect( [ r[0], r[1] + r[3] - 1, r[2], 1 ], border );
+						rect( [ r[0], r[1], 1, r[3] ], border );
+						rect( [ r[0] + r[2] - 1, r[1], 1, r[3] ], border );
+						const iconNode = cell.key === "Inventory" ?
+							mainBtns?.GDR_BTN_INV :
+							cell.key === "Character" ?
+							mainBtns?.GDR_BTN_CHAR :
+							cell.key === "Skills" ?
+							mainBtns?.GDR_BTN_SKILL :
+							cell.key === "Quests" ?
+							mainBtns?.GDR_BTN_QUEST :
+							cell.key === "Party" ?
+							mainBtns?.GDR_BTN_PARTY :
+							cell.key === "Guild" ?
+							barBtns.GDR_BTN_COMMUNITY :
+							cell.key === "Mall" ?
+							barBtns.GDR_BTN_ITEM_MALL :
+							barBtns.GDR_BTN_OPTION;
+						if ( iconNode?.texture ) {
+							image( cell.iconRect, iconNode.texture );
+						}
+						quads.push(
+							...text.quads( cell.label, cell.labelRect, r, [ 0.98, 0.95, 0.84, 1 ], {
+								hAlign: 1,
+								vAlign: 1
+							} )
+						);
+						controls.push( { id: cell.id, label: cell.label, kind: "button", rect: r } );
+						blocks.push( r );
+					}
 				}
 			}
 			if ( worldVisible ) {
