@@ -37,7 +37,7 @@ import { createWorldDecoder } from "./world/world";
 import { createModelDecoder } from "./model/model";
 import { AssetAbsentError, createPacks } from "./packs/packs";
 import { createBackgroundInstaller } from "./install";
-import { createLocalArchives } from "./archives/archives";
+import { createLocalArchives, readerCount } from "./archives/archives";
 import { pageEntryBundle } from "@/engine/foundation/assets/page-entry";
 import { readBytes } from "@/engine/foundation/assets/read-bytes";
 import { currentArchiveDelivery } from "@/engine/foundation/assets/archive-delivery";
@@ -425,7 +425,12 @@ export function createLoader( send: ( result: AssetWorkerMessage, transfer: Tran
 	// every other delivery. archiveLifetime ends a preparation on disposal.
 	const archives = DELIVERY === "opfs" ?
 		createLocalArchives(
-			{ request: requestArchive, storage: navigator.storage, wait: retryDownloadAfter },
+			{
+				request: requestArchive,
+				storage: navigator.storage,
+				wait: retryDownloadAfter,
+				readers: readerCount( navigator.hardwareConcurrency || 1 )
+			},
 			self.location.origin
 		) :
 		null;

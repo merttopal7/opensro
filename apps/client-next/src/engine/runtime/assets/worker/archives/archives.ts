@@ -43,6 +43,7 @@ import {
 } from "@/engine/foundation/assets/temir-download";
 import { updatesBaseUrl } from "@/engine/foundation/assets/archive-delivery";
 import { gunzipBytes } from "@/engine/foundation/assets/read-bytes";
+import type { ReaderReply, ReaderRequest } from "./internal/reader-contract";
 
 // The packers' passphrase (apps/server/internal/agent/updates/temir.go
 // DefaultArchiveKey, new-silkroad sropk.rs). It is in the public sources;
@@ -62,19 +63,55 @@ const GIB = 1 << 30;
 // LOCK_RETRY_MS steps, before it calls the file taken.
 const LOCK_WAIT_MS = 15000;
 const LOCK_RETRY_MS = 250;
+const MAX_READERS = 4;
 
 /*
 ================
 ArchiveIo
 
 What prepare() needs from the worker: its fetch, its storage manager and a
-cancellable wait (the worker's timers belong to the loader).
+cancellable wait (the worker's timers belong to the loader). readers is
+how many reader workers read and decrypt in parallel once the archives are
+whole (readerCount; 0 reads on this worker); spawnReader stands in for the
+real worker in tests.
 ================
 */
 export interface ArchiveIo {
 	request: ( url: string, init: RequestInit ) => Promise<Response>;
 	storage: StorageManager;
 	wait: ( ms: number, signal: AbortSignal ) => Promise<void>;
+	readers: number;
+	spawnReader?: () => Worker;
+}
+
+/*
+================
+readerCount
+
+How many reader workers a device gets: four, the count A1 measured at
+~290 MB/s against the desktop shell's 146-174 MB/s, but never more than
+leaves two cores for the page and the asset worker. Below two, parallel
+reading cannot pay for its messages and the asset worker reads alone.
+================
+*/
+export function readerCount( cores: number ) {
+	const count = Math.min( MAX_READERS, cores - 2 );
+	return count >= 2 ? count : 0;
+}
+
+/*
+================
+spawnReader
+
+A reader worker (reader-entry.ts). Its messages are ReaderRequest and
+ReaderReply (internal/reader-contract.ts).
+================
+*/
+function spawnReader(): Worker {
+	return new Worker( new URL( "./reader-entry.ts", import.meta.url ), {
+		type: "module",
+		name: "sro-archive-reader"
+	} );
 }
 
 /*
@@ -125,8 +162,21 @@ Mounted
 */
 interface Mounted {
 	name: string;
+	// This worker's own handle; closed while reader workers hold the file.
 	handle: FileSystemSyncAccessHandle;
 	archive: TemirArchive;
+}
+
+/*
+================
+Reader
+
+A running reader worker and how many of its reads are outstanding.
+================
+*/
+interface Reader {
+	port: Worker;
+	pending: number;
 }
 
 /*
@@ -182,7 +232,15 @@ export function createLocalArchives( io: ArchiveIo, origin: string, passphrase =
 	const mounted: Mounted[] = [];
 	const overlay = new Map<string, { mount: Mounted; entry: TemirEntry; }>();
 	const handles: FileSystemSyncAccessHandle[] = [];
-	let ready = false, disposed = false;
+	// The reader workers once started (startReaders), and every read they
+	// owe an answer, by id.
+	const readers: Reader[] = [];
+	const owed = new Map<number, {
+		reader: Reader;
+		resolve: ( bytes: Uint8Array<ArrayBuffer> ) => void;
+		reject: ( error: Error ) => void;
+	}>();
+	let ready = false, disposed = false, nextRead = 0;
 
 	/*
 	================
@@ -494,8 +552,10 @@ export function createLocalArchives( io: ArchiveIo, origin: string, passphrase =
 		const pending = wanted.filter( f => !archiveComplete( f.release, f.file, f.progress ) );
 		await requireSpace( missingBytes( pending ) );
 		for ( const f of pending ) yield* obtain( f );
+		const patchMounts: Mounted[] = [];
 		for ( const f of wanted ) {
 			const patch = mount( f.release.name, f.file, passphrase );
+			patchMounts.push( patch );
 			for ( const entry of f.entries ) {
 				const key = normalizeTemirPath( entry.path ), held = patch.archive.entries.get( key );
 				if ( held ) overlay.set( key, { mount: patch, entry: held } );
@@ -504,7 +564,96 @@ export function createLocalArchives( io: ArchiveIo, origin: string, passphrase =
 		for ( const f of [ ...bases, ...wanted ] ) close( f.progress );
 		// The manifest a later start falls back to when /updates/ is out of reach.
 		if ( !unreachable ) await saveManifest( dir, text, signal );
+		await startReaders( dir, [ ...mounted, ...patchMounts ], signal );
 		ready = !disposed;
+	}
+
+	/*
+	================
+	answer
+
+	A reader's reply settles the read it owes.
+	================
+	*/
+	function answer( reply: ReaderReply ) {
+		if ( reply.kind !== "bytes" && reply.kind !== "read-failed" ) return;
+		const read = owed.get( reply.id );
+		if ( !read ) return;
+		owed.delete( reply.id );
+		read.reader.pending--;
+		const { resolve, reject } = read;
+		if ( reply.kind === "bytes" ) resolve( reply.bytes );
+		else reject( new Error( reply.error ) );
+	}
+
+	/*
+	================
+	startReaders
+
+	Hands the archive files to io.readers reader workers (K8). Read-write
+	handles are exclusive, so this worker closes its own first; each reader
+	opens every file read-only, which several may. A browser without the
+	read-only mode (an open refused) keeps the files here: the readers
+	stop, this worker reopens its handles and reads alone, as before.
+	================
+	*/
+	async function startReaders( dir: FileSystemDirectoryHandle, files: Mounted[], signal: AbortSignal ) {
+		if ( io.readers < 2 || files.length === 0 ) return;
+		for ( const file of files ) close( file.handle );
+		const pool: Reader[] = [];
+		for ( let i = 0; i < io.readers; i++ ) pool.push( { port: (io.spawnReader ?? spawnReader)(), pending: 0 } );
+		const opened = await Promise.all( pool.map( reader =>
+			new Promise<boolean>( resolve => {
+				reader.port.onmessage = ( event: MessageEvent<ReaderReply> ) => {
+					if ( event.data.kind === "opened" ) resolve( true );
+					else if ( event.data.kind === "open-failed" ) resolve( false );
+				};
+				const open: ReaderRequest = { kind: "open", directory: DIRECTORY, files: files.map( f => f.name ) };
+				reader.port.postMessage( open );
+			} )
+		) );
+		if ( opened.every( Boolean ) && !disposed ) {
+			for ( const reader of pool ) {
+				reader.port.onmessage = ( event: MessageEvent<ReaderReply> ) => answer( event.data );
+			}
+			readers.push( ...pool );
+			return;
+		}
+		for ( const reader of pool ) reader.port.terminate();
+		for ( const file of files ) file.handle = await openHandle( dir, file.name, signal );
+	}
+
+	/*
+	================
+	readRange
+
+	length plaintext bytes of entry from stream offset start: on the least
+	busy reader worker, or here when there are none.
+	================
+	*/
+	function readRange( source: Mounted, entry: TemirEntry, start: number, length: number ) {
+		if ( readers.length === 0 ) {
+			const bytes = readExact( source.handle, entry.offset + start, length );
+			decryptTemirRange( source.archive, entry, start, bytes );
+			return Promise.resolve( bytes );
+		}
+		const reader = readers.reduce( ( best, r ) => r.pending < best.pending ? r : best );
+		const id = nextRead++;
+		reader.pending++;
+		return new Promise<Uint8Array<ArrayBuffer>>( ( resolve, reject ) => {
+			owed.set( id, { reader, resolve, reject } );
+			const request: ReaderRequest = {
+				kind: "read",
+				id,
+				file: source.name,
+				at: entry.offset + start,
+				length,
+				key: source.archive.keyWords,
+				nonce: entry.nonce,
+				start
+			};
+			reader.port.postMessage( request );
+		} );
 	}
 
 	/*
@@ -550,9 +699,7 @@ export function createLocalArchives( io: ArchiveIo, origin: string, passphrase =
 		const key = normalizeTemirPath( decodeURIComponent( new URL( url ).pathname ) );
 		const packed = !range && key.endsWith( ".json" ) ? find( key + ".gz" ) : null;
 		if ( packed ) {
-			const compressed = readExact( packed.mount.handle, packed.entry.offset, packed.entry.length );
-			decryptTemirRange( packed.mount.archive, packed.entry, 0, compressed );
-			return gunzipBytes( compressed, limit );
+			return gunzipBytes( await readRange( packed.mount, packed.entry, 0, packed.entry.length ), limit );
 		}
 		const hit = find( key );
 		if ( !hit ) throw statusError( "Asset HTTP 404", 404 );
@@ -561,16 +708,12 @@ export function createLocalArchives( io: ArchiveIo, origin: string, passphrase =
 			if ( range.total !== entry.length || range.start > range.end || range.end >= entry.length ) {
 				throw new Error( "Invalid asset range response" );
 			}
-			const bytes = readExact( source.handle, entry.offset + range.start, range.end - range.start + 1 );
-			decryptTemirRange( source.archive, entry, range.start, bytes );
-			return bytes;
+			return readRange( source, entry, range.start, range.end - range.start + 1 );
 		}
 		if ( entry.length > limit ) {
 			throw Object.assign( new Error( "Asset exceeds byte budget" ), { code: "ASSET_BYTE_LIMIT" } );
 		}
-		const bytes = readExact( source.handle, entry.offset, entry.length );
-		decryptTemirRange( source.archive, entry, 0, bytes );
-		return bytes;
+		return readRange( source, entry, 0, entry.length );
 	}
 
 	return {
@@ -586,6 +729,9 @@ export function createLocalArchives( io: ArchiveIo, origin: string, passphrase =
 		dispose() {
 			disposed = true;
 			ready = false;
+			for ( const reader of readers ) reader.port.terminate();
+			readers.length = 0;
+			for ( const id of [ ...owed.keys() ] ) answer( { kind: "read-failed", id, error: "Game archives closed" } );
 			// Every open handle, mounted archives included, is in handles.
 			for ( const handle of handles ) handle.close();
 			mounted.length = 0;

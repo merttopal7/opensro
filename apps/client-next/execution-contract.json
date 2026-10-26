@@ -2597,6 +2597,13 @@
 				"createSunDropMarkers",
 				"step"
 			]
+		},
+		{
+			"consumer": "src/engine/runtime/assets/worker/archives/reader.ts",
+			"provider": "src/engine/runtime/assets/worker/archives/reader-entry.ts",
+			"functions": [
+				"sendToArchives"
+			]
 		}
 	],
 	"boundaries": [
@@ -4125,6 +4132,27 @@
 			"function": "readBytes",
 			"kind": "callback",
 			"reason": "Asset loader supplies received-byte progress through ReadBytesOptions; callers without progress leave it absent."
+		},
+		{
+			"file": "src/engine/runtime/assets/worker/archives/reader-entry.ts",
+			"expression": "port.postMessage",
+			"function": "sendToArchives",
+			"kind": "worker-port",
+			"reason": "Typed DedicatedWorker port projection of an archive reader (K8); transferred buffers cross the reader/asset-worker boundary."
+		},
+		{
+			"file": "src/engine/runtime/assets/worker/archives/archives.ts",
+			"expression": "resolve",
+			"function": "answer",
+			"kind": "callback",
+			"reason": "Promise resolver of a range read owed by a reader worker (K8): settled by the reader's reply."
+		},
+		{
+			"file": "src/engine/runtime/assets/worker/archives/archives.ts",
+			"expression": "reject",
+			"function": "answer",
+			"kind": "callback",
+			"reason": "Promise rejecter of a range read owed by a reader worker (K8): settled by a failed read or by dispose."
 		}
 	],
 	"sequences": [

@@ -28,10 +28,18 @@ export function memoryFile() {
 memoryHandle
 
 A FileSystemSyncAccessHandle over file (a fresh one when omitted). flushed
-counts flush calls; closed records close().
+counts flush calls; closed records close(). Like the real handle, a closed
+one refuses to read (InvalidStateError), so code that reads through a
+handle it gave up fails here too.
 ================
 */
 export function memoryHandle( file = memoryFile() ) {
+	const open = () => {
+		if ( !handle.closed ) return;
+		const error = new Error( "The access handle was closed" );
+		error.name = "InvalidStateError";
+		throw error;
+	};
 	const handle = {
 		flushed: 0,
 		closed: false,
@@ -42,6 +50,7 @@ export function memoryHandle( file = memoryFile() ) {
 		 * @param {{ at?: number }} [options]
 		 */
 		read( buffer, { at = 0 } = {} ) {
+			open();
 			const part = file.bytes.subarray( at, at + buffer.length );
 			buffer.set( part );
 			return part.length;
@@ -82,10 +91,12 @@ memoryStorage
 A StorageManager with getDirectory and estimate. quota bounds estimate();
 files maps every file's path ("dir/name") to its bytes. The first
 lockedOpens createSyncAccessHandle calls fail as a file another worker
-still holds does (NoModificationAllowedError).
+still holds does (NoModificationAllowedError). readOnly false is a browser
+without the read-only mode: such an open fails the same way, as the second
+read-write open of a file would.
 ================
 */
-export function memoryStorage( { quota = 1 << 30, lockedOpens = 0 } = {} ) {
+export function memoryStorage( { quota = 1 << 30, lockedOpens = 0, readOnly = true } = {} ) {
 	let locked = lockedOpens;
 	/** @type {Map<string, ReturnType<typeof memoryFile>>} */
 	const files = new Map();
@@ -106,9 +117,11 @@ export function memoryStorage( { quota = 1 << 30, lockedOpens = 0 } = {} ) {
 			const key = path + name;
 			if ( !files.has( key ) ) files.set( key, memoryFile() );
 			return {
-				createSyncAccessHandle: async () => {
-					if ( locked > 0 ) {
-						locked--;
+				/** @param {{ mode?: string }} [options] */
+				createSyncAccessHandle: async options => {
+					const refused = !readOnly && options?.mode === "read-only";
+					if ( locked > 0 || refused ) {
+						if ( !refused ) locked--;
 						const error = new Error(
 							"Access Handles cannot be created if there is another open Access Handle"
 						);

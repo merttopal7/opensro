@@ -191,7 +191,9 @@
     "src/engine/runtime/ui/hud/compact-hud.ts": "src/engine/runtime/ui/ui.ts",
     "src/engine/runtime/ui/hud/world-map.ts": "src/engine/runtime/ui/ui.ts",
     "src/engine/runtime/ui/hud/hunting-guide.ts": "src/engine/runtime/ui/hud/world-map.ts",
-    "src/engine/runtime/assets/worker/archives/archives.ts": "src/engine/runtime/assets/worker/loader.ts"
+    "src/engine/runtime/assets/worker/archives/archives.ts": "src/engine/runtime/assets/worker/loader.ts",
+    "src/engine/runtime/assets/worker/archives/reader-entry.ts": "src/engine/runtime/assets/worker/archives/archives.ts",
+    "src/engine/runtime/assets/worker/archives/reader.ts": "src/engine/runtime/assets/worker/archives/reader-entry.ts"
   },
   "internals": {
     "src/engine/runtime/characters/resources/procedural-effects.ts": "src/engine/runtime/characters/resources/resources.ts",
@@ -242,13 +244,15 @@
   },
   "workers": {
     "src/engine/runtime/simulation/worker/entry.ts": "src/engine/runtime/simulation/host.ts",
-    "src/engine/runtime/assets/worker/entry.ts": "src/engine/runtime/assets/assets.ts"
+    "src/engine/runtime/assets/worker/entry.ts": "src/engine/runtime/assets/assets.ts",
+    "src/engine/runtime/assets/worker/archives/reader-entry.ts": "src/engine/runtime/assets/worker/archives/archives.ts"
   },
   "contracts": {
     "src/engine/runtime/assets/worker/packs/internal/pack-contract.ts": "src/engine/runtime/assets/worker/packs/packs.ts",
     "src/engine/runtime/renderer/internal/gpu-contract.ts": "src/engine/runtime/renderer/renderer.ts",
     "src/engine/runtime/assets/worker/world/internal/resource-contract.ts": "src/engine/runtime/assets/worker/world/world.ts",
     "src/engine/runtime/ui/title/internal/title-contract.ts": "src/engine/runtime/ui/title/title.ts",
-    "src/engine/runtime/characters/internal/presentation-contract.ts": "src/engine/runtime/characters/characters.ts"
+    "src/engine/runtime/characters/internal/presentation-contract.ts": "src/engine/runtime/characters/characters.ts",
+    "src/engine/runtime/assets/worker/archives/internal/reader-contract.ts": "src/engine/runtime/assets/worker/archives/archives.ts"
   }
 }

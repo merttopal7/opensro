@@ -34,6 +34,8 @@ const ASYNC_OWNERS = [
 	// The installed PWA's .temir archives in OPFS: download, open, read
 	// (docs/PWA-OPFS-MIGRATION.md A3b). Worker-only I/O.
 	runtime + "assets/worker/archives/archives.ts",
+	// A reader worker opens the archives read-only (K8).
+	runtime + "assets/worker/archives/reader.ts",
 	// navigator.storage.persist(): a Window-only call the asset worker cannot make.
 	"src/engine/foundation/assets/persistent-storage.ts",
 	// The installed PWA's resumable .temir download into OPFS; its caller
@@ -229,7 +231,12 @@ export const rules = {
 	],
 	WebSocket: [ runtime + "simulation/worker/network/network.ts" ],
 	WebTransport: [ runtime + "simulation/worker/network/network.ts" ],
-	Worker: [ runtime + "simulation/host.ts", runtime + "assets/assets.ts" ]
+	Worker: [
+		runtime + "simulation/host.ts",
+		runtime + "assets/assets.ts",
+		// The installed PWA's archive readers (K8, docs/PWA-OPFS-MIGRATION.md).
+		runtime + "assets/worker/archives/archives.ts"
+	]
 };
 // A geometry pipeline for a native state no scene precompiles is compiled
 // at its first upload, as D3D9 applies any render state at once.

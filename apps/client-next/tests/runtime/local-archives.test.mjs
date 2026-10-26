@@ -21,8 +21,11 @@ import path from "node:path";
 import { root } from "../../tools/project.mjs";
 import { memoryStorage } from "../helpers/opfs-memory.mjs";
 
-const { createLocalArchives } = await import(
+const { createLocalArchives, readerCount } = await import(
 	sourceFileUrl( path.join( root, "src/engine/runtime/assets/worker/archives/archives.ts" ) ).href
+);
+const { createArchiveReader } = await import(
+	sourceFileUrl( path.join( root, "src/engine/runtime/assets/worker/archives/reader.ts" ) ).href
 );
 const temir = await import( sourceFileUrl( path.join( root, "src/engine/foundation/assets/temir.ts" ) ).href );
 
@@ -138,10 +141,18 @@ function countingWait() {
 prepared
 
 Runs prepare() to the end and returns the archives with its progress.
+readers is { count, spawn } for reader workers; none by default.
 ================
 */
-async function prepared( storage, server, wait = countingWait() ) {
-	const archives = createLocalArchives( { request: server.request, storage, wait }, ORIGIN, PASSPHRASE );
+/**
+ * @param {any} storage
+ * @param {{ request: (url: string) => Promise<Response>, requests: string[] }} server
+ * @param {() => Promise<void>} [wait]
+ * @param {{ count: number, spawn?: () => any }} [readers]
+ */
+async function prepared( storage, server, wait = countingWait(), readers = { count: 0 } ) {
+	const io = { request: server.request, storage, wait, readers: readers.count, spawnReader: readers.spawn };
+	const archives = createLocalArchives( io, ORIGIN, PASSPHRASE );
 	const steps = [];
 	for await ( const step of archives.prepare( new AbortController().signal ) ) steps.push( step );
 	return { archives, steps };
@@ -277,7 +288,12 @@ test("a path no archive holds is a 404, as the network would answer", async () =
 
 test("reads wait for prepare", async () => {
 	const archives = createLocalArchives(
-		{ request: updatesServer( release( BASE ) ).request, storage: memoryStorage(), wait: countingWait() },
+		{
+			request: updatesServer( release( BASE ) ).request,
+			storage: memoryStorage(),
+			wait: countingWait(),
+			readers: 0
+		},
 		ORIGIN,
 		PASSPHRASE
 	);
@@ -332,4 +348,86 @@ test("when /updates/ is out of reach and files are missing, its error stands", a
 	(await prepared( storage, updatesServer( release( BASE ) ) )).archives.dispose();
 	storage.files.delete( "temir/Data.temir" );
 	await assert.rejects( prepared( storage, updatesServer( { manifest: null, files: new Map() } ) ), /HTTP 503/ );
+});
+
+/*
+================
+inProcessReaders
+
+Reader workers that run the real reader (reader.ts) in this process over
+storage: each port delivers messages on a later microtask, as a worker's
+would. A reader made with mute drops reads, so they stay owed. ports
+records every spawned port.
+================
+*/
+function inProcessReaders( storage, count, { mute = false } = {} ) {
+	const ports = [];
+	const spawn = () => {
+		const port = {
+			/** @type {((event: { data: any }) => void) | null} */
+			onmessage: null,
+			terminated: false,
+			reads: 0,
+			postMessage( request ) {
+				if ( request.kind === "read" ) {
+					port.reads++;
+					if ( mute ) return;
+				}
+				queueMicrotask( () => reader.receive( request ) );
+			},
+			terminate() {
+				port.terminated = true;
+			}
+		};
+		const reader = createArchiveReader( reply => queueMicrotask( () => port.onmessage?.( { data: reply } ) ) );
+		ports.push( port );
+		return port;
+	};
+	// A reader worker opens its files through its own navigator.storage.
+	Object.defineProperty( globalThis.navigator, "storage", { value: storage, configurable: true } );
+	return { count, spawn, ports };
+}
+
+test("reader counts leave two cores and run four at most", () => {
+	assert.equal( readerCount( 1 ), 0 );
+	assert.equal( readerCount( 3 ), 0 );
+	assert.equal( readerCount( 4 ), 2 );
+	assert.equal( readerCount( 6 ), 4 );
+	assert.equal( readerCount( 32 ), 4 );
+});
+
+test("reader workers return the same bytes and share the reads", async () => {
+	const storage = memoryStorage(), readers = inProcessReaders( storage, 3 );
+	const { archives } = await prepared( storage, updatesServer( release( BASE ) ), countingWait(), readers );
+	assert.equal( readers.ports.length, 3 );
+	const reads = await Promise.all( [
+		text( archives, MANIFEST_URL ),
+		archives.read( MAP_URL, 1 << 20 ),
+		archives.read( MAP_URL, 1 << 20, { start: 100, end: 432, total: PATTERN.length } )
+	] );
+	assert.equal( reads[0], MANIFEST_TEXT );
+	assert.deepEqual( reads[1], PATTERN );
+	assert.deepEqual( reads[2], PATTERN.subarray( 100, 433 ) );
+	// Three reads at once go to the three least busy readers.
+	assert.deepEqual( readers.ports.map( p => p.reads ), [ 1, 1, 1 ] );
+	archives.dispose();
+	assert.ok( readers.ports.every( p => p.terminated ) );
+});
+
+test("a browser without read-only handles reads on the asset worker alone", async () => {
+	const storage = memoryStorage( { readOnly: false } ), readers = inProcessReaders( storage, 3 );
+	const { archives } = await prepared( storage, updatesServer( release( BASE ) ), countingWait(), readers );
+	assert.ok( readers.ports.every( p => p.terminated ) );
+	assert.equal( await text( archives, MANIFEST_URL ), MANIFEST_TEXT );
+	assert.deepEqual( await archives.read( MAP_URL, 1 << 20 ), PATTERN );
+	assert.ok( readers.ports.every( p => p.reads === 0 ) );
+	archives.dispose();
+});
+
+test("closing the archives fails the reads the readers still owe", async () => {
+	const storage = memoryStorage(), readers = inProcessReaders( storage, 2, { mute: true } );
+	const { archives } = await prepared( storage, updatesServer( release( BASE ) ), countingWait(), readers );
+	const owed = archives.read( MAP_URL, 1 << 20 );
+	archives.dispose();
+	await assert.rejects( owed, /Game archives closed/ );
 });

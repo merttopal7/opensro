@@ -88,7 +88,7 @@ Tauri'de Rust'ın yaptığı her işin bir tarayıcı karşılığı var:
 | K5 | Yerel arşiv modu bir **yetenek** olur, UA kontrolü değil | Bugünkü `desktopShell` bayrağı "Cache Storage ve SHA'yı atla, bütçeleri yükselt" demek. Tauri ve OPFS ikisi de bu yeteneği açar. |
 | K6 | Patch'ler önce **overlay** (ayrı dosya), sonra **yerinde birleştirme** | Overlay, A6'yı hızlı teslim eder. Birleştirme (A7), dosya sayısını ve okuma maliyetini sınırlar. |
 | K7 | Oyun kabuğu (JS/CSS/manifest) **Media.temir'den** sunulur | Kod ile veri aynı patch'te güncellenir. Tauri bugün de böyle çalışıyor. Sürüm uyuşmazlığı oluşmaz. |
-| K8 | Okumalar `read-only` sync handle'lı **birkaç worker'a** dağıtılır. WASM SIMD şimdilik yok. | A1: 4 worker ~290 MB/s, Tauri 146–174 MB/s. Tek worker'da şifre çözme %69 pay alıyor. |
+| K8 | Okumalar `read-only` sync handle'lı **birkaç worker'a** dağıtılır. WASM SIMD şimdilik yok. | A1: 4 worker ~290 MB/s, Tauri 146–174 MB/s. Tek worker'da şifre çözme %69 pay alıyor. Uygulandı. Açılış sahnesinde fark ölçülmedi (bkz. "K8 uygulaması"). |
 
 ## 5. `.temir` v1 formatı (okuyucu için özet)
 
@@ -444,6 +444,42 @@ Bekletilen (K7, yalnızca ihtiyaç olursa):
     patch'ler kaldırılarak yapılmalı (patch yoksa temel arşiv baştan iner).
   - Gerçek üretim zinciriyle uçtan uca test yapılmadı. Bu, üretim
     sunucusundan yüzlerce MB ile 1 GB arası indirme gerektiriyor.
+
+### K8 uygulaması: paralel okuyucu worker'lar: **TAMAMLANDI**
+
+- `worker/archives/reader.ts` + `reader-entry.ts` (worker girişi) +
+  `internal/reader-contract.ts` (yalnızca mesaj tipleri). Arşivler tamamlanınca
+  `archives.ts` kendi read-write handle'larını kapatıyor ve
+  `readerCount(navigator.hardwareConcurrency)` kadar okuyucu başlatıyor:
+  en çok 4, page ve asset worker için 2 çekirdek kalacak şekilde, 2'nin
+  altında hiç yok. Her okuyucu bütün arşiv dosyalarını `read-only` açıyor.
+  Okuma isteği en az meşgul okuyucuya gidiyor. Okuyucu okuyup şifreyi
+  çözüyor ve tamponu transfer ederek geri veriyor. Anahtarlar ve içindekiler
+  tabloları asset worker'da kalıyor.
+- **Geri dönüş:** Bir okuyucu dosyayı `read-only` açamazsa (o mod olmayan
+  tarayıcı) okuyucular durduruluyor, asset worker handle'larını yeniden
+  açıp tek başına okuyor (önceki davranış).
+- Kayıtlar: `ownership.json` (modül, worker, sözleşme), `verify-capabilities`
+  (`Worker`: `archives.ts`; async: `reader.ts`), `execution-contract.json`
+  (`sendToArchives` capability'si, worker-port sınırı, resolver sınırları).
+- Testler: `local-archives.test.mjs` 18 test. Gerçek `reader.ts` süreç içinde
+  sahte bir port arkasında çalışıyor: aynı byte'lar ve okumalar üç okuyucuya
+  dağılıyor; `read-only` olmayan tarayıcıda geri dönüş; `dispose` bekleyen
+  okumaları reddediyor; okuyucu sayısı kuralı. Test yardımcısının kapalı
+  handle'ı artık gerçeği gibi okumayı reddediyor. Böylece geri dönüş
+  mutasyonu yakalanıyor (önceden yakalanmıyordu).
+- **Oyun içi ölçüm (2026-10-26, Edge 155 headless, 14 çekirdek, gerçek
+  arşivler, aynı OPFS kurulumu, iki build dönüşümlü, 4'er çalıştırma):**
+  açılış sahnesine ("Frontend: intro") ulaşma süresi tek worker'la ortalama
+  9401 ms, 4 okuyucuyla 9352 ms. **Anlamlı fark yok.** Açılış sahnesi
+  okumayla sınırlı değil. Süreyi headless ortamdaki yazılımsal GPU ve
+  çözme işleri belirliyor. Ham okuma hızı (A1: ~290'a karşı ~100 MB/s) ve
+  asset worker'ın şifre çözmeden kurtulması, dünyada gezinirken akan veride
+  ve yavaş CPU'larda fayda sağlayabilir. Bu henüz ölçülmedi. Özellik
+  tutuluyor (zararı ölçülmedi), ama oyun içi kazancı kanıtlanmış değil.
+- Ölçüm notu: CDP'nin `Emulation.setHardwareConcurrencyOverride` ayarı
+  worker'lara uygulanmıyor. A/B karşılaştırması bu yüzden okuyucu sayısı
+  0'a sabitlenmiş ikinci bir build ile yapıldı (commit edilmedi).
 
 ### A7. Patch'ler: yerinde birleştirme
 
