@@ -21,6 +21,7 @@ import { createPackIndex, PACK_MAGIC } from "./index/index";
 import type { PackDescriptor, PackEntry, PackDownload } from "./internal/pack-contract";
 import { gunzipBytes } from "@/engine/foundation/assets/read-bytes";
 import { createPackBlocks } from "./blocks";
+import { currentArchiveDelivery } from "@/engine/foundation/assets/archive-delivery";
 import { textureVariantPath, type TextureVariant } from "@/engine/foundation/assets/texture-variants";
 export type { PackRange } from "./internal/pack-contract";
 
@@ -93,8 +94,10 @@ export function createPacks(
 	activity: ( path: string, event: "start" | "ready" | "end" ) => void = () => {}
 ) {
 	const persistent = createPersistentAssets(), parser = createPackIndex(), lifetime = new AbortController();
-	const desktopShell = typeof navigator !== "undefined" && /\bOpenSRODesktop\//.test( navigator.userAgent );
-	const residentBudget = desktopShell ? 256 << 20 : RESIDENT_PACK_BYTES;
+	// The desktop shell and the installed PWA read local, already verified
+	// archives: no Cache Storage, no per-member SHA-256 (archive-delivery.ts).
+	const localArchives = currentArchiveDelivery() !== "network";
+	const residentBudget = localArchives ? 256 << 20 : RESIDENT_PACK_BYTES;
 	const blocks = createPackBlocks( download, lifetime.signal );
 	type Index = ReturnType<typeof parser.manifest>;
 	type Loaded = { bytes: Uint8Array<ArrayBuffer>; start: number; };
@@ -189,7 +192,7 @@ export function createPacks(
 						JSON.parse( new TextDecoder( "utf-8", { fatal: true } ).decode( bytes ) )
 					);
 					// The startup packs and their members are what eviction keeps.
-					if ( !desktopShell ) {
+					if ( !localArchives ) {
 						persistent.setStartup(
 							base,
 							[ ...admitted.packs.values() ].filter( pack => pack.load === "startup" ).flatMap( pack => [
@@ -234,7 +237,7 @@ export function createPacks(
 			if ( shared ) return shared;
 		}
 		const operation = (async () => {
-			let bytes = desktopShell ?
+			let bytes = localArchives ?
 				null :
 				await persistent.read( base, descriptor.sha256, descriptor.bytes, lifetime.signal );
 			if ( bytes && await sha( bytes ) !== descriptor.sha256 ) {
@@ -243,12 +246,12 @@ export function createPacks(
 			}
 			const missing = !bytes;
 			bytes ??= await download( base + descriptor.path, descriptor.bytes, lifetime.signal );
-			if ( missing && !desktopShell && await sha( bytes ) !== descriptor.sha256 ) {
+			if ( missing && !localArchives && await sha( bytes ) !== descriptor.sha256 ) {
 				throw new Error( "Pack SHA-256 mismatch" );
 			}
 			const loaded = { bytes, start: parser.header( bytes, descriptor ) };
 			if ( disposed ) throw new Error( "Pack owner disposed" );
-			if ( missing && !desktopShell ) persistent.enqueue( base, descriptor.sha256, bytes );
+			if ( missing && !localArchives ) persistent.enqueue( base, descriptor.sha256, bytes );
 			while ( residentBytes + bytes.length > residentBudget && cache.size ) {
 				const key = cache.keys().next().value!;
 				residentBytes -= cache.get( key )!.bytes.length;
@@ -307,7 +310,7 @@ export function createPacks(
 			let bytes: Uint8Array<ArrayBuffer>;
 			// Loose deployments have no containers. A verified member surviving refresh
 			// can satisfy demand directly without probing a known-absent pack again.
-			let saved = desktopShell || cache.has( entry.packPath ) ?
+			let saved = localArchives || cache.has( entry.packPath ) ?
 				null :
 				await persistent.read( url.origin, entry.sha256, entry.length, signal );
 			if ( saved && await sha( saved ) !== entry.sha256 ) {
@@ -351,11 +354,11 @@ export function createPacks(
 			}
 			if ( disposed || signal.aborted ) throw new Error( "Asset request cancelled" );
 			if ( bytes.length !== entry.length ) throw new Error( "Asset length disagrees with manifest" );
-			if ( !saved && !desktopShell && await sha( bytes ) !== entry.sha256 ) {
+			if ( !saved && !localArchives && await sha( bytes ) !== entry.sha256 ) {
 				throw new Error( "Asset SHA-256 mismatch" );
 			}
 			if ( disposed || signal.aborted ) throw Error( "Asset request cancelled" );
-			if ( !saved && !desktopShell && !cache.has( entry.packPath ) ) {
+			if ( !saved && !localArchives && !cache.has( entry.packPath ) ) {
 				persistent.enqueue( url.origin, entry.sha256, bytes );
 			}
 			const result = gzip ?
@@ -416,7 +419,7 @@ export function createPacks(
 	================
 	*/
 	async function install( url: URL, signal: AbortSignal ): Promise<boolean> {
-		if ( disposed || signal.aborted || desktopShell ) return false;
+		if ( disposed || signal.aborted || localArchives ) return false;
 		const registry = await untilCancelled( manifest( url.origin ), signal );
 		const entry = await untilCancelled(
 			servedEntry( registry, decodeURIComponent( url.pathname ).toLowerCase() ),

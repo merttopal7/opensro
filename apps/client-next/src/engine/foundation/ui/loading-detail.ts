@@ -113,7 +113,8 @@ loadingFileLabel
 
 Plain words for the file being fetched: its pack group for a pack
 (/assets/packs/game-images-004-<hash>.bin -> "interface images"), else its
-top-level asset folder. Empty when nothing names it.
+top-level asset folder. The installed app's first download names a .temir
+archive (Media.temir -> "game files (Media)"). Empty when nothing names it.
 ================
 */
 export function loadingFileLabel( file: string ): string {
@@ -124,6 +125,8 @@ export function loadingFileLabel( file: string ): string {
 	} catch {
 		// Not a URL; use it as a path.
 	}
+	const archive = /\/(Patch\d+|[A-Za-z]+)\.temir$/.exec( path );
+	if ( archive ) return `game files (${archive[1]})`;
 	const pack = /\/packs\/(?:.*\/)?([a-z-]+?)-\d{3}-[0-9a-f]+\.bin$/i.exec( path );
 	if ( pack ) return packGroupName( pack[1]!.toLowerCase() );
 	const folder = /^\/assets\/([^/]+)\//i.exec( path );

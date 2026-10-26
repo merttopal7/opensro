@@ -25,8 +25,11 @@ import type { AssetOwner, AssetRequest, AssetResult, AssetWorkerMessage } from "
 import type { Degradation } from "@/engine/contracts/network";
 import { storedExperimentalOptions } from "@/engine/foundation/ui/experimental-options";
 import { chooseTextureVariant } from "@/engine/foundation/assets/texture-variants";
-const DESKTOP_SHELL = typeof navigator !== "undefined" && /\bOpenSRODesktop\//.test( navigator.userAgent );
-const REQUEST_CAPACITY = DESKTOP_SHELL ? 12 : 4;
+import { currentArchiveDelivery } from "@/engine/foundation/assets/archive-delivery";
+// The desktop shell and the installed PWA read local archives (archive-delivery.ts).
+const DELIVERY = currentArchiveDelivery();
+const LOCAL_ARCHIVES = DELIVERY !== "network";
+const REQUEST_CAPACITY = LOCAL_ARCHIVES ? 12 : 4;
 // A load's watchdog is a stall window, not a total budget: the worker notes
 // the bytes it reads per job (job-progress), and a job that keeps moving
 // bytes may run past any fixed total on a slow link (a trickling route to
@@ -86,6 +89,12 @@ export function createAssets(): AssetOwner {
 	let progress: import("@/engine/contracts/assets").AssetProgress | null = null;
 	let releaseStale = false;
 	let nextId = 0, disposed = false, failure: string | null = null;
+	// Port-only: the installed PWA offers no slot until its archives are on
+	// disk and open (worker/archives/archives.ts). Every runtime owner asks
+	// available() before request(), so nothing is sent, and no load's
+	// watchdog runs, during a first download that can take many minutes;
+	// its bytes reach the loading screen as ordinary progress.
+	let archivesReady = DELIVERY !== "opfs";
 
 	/*
 	================
@@ -250,6 +259,14 @@ export function createAssets(): AssetOwner {
 			if ( !disposed && !failure ) progress = event.data.progress;
 			return;
 		}
+		if ( event.data.kind === "archives-ready" ) {
+			archivesReady = true;
+			return;
+		}
+		if ( event.data.kind === "archives-failed" ) {
+			fail( "Game files could not be prepared: " + event.data.error );
+			return;
+		}
 		if ( event.data.kind === "job-progress" ) {
 			if ( !disposed && !failure ) noteJobProgress( event.data.id, event.data.bytes );
 			return;
@@ -337,6 +354,7 @@ export function createAssets(): AssetOwner {
 		send( { kind: "texture-variant", variant: null } );
 		variantSent = true;
 	}
+	if ( !archivesReady ) send( { kind: "prepare-archives" } );
 	return {
 		/*
 		================
@@ -363,7 +381,7 @@ export function createAssets(): AssetOwner {
 			return {
 				phase: disposed ? "disposed" : failure ? "failed" : "running",
 				error: failure,
-				available: disposed || failure ? 0 : REQUEST_CAPACITY - jobs.size,
+				available: disposed || failure || !archivesReady ? 0 : REQUEST_CAPACITY - jobs.size,
 				jobs: [ ...jobs ].map( ( [id, job] ) => ({
 					id,
 					path: new URL( job.url ).pathname,
@@ -387,7 +405,7 @@ export function createAssets(): AssetOwner {
 				{ phase: "failed", error: failure } :
 				{ phase: "running" };
 		},
-		available: () => disposed || failure ? 0 : REQUEST_CAPACITY - jobs.size,
+		available: () => disposed || failure || !archivesReady ? 0 : REQUEST_CAPACITY - jobs.size,
 		takeReleaseStale: () => {
 			const stale = releaseStale;
 			releaseStale = false;
@@ -406,6 +424,8 @@ export function createAssets(): AssetOwner {
 			if ( disposed || failure ) {
 				throw new Error( failure ?? "Assets disposed" );
 			}
+			// available() was 0: the caller skipped its check.
+			if ( !archivesReady ) throw new Error( "Game files are still being prepared" );
 			const url = new URL( value ).href;
 			if (
 				jobs.size >= REQUEST_CAPACITY || !Number.isSafeInteger( limit ) || limit < 1 ||

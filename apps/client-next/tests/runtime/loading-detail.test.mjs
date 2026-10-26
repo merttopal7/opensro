@@ -45,6 +45,9 @@ test("pack files are named by their group in player words", () => {
 	assert.equal( loadingFileLabel( "/assets/packs/new-group-001-abcdef.bin" ), "new group" );
 	assert.equal( loadingFileLabel( "/assets/char/europe/europeman_knight.glb" ), "characters" );
 	assert.equal( loadingFileLabel( "/api/title/servers" ), "" );
+	// The installed app's first download (worker/archives/archives.ts).
+	assert.equal( loadingFileLabel( "Media.temir" ), "game files (Media)" );
+	assert.equal( loadingFileLabel( "Patch012.temir" ), "game files (Patch012)" );
 	assert.equal( loadingFileLabel( "" ), "" );
 });
 

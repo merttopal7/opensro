@@ -31,8 +31,14 @@ const ASYNC_OWNERS = [
 	runtime + "assets/worker/navigation/navigation.ts",
 	// Background install of the combat presentation set; worker-only I/O.
 	runtime + "assets/worker/install.ts",
+	// The installed PWA's .temir archives in OPFS: download, open, read
+	// (docs/PWA-OPFS-MIGRATION.md A3b). Worker-only I/O.
+	runtime + "assets/worker/archives/archives.ts",
 	// navigator.storage.persist(): a Window-only call the asset worker cannot make.
 	"src/engine/foundation/assets/persistent-storage.ts",
+	// The installed PWA's resumable .temir download into OPFS; its caller
+	// supplies the fetch and the sync handles (docs/PWA-OPFS-MIGRATION.md A3).
+	"src/engine/foundation/assets/temir-download.ts",
 	// The bug reporter: its settings and upload, the capture stream's
 	// playback and the report window's send (issue #90).
 	runtime + "bug-report/bug-report.ts",
@@ -191,6 +197,10 @@ export const rules = {
 		runtime + "assets/worker/packs/packs.ts",
 		// AbortSignal cancels a stalled body read; the listener is removed on every exit.
 		"src/engine/foundation/assets/read-bytes.ts",
+		// A gated build's install page (docs/PWA-OPFS-MIGRATION.md A2): Chrome's
+		// beforeinstallprompt / appinstalled and the install button. Live only on
+		// a page that never starts the game. Port-only, not native.
+		"src/engine/foundation/install/install-gate.ts",
 		runtime + "platform/telemetry.ts",
 		runtime + "platform/platform.ts",
 		device,

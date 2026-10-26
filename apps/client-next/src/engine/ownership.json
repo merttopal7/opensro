@@ -190,7 +190,8 @@
     "src/engine/runtime/characters/viewer-queries.ts": "src/engine/runtime/characters/characters.ts",
     "src/engine/runtime/ui/hud/compact-hud.ts": "src/engine/runtime/ui/ui.ts",
     "src/engine/runtime/ui/hud/world-map.ts": "src/engine/runtime/ui/ui.ts",
-    "src/engine/runtime/ui/hud/hunting-guide.ts": "src/engine/runtime/ui/hud/world-map.ts"
+    "src/engine/runtime/ui/hud/hunting-guide.ts": "src/engine/runtime/ui/hud/world-map.ts",
+    "src/engine/runtime/assets/worker/archives/archives.ts": "src/engine/runtime/assets/worker/loader.ts"
   },
   "internals": {
     "src/engine/runtime/characters/resources/procedural-effects.ts": "src/engine/runtime/characters/resources/resources.ts",

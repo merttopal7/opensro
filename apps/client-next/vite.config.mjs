@@ -13,6 +13,7 @@ import { fileURLToPath } from "node:url";
 import { defineConfig, loadEnv } from "vite";
 import basicSsl from "@vitejs/plugin-basic-ssl";
 import { publishedAssets } from "./tools/published-assets.mjs";
+import { pwaManifest, pwaOptions } from "./tools/pwa-manifest.mjs";
 import { devUpdates } from "./tools/dev/updates-plugin.mjs";
 import { sameOriginRelay, shardRoutes, tlsCertificate, tunnelHosts } from "./tools/dev/edge.mjs";
 
@@ -47,9 +48,20 @@ export default defineConfig( ( { mode } ) => {
 	// client. Release bundles drop it on purpose: page scripts get no runtime.
 	// A bench bundle has its own output folder and is never deployed.
 	const bench = mode === "bench";
+	// SRO_INSTALL_GATE=1: the game plays only from the installed app or the
+	// desktop shell, and the build is installable (docs/PWA-OPFS-MIGRATION.md
+	// A2). Port-only, not native; off unless set.
+	const pwa = pwaOptions( env );
 	return {
 		publicDir: false,
-		define: clientBuildDefinitions(),
+		define: {
+			...clientBuildDefinitions(),
+			"import.meta.env.SRO_INSTALL_GATE": JSON.stringify( pwa.enabled ),
+			// Where the installed app downloads its archives: an absolute URL or
+			// a path on the page's origin; empty means /updates/ there
+			// (foundation/assets/archive-delivery.ts).
+			"import.meta.env.SRO_UPDATES_URL": JSON.stringify( env.SRO_UPDATES_URL ?? "" )
+		},
 		server: {
 			proxy,
 			...hosts,
@@ -88,7 +100,12 @@ export default defineConfig( ( { mode } ) => {
 					}
 				}
 			},
-		plugins: [ devUpdates(), publishedAssets(), ...(https && !certificate ? [ basicSsl() ] : []) ],
+		plugins: [
+			devUpdates(),
+			publishedAssets(),
+			pwaManifest( pwa ),
+			...(https && !certificate ? [ basicSsl() ] : [])
+		],
 		resolve: {
 			alias: { "@": fileURLToPath( new URL( "./src", import.meta.url ) ) }
 		}

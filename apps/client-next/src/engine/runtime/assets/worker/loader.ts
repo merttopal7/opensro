@@ -37,8 +37,10 @@ import { createWorldDecoder } from "./world/world";
 import { createModelDecoder } from "./model/model";
 import { AssetAbsentError, createPacks } from "./packs/packs";
 import { createBackgroundInstaller } from "./install";
+import { createLocalArchives } from "./archives/archives";
 import { pageEntryBundle } from "@/engine/foundation/assets/page-entry";
 import { readBytes } from "@/engine/foundation/assets/read-bytes";
+import { currentArchiveDelivery } from "@/engine/foundation/assets/archive-delivery";
 import { assetFailure, transientAssetFailure } from "@/engine/foundation/assets/asset-recovery";
 import type { AssetRequest, AssetWorkerMessage } from "@/engine/contracts/assets";
 import { rgbaPickAlpha, bitmapPickAlpha } from "@/engine/foundation/rendering/pick-alpha";
@@ -62,8 +64,11 @@ const TRANSIENT_HTTP_STATUS = new Set( [ 408, 429, 500, 502, 503, 504 ] );
 const PARSED_EFFECT_CATALOG = new Uint8Array( 0 );
 // Stands in for a world bundle's bytes once they are parsed.
 const RELEASED_WORLD_BYTES = new Uint8Array( 0 );
-const DESKTOP_SHELL = typeof navigator !== "undefined" && /\bOpenSRODesktop\//.test( navigator.userAgent );
-const REQUEST_CAPACITY = DESKTOP_SHELL ? 12 : 4;
+// The desktop shell and the installed PWA read local archives; only the PWA
+// downloads and reads them itself, from OPFS (archive-delivery.ts).
+const DELIVERY = currentArchiveDelivery();
+const LOCAL_ARCHIVES = DELIVERY !== "network";
+const REQUEST_CAPACITY = LOCAL_ARCHIVES ? 12 : 4;
 /*
 ================
 listedFileGone
@@ -235,7 +240,8 @@ export function createLoader( send: ( result: AssetWorkerMessage, transfer: Tran
 	================
 	download
 
-	Read a bounded asset through the shared pack and network owner.
+	Read a bounded asset through the shared pack and network owner. The
+	installed PWA reads its archives instead (archives.ts).
 	================
 	*/
 	async function download(
@@ -244,6 +250,7 @@ export function createLoader( send: ( result: AssetWorkerMessage, transfer: Tran
 		signal: AbortSignal,
 		range?: import("./packs/packs").PackRange
 	) {
+		if ( archives ) return readArchive( archives, url, limit, range );
 		// Every load in flight shares this pipe (packs.ts deduplicates its
 		// reads), so the download counts toward all of them: it flips any
 		// decoding-marked load back to fetching, and its chunks credit every
@@ -392,16 +399,83 @@ export function createLoader( send: ( result: AssetWorkerMessage, transfer: Tran
 		// Resource Timing distinguishes compressed transfers from HTTP cache
 		// reads; counting decoded stream chunks would invent warm downloads.
 		if ( !range ) {
-			const timing = DESKTOP_SHELL ?
+			const timing = LOCAL_ARCHIVES ?
 				undefined :
 				performance.getEntriesByName( url, "resource" ).filter( row => row.startTime >= started ).at( -1 ) as
 					| PerformanceResourceTiming
 					| undefined;
-			if ( DESKTOP_SHELL ) received += bytes.byteLength;
+			if ( LOCAL_ARCHIVES ) received += bytes.byteLength;
 			else if ( timing ) received += timing.transferSize;
 			progress();
 		}
 		return bytes;
+	}
+	/*
+	================
+	requestArchive
+
+	The archives' HTTP: patches.json and the archive downloads, through
+	this worker's fetch.
+	================
+	*/
+	function requestArchive( url: string, init: RequestInit ) {
+		return fetch( url, { ...init, credentials: "omit", redirect: "error" } );
+	}
+	// Port-only: the installed PWA's archives in OPFS (archives.ts); null in
+	// every other delivery. archiveLifetime ends a preparation on disposal.
+	const archives = DELIVERY === "opfs" ?
+		createLocalArchives(
+			{ request: requestArchive, storage: navigator.storage, wait: retryDownloadAfter },
+			self.location.origin
+		) :
+		null;
+	const archiveLifetime = new AbortController();
+	/*
+	================
+	readArchive
+
+	One PackDownload from the archives. A local read is still movement on the
+	shared pipe: it credits every load's watchdog note, as downloads do.
+	================
+	*/
+	async function readArchive(
+		owner: NonNullable<typeof archives>,
+		url: string,
+		limit: number,
+		range?: import("./packs/packs").PackRange
+	) {
+		const bytes = await owner.read( url, limit, range );
+		bytesRead += bytes.byteLength;
+		for ( const job of jobProgress.values() ) job.bytes += bytes.byteLength;
+		progress();
+		return bytes;
+	}
+	/*
+	================
+	prepareArchives
+
+	Downloads or resumes the archives and opens them, publishing the bytes
+	as installation progress (the loading screen's transfer panel) with the
+	archive's name as the current file, then answers the main thread.
+	Bytes a resumed download already had are not counted again.
+	================
+	*/
+	async function prepareArchives( owner: NonNullable<typeof archives> ) {
+		const seen = new Map<string, number>();
+		try {
+			for await ( const step of owner.prepare( archiveLifetime.signal ) ) {
+				const fresh = step.received - (seen.get( step.name ) ?? step.received);
+				seen.set( step.name, step.received );
+				received += fresh;
+				bytesRead += fresh;
+				if ( step.received < step.total ) files.set( step.name, 1 );
+				else files.delete( step.name );
+				progress();
+			}
+			if ( !disposed ) send( { kind: "archives-ready" }, [] );
+		} catch ( error ) {
+			if ( !disposed ) send( { kind: "archives-failed", error: String( error ) }, [] );
+		}
 	}
 	const packs = createPacks( download, activity );
 	// The texture variant this device is served (texture-variants.ts): the
@@ -861,6 +935,13 @@ export function createLoader( send: ( result: AssetWorkerMessage, transfer: Tran
 				textureVariant( request.variant );
 				return;
 			}
+			if ( request.kind === "prepare-archives" ) {
+				// Only the installed PWA has archives to prepare; elsewhere
+				// the files are already where the reads go.
+				if ( archives ) void prepareArchives( archives );
+				else send( { kind: "archives-ready" }, [] );
+				return;
+			}
 			if (
 				pending.has( request.id ) || !Number.isSafeInteger( request.limit ) ||
 				request.limit < 1 || request.limit > assetRequestBudget( request.decode )
@@ -893,6 +974,8 @@ export function createLoader( send: ( result: AssetWorkerMessage, transfer: Tran
 			installer.dispose();
 			wakeIdleWaiters();
 			packs.dispose();
+			archiveLifetime.abort();
+			archives?.dispose();
 			for ( const controller of pending.values() ) {
 				controller.abort();
 			}

@@ -56,7 +56,11 @@ export type AssetWorkerMessage =
 		prepared: import("./world-admission").PreparedWorldScene;
 		images?: { path: string; image: ImageBitmap; }[];
 	}
-	| { kind: "released"; id: number; };
+	| { kind: "released"; id: number; }
+	// Port-only: the installed PWA's archives are on disk and open, or could
+	// not be made so (answers "prepare-archives", worker/archives/archives.ts).
+	| { kind: "archives-ready"; }
+	| { kind: "archives-failed"; error: string; };
 /*
 ================
 AssetRequest
@@ -96,6 +100,11 @@ export type AssetRequest = {
 	// for the originals (foundation/assets/texture-variants.ts). Sent once.
 	kind: "texture-variant";
 	variant: import("@/engine/foundation/assets/texture-variants").TextureVariant | null;
+} | {
+	// Port-only: the installed PWA downloads (or resumes) and opens its .temir
+	// archives before any load is sent (docs/PWA-OPFS-MIGRATION.md A3b).
+	// Sent once, first; answered by archives-ready or archives-failed.
+	kind: "prepare-archives";
 };
 /*
 ================

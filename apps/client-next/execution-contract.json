@@ -530,6 +530,21 @@
 			]
 		},
 		{
+			"consumer": "src/engine/runtime/assets/worker/archives/archives.ts",
+			"provider": "src/engine/runtime/assets/worker/loader.ts",
+			"functions": [
+				"requestArchive",
+				"retryDownloadAfter"
+			]
+		},
+		{
+			"consumer": "src/engine/foundation/assets/temir-download.ts",
+			"provider": "src/engine/runtime/assets/worker/loader.ts",
+			"functions": [
+				"requestArchive"
+			]
+		},
+		{
 			"consumer": "src/engine/runtime/platform/platform.ts",
 			"provider": "src/engine/runtime/input/input.ts",
 			"functions": [
