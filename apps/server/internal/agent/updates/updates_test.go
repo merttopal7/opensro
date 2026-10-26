@@ -139,7 +139,7 @@ func TestDifferentialSyncAndHTTPHandler(t *testing.T) {
 	}
 
 	// 2. Unchanged sources should produce no patch.
-	res, err := Sync(cfg)
+	res, err := Sync(t.Context(), cfg)
 	if err != nil {
 		t.Fatalf("Sync unchanged: %v", err)
 	}
@@ -160,6 +160,7 @@ func TestDifferentialSyncAndHTTPHandler(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewHandler: %v", err)
 	}
+	handler.waitForSync()
 
 	mux := http.NewServeMux()
 	mux.Handle("/updates/", handler)
@@ -206,6 +207,8 @@ func TestDifferentialSyncAndHTTPHandler(t *testing.T) {
 		t.Fatal(err)
 	}
 	now = now.Add(5 * time.Second)
+	mux.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/updates/patches.json", nil))
+	handler.waitForSync()
 	req2 := httptest.NewRequest(http.MethodGet, "/updates/patches.json", nil)
 	rec2 := httptest.NewRecorder()
 	mux.ServeHTTP(rec2, req2)
@@ -224,5 +227,104 @@ func TestDifferentialSyncAndHTTPHandler(t *testing.T) {
 		if w.Code != http.StatusNotFound {
 			t.Fatalf("expected 404 for %s, got %d", blocked, w.Code)
 		}
+	}
+}
+
+/*
+================
+TestLastVersionAutoMergeAndServe
+================
+*/
+func TestLastVersionAutoMergeAndServe(t *testing.T) {
+	tmp := t.TempDir()
+	lastVerDir := filepath.Join(tmp, "last_version")
+	updatesDir := filepath.Join(tmp, "updates")
+	distDir := filepath.Join(tmp, "client-dist")
+	if err := os.MkdirAll(lastVerDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(updatesDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(distDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	indexFile := filepath.Join(distDir, "index.html")
+	if err := os.WriteFile(indexFile, []byte("<html>v1-base</html>"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Pack initial Media.temir into last_version/Media.temir
+	mediaPath := filepath.Join(lastVerDir, "Media.temir")
+	_, _, err := PackArchiveFile(
+		mediaPath,
+		"Media.temir",
+		[]SourceFile{{VirtualPath: "index.html", DiskPath: indexFile}},
+		DefaultArchiveKey,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := WriteBaselineFromArchives(lastVerDir, updatesDir, DefaultArchiveKey); err != nil {
+		t.Fatal(err)
+	}
+
+	// Update index.html -> Sync should create updates/Patch001.temir AND merge it into last_version/Media.temir
+	if err := os.WriteFile(indexFile, []byte("<html>v2-merged-into-last-version</html>"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := SyncConfig{
+		UpdatesDir:    updatesDir,
+		ClientDistDir: distDir,
+		ArchiveKey:    DefaultArchiveKey,
+	}
+	handler, err := NewHandler(cfg, time.Now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler.waitForSync()
+	mux := http.NewServeMux()
+	mux.Handle("/updates/", handler)
+
+	req := httptest.NewRequest(http.MethodGet, "/updates/patches.json", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	var pm PatchManifest
+	if err := json.Unmarshal(rec.Body.Bytes(), &pm); err != nil {
+		t.Fatal(err)
+	}
+	if len(pm.Patches) != 2 || pm.Patches[0].Name != "Media.temir" || pm.Patches[0].URL != "last_version/Media.temir" {
+		t.Fatalf("unexpected patches.json: %+v", pm)
+	}
+	if _, wholeFile, err := FNV1a64File(mediaPath); err != nil || pm.Patches[0].Checksum != wholeFile {
+		t.Fatalf("Media.temir checksum = %d, want whole-file FNV-1a %d (%v)", pm.Patches[0].Checksum, wholeFile, err)
+	}
+
+	// Download GET /updates/last_version/Media.temir and verify it already contains the v2 payload
+	reqMedia := httptest.NewRequest(http.MethodGet, "/updates/last_version/Media.temir", nil)
+	recMedia := httptest.NewRecorder()
+	mux.ServeHTTP(recMedia, reqMedia)
+	if recMedia.Code != http.StatusOK {
+		t.Fatalf("GET /updates/last_version/Media.temir status = %d", recMedia.Code)
+	}
+
+	masterKey, toc, err := ReadArchiveTOC(mediaPath, DefaultArchiveKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(toc) != 1 || toc[0].Checksum != FNV1a64([]byte("<html>v2-merged-into-last-version</html>")) {
+		t.Fatalf("expected merged TOC checksum in last_version/Media.temir, got %+v", toc)
+	}
+	rawMedia, err := os.ReadFile(mediaPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	slice := append([]byte(nil), rawMedia[toc[0].DataOffset:toc[0].DataOffset+toc[0].DataLength]...)
+	ChaCha20XORAt(&masterKey, &toc[0].FileNonce, 0, slice)
+	if string(slice) != "<html>v2-merged-into-last-version</html>" {
+		t.Fatalf("unexpected merged content: %q", string(slice))
 	}
 }

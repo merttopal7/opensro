@@ -419,16 +419,16 @@ class MapTests(unittest.TestCase):
 		self.assertEqual(row[8:10], ["4224", "1408"])
 		self.assertEqual(row[14:], ["0", "192", "192", "0", "xxx"])
 
-	def test_the_overview_tiles_are_the_ones_the_wider_box_adds(self):
+	def test_the_overview_tiles_cover_the_entire_wider_box(self):
 		wide = variant.overview_tiles((46, 113, 177, 70))
 		native = variant.overview_tiles((66, 113, 177, 82))
 		self.assertEqual((len(native), len(wide)), (28 * 8, 33 * 11))
 		added = variant.map_media_paths([], (46, 113, 177, 70), (66, 113, 177, 82))
 		new_tiles = [path for path in added if "map_world_" in path]
-		self.assertEqual(len(new_tiles), 33 * 11 - 28 * 8)
+		self.assertEqual(len(new_tiles), 33 * 11)
 		self.assertIn("interface/worldmap/map/map_world_46x113.ddj", new_tiles)
 		self.assertIn("interface/worldmap/map/map_world_174x73.ddj", new_tiles)
-		self.assertNotIn("interface/worldmap/map/map_world_66x113.ddj", new_tiles)
+		self.assertIn("interface/worldmap/map/map_world_66x113.ddj", new_tiles)
 
 	def test_media_paths_name_the_map_art_and_one_minimap_tile_per_region(self):
 		paths = variant.map_media_paths(self.REGIONS)
@@ -437,13 +437,13 @@ class MapTests(unittest.TestCase):
 		self.assertIn("minimap/49x90.ddj", paths)
 
 	# ================
-	# test_overlapping_overview_tiles_are_replaced_only_for_imported_land
+	# test_overlapping_overview_tiles_are_replaced_for_entire_widened_box
 	# ================
-	def test_overlapping_overview_tiles_are_replaced_only_for_imported_land(self):
+	def test_overlapping_overview_tiles_are_replaced_for_entire_widened_box(self):
 		box, native_box = (46, 113, 177, 70), (66, 113, 177, 82)
 		paths = variant.map_media_paths([(67, 84)], box, native_box)
 		self.assertIn("interface/worldmap/map/map_world_66x85.ddj", paths)
-		self.assertNotIn("interface/worldmap/map/map_world_66x113.ddj", paths)
+		self.assertIn("interface/worldmap/map/map_world_66x93.ddj", paths)
 		self.assertEqual(variant.overview_tiles(box, [(67, 84)]),
 			["interface/worldmap/map/map_world_66x85.ddj"])
 

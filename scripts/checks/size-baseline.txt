@@ -26,6 +26,8 @@ apps/client-next/tests/runtime/gameplay.test.mjs # test file; split by feature
 apps/client-next/tests/runtime/ui-behavior.test.mjs # test file covering every window; split per window
 apps/client-next/tests/runtime/world-renderer.test.mjs # test file; split by feature
 apps/client-next/tests/runtime/world.test.mjs # test file; split by feature
+apps/server/cmd/operations/sro-nomad/deployment.go # one Nomad cluster deployment builder: job variable maps, port-only env forwarding and shard validation share one deployment struct
+apps/server/cmd/services/sro-gameworld/wiring_gameplay.go # one GameWorld gameplay composition root: lane registration, level-cap wiring and cross-lane callbacks share one gameplayPlane struct
 apps/server/internal/security/auth/accounts.go # one SQLite account store owner: credential verification, session token issuance and shard lock state share one transaction handle
 scripts/build/shared/cifRuntimeImageCatalog.mjs # not yet analysed; split on its responsibility boundaries when formatted
 

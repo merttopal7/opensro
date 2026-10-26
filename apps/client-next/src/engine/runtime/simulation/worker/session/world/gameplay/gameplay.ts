@@ -2832,7 +2832,13 @@ state here before a command can claim a native wire conversation.
 				if ( command.kind === "skill-train" ) {
 					const row = catalog.find( r => r.id === id );
 					if ( !row ) throw Error( "Skill metadata is unavailable" );
-					const reason = skillTrainingReason( row, bindings.skills, catalog, progression );
+					const reason = skillTrainingReason(
+						row,
+						bindings.skills,
+						catalog,
+						progression,
+						training.state().levelCap
+					);
 					if ( reason ) throw Error( reason );
 				} else if ( !progression.masteries.some( r => r.id === id ) ) throw Error( "Mastery is not available" );
 				return training.request( trainingRequest( command.kind, command.id ), id, now );

@@ -104,8 +104,8 @@ const OFF = Object.freeze( {
 	petFilterOther: true,
 	// On by default (owner 2026-10-22, #1243): a touch tap keeps an item or skill tooltip up.
 	touchInspect: true,
-	// Off by default: the M window shows only the five native towns and 28 x 8 overview.
-	expandedWorldMap: false,
+	// On by default: the M window shows published extra town pages (Alexandria) and wider overview.
+	expandedWorldMap: true,
 	// Off by default (#840): the maps mark the tracked quest's targets only.
 	questTrackerMarkers: false
 } );
@@ -697,15 +697,15 @@ test("smart pet pickup defaults on unless explicitly false and reaches the worke
 	assert.ok( EXPERIMENTAL_TABS.some( tab => tab.rows.some( row => row.key === "smartPetPickup" ) ) );
 });
 
-test("expanded world map defaults off (native five towns and 28 x 8 overview) and stays out of the worker's slices", () => {
-	for ( const value of [ undefined, null, {}, { expandedWorldMap: 1 }, { expandedWorldMap: "true" } ] ) {
+test("expanded world map defaults on unless explicitly false and stays out of the worker's slices", () => {
+	for ( const value of [ undefined, null, {}, { expandedWorldMap: 1 }, { expandedWorldMap: "false" } ] ) {
 		const options = experimentalOptions( value );
-		assert.equal( options.expandedWorldMap, false );
+		assert.equal( options.expandedWorldMap, true );
 		assert.equal( "expandedWorldMap" in experimentalGameplay( options ), false );
 		assert.equal( "expandedWorldMap" in experimentalVideo( options ), false );
 	}
-	const on = experimentalOptions( { expandedWorldMap: true } );
-	assert.equal( on.expandedWorldMap, true );
+	const off = experimentalOptions( { expandedWorldMap: false } );
+	assert.equal( off.expandedWorldMap, false );
 	assert.ok( EXPERIMENTAL_TABS.some( tab => tab.rows.some( row => row.key === "expandedWorldMap" ) ) );
 });
 

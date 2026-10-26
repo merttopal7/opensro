@@ -152,6 +152,9 @@ def is_npc(row):
 # ================
 def convert_character(row):
 	"""One VSRO characterdata row in the 120-column v1.150 layout."""
+	row = [cell.strip() for cell in row]
+	if len(row) == VSRO_CHARACTER_COLUMNS + 1 and row[-1] == "":
+		row = row[:VSRO_CHARACTER_COLUMNS]
 	if len(row) != VSRO_CHARACTER_COLUMNS:
 		raise ValueError(f"characterdata row {row[ID_COLUMN]} has {len(row)} columns")
 	converted = (
@@ -238,10 +241,16 @@ def shop_rows(native, vsro, codes):
 	stores = {row[3] for row in stage1.table_rows(native["refshop.txt"]) if len(row) > 3}
 	known = {row[3] for row in native_groups if len(row) >= STORE_GROUP_COLUMNS}
 	group_kind, map_kind = common_value(native_groups, 1), common_value(native_maps, 1)
-	vsro_maps = [row for row in stage1.table_rows(vsro["refmappingshopgroup.txt"]) if len(row) >= STORE_MAP_COLUMNS]
+	vsro_maps = [
+		[c.strip() for c in (row[:STORE_MAP_COLUMNS] if len(row) == STORE_MAP_COLUMNS + 1 and row[-1].strip() == "" else row)]
+		for row in stage1.table_rows(vsro["refmappingshopgroup.txt"]) if len(row) >= STORE_MAP_COLUMNS
+	]
 
 	groups, maps, skipped = [], [], []
-	for row in stage1.table_rows(vsro["refshopgroup.txt"]):
+	for raw_row in stage1.table_rows(vsro["refshopgroup.txt"]):
+		row = [c.strip() for c in raw_row]
+		if len(row) == 14 and row[-1] == "":
+			row = row[:13]
 		if len(row) < STORE_GROUP_COLUMNS or row[0] != "1" or row[4] not in codes or row[3] in known:
 			continue
 		mapped = [m for m in vsro_maps if m[2] == row[3]]
@@ -337,7 +346,11 @@ def merge_npc_tables(native, vsro, regions, native_text):
 	native_keys = {row[1] for row in stage1.table_rows(native_text) if len(row) > 1}
 	wanted = text_keys(characters, chat)
 	texts = [
-		[row[0], row[1], row[2], "", "", row[5], row[4], row[7], row[8], row[9], ""]
+		[
+			row[0], row[1], row[2], "", "", row[5], row[4], row[7],
+			row[8] if row[8] not in ("", "0", "xxx") else (row[9] if len(row) > 9 and row[9] not in ("", "0", "xxx") else ""),
+			row[9], ""
+		]
 		for row in translation_rows(vsro["textdata_object.txt"])
 		if len(row) >= 10 and row[1] in wanted and row[1] not in native_keys
 	]

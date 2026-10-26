@@ -183,7 +183,7 @@ export function createPacks(
 		if ( origin !== null && origin !== base ) throw new Error( "Asset origin changed during session" );
 		origin = base;
 		if ( !index ) {
-			const operation = download( base + "/assets/packs/manifest.json", 16 << 20, lifetime.signal ).then(
+			const operation = download( base + "/assets/packs/manifest.json", 32 << 20, lifetime.signal ).then(
 				bytes => {
 					const admitted = parser.manifest(
 						JSON.parse( new TextDecoder( "utf-8", { fatal: true } ).decode( bytes ) )

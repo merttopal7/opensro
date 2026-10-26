@@ -31,7 +31,7 @@ DATABASE_COLUMNS = (
 	"UI_SkillTab UI_SkillPage UI_SkillColumn UI_SkillRow UI_IconFile UI_SkillName UI_SkillToolTip "
 	"UI_SkillToolTip_Desc UI_SkillStudy_Desc AI_AttackChance AI_SkillType"
 ).split() + [f"Param{index}" for index in range(1, 51)]
-MAX_MASTERY = 110
+MAX_MASTERY = 120
 
 
 # ================
@@ -66,7 +66,7 @@ def load_database_rows(path):
 	rows = project_database_rows(json.loads(raw.decode("utf-8-sig")))
 	if not any(r[skills.SERVICE] == "1" and skills.player_skill(r[skills.CODENAME])
 		and 100 < int(r[skills.MASTERY_LEVEL]) <= MAX_MASTERY for r in rows):
-		raise ValueError("database snapshot contains no enabled mastery 101-110 player skills")
+		raise ValueError("database snapshot contains no enabled mastery 101-120 player skills")
 	return rows, sro_pk2.digest(raw)
 
 
@@ -89,12 +89,13 @@ def merge_database_tier(native, client, database, prior):
 		return added, summary
 	# Restrict new content to the approved tier; lower rows remain reference
 	# anchors and later content must never expand the cap accidentally.
+	reserved = {int(r[skills.IDENTITY]) for r in database}
 	database = [r for r in database if int(r[skills.MASTERY_LEVEL]) <= MAX_MASTERY]
 	database_ids = {code: entry for code, entry in old_ids.items() if code not in client_codes}
-	extra, report = skills.merge_skills(native + added, database, previous_ids=database_ids,
-		previous_groups=prior.get("databaseNewGroupIds"))
+	extra, report = skills.merge_skills(native + added, database, reserved_ids=reserved,
+		previous_ids=database_ids, previous_groups=prior.get("databaseNewGroupIds"))
 	if any(int(r[skills.MASTERY_LEVEL]) <= 100 for r in extra):
-		raise ValueError("database supplement must contain only mastery 101-110 additions")
+		raise ValueError("database supplement must contain only mastery 101-120 additions")
 	for key in ("added", "learnableRanks", "chainSubRanks", "groupsMappedToNative"):
 		summary[key] += report[key]
 	for key in ("masteries", "races"):

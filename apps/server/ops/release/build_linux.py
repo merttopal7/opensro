@@ -44,9 +44,42 @@ chmod +x agent gameworld panel sro-nomad sro-init sro-provision-identity hash-ag
 export SRO_SERVER_GAME_DATA_ROOT="$(pwd)/.generated/game-data/1.150/server.srogz"
 export SRO_AGENT_POSTGRES_DSN="postgres://app:123@127.0.0.1:5433/opensro?sslmode=disable"
 export SRO_PANEL_ADDR="${SRO_PANEL_ADDR:-127.0.0.1:8795}"
+export SRO_ALEXANDRIA="${SRO_ALEXANDRIA:-on}"
+export SRO_LEVEL_CAP="${SRO_LEVEL_CAP:-110}"
+export SRO_CAP110_MONSTERS="${SRO_CAP110_MONSTERS:-on}"
+export SRO_PHARAOH_TOMB="${SRO_PHARAOH_TOMB:-on}"
+export SRO_PHARAOH_TOMB_GEAR_RATE="${SRO_PHARAOH_TOMB_GEAR_RATE:-5}"
 
 mkdir -p .state/cluster
 echo "$SRO_AGENT_POSTGRES_DSN" > .state/cluster/postgres-dsn.txt
+
+# port_listening PORT: true when something listens on 127.0.0.1/any PORT.
+# grep reads all of ss's output (no -q): under pipefail an early-exiting
+# `grep -q` kills ss with SIGPIPE and the pipeline reports failure even on a
+# match, which made a running Nomad look down and triggered a pkill -9.
+port_listening() {
+	ss -tln 2>/dev/null | grep -E ":$1([[:space:]]|$)" >/dev/null
+}
+
+# wait_gameworlds_stopped: after `job stop`, wait (up to 60 s) until no
+# GameWorld allocation is still pending or running. The jobs use static ports
+# (transport 8788, control 8791, ...); planning the new jobs while the old
+# allocations still hold them fails with "cannot place task groups".
+wait_gameworlds_stopped() {
+	for _ in $(seq 1 60); do
+		busy=0
+		for gw_job in $("$SRO_NOMAD_BINARY" status 2>/dev/null | awk '/^sro-gameworld-/{print $1}'); do
+			if "$SRO_NOMAD_BINARY" job allocs -json "$gw_job" 2>/dev/null | grep -E '"ClientStatus": ?"(pending|running)"' >/dev/null; then
+				busy=1
+			fi
+		done
+		if [ "$busy" -eq 0 ]; then
+			return 0
+		fi
+		sleep 1
+	done
+	echo "      warning: GameWorld allocations still running after 60 s"
+}
 
 # 1) Nomad 2.0.7 binary check (downloads automatically if missing)
 if [ ! -x "./nomad" ]; then
@@ -66,7 +99,7 @@ fi
 
 # 2) PostgreSQL check
 echo "[2/6] Checking PostgreSQL ($SRO_AGENT_POSTGRES_DSN)..."
-if command -v docker >/dev/null 2>&1 && ! ss -tln | grep -Eq ':5433([[:space:]]|$)'; then
+if command -v docker >/dev/null 2>&1 && ! port_listening 5433; then
 	echo "      Starting PostgreSQL via Docker..."
 	docker compose up -d
 	sleep 3
@@ -74,13 +107,13 @@ fi
 
 # 3) Start Nomad dev-agent in background
 mkdir -p .state/cluster
-if ! ss -tln | grep -Eq ':4646([[:space:]]|$)'; then
+if ! port_listening 4646; then
 	echo "[3/6] Cleaning orphaned release processes and starting Nomad supervisor..."
 	pkill -9 -f "\\.state/cluster/releases/" >/dev/null 2>&1 || true
 	sleep 1
 	nohup ./sro-nomad dev-agent > .state/nomad-agent.log 2>&1 &
 	for _ in $(seq 1 20); do
-		if ss -tln | grep -Eq ':4646([[:space:]]|$)'; then
+		if port_listening 4646; then
 			sleep 3
 			break
 		fi
@@ -106,13 +139,19 @@ fi
 echo "[5/6] Starting Customer & Shard Panel ($SRO_PANEL_ADDR)..."
 pkill -x panel >/dev/null 2>&1 || true
 nohup ./panel > .state/panel.log 2>&1 &
+sleep 1
 
 # 6) Check client updates and deploy sro-agent + sro-gameworld
 mkdir -p updates
 ./sro-packer sync -updates "$(pwd)/updates" || true
+for gw_job in $("$SRO_NOMAD_BINARY" status 2>/dev/null | awk '/^sro-gameworld-/{print $1}'); do
+	"$SRO_NOMAD_BINARY" job stop "$gw_job" >/dev/null 2>&1 || true
+done
+wait_gameworlds_stopped
 for auth_dir in .state/shards/*/authority; do
 	if [ -f "$auth_dir/state.db" ]; then
-		./sro-authority-upgrade -authority-dir "$auth_dir" -commit >/dev/null 2>&1 || true
+		rm -f "$auth_dir/authority.lock"
+		./sro-authority-upgrade -authority-dir "$auth_dir" -commit || true
 		rm -f "$auth_dir/authority.lock"
 	fi
 done
@@ -287,8 +326,8 @@ DESKTOP_INDEX_HTML_TEMPLATE = """<!doctype html>
 \t\t\t<div id="fps-readout" class="sro-fps-chip__readout" role="status" aria-live="off" hidden></div>
 \t\t</div>
 \t\t<div id="update-notice" class="sro-update-notice" role="status" hidden>
-\t\t\t<span>Silkroad Online has been updated. Refresh to continue playing.</span>
-\t\t\t<button type="button">Refresh</button>
+\t\t\t<span>Yeni bir oyun güncellemesi yayınlandı. İstemci 5 saniye içinde kapatılıyor…</span>
+\t\t\t<button type="button">Hemen Kapat</button>
 \t\t</div>
 \t\t<section id="loading-transfer" class="loading-transfer" hidden aria-label="Loading progress">
 \t\t\t<div class="loading-transfer__header">
@@ -332,6 +371,26 @@ def prepare_client_dist(src_dir: Path, dst_dir: Path) -> None:
 	viewer = dst_dir / "viewer.html"
 	if viewer.is_file():
 		viewer.unlink()
+	for cand_parent in (src_dir.parents[5], src_dir.parents[4]):
+		desktop_src = cand_parent / "new-silkroad" / "src"
+		if desktop_src.is_dir():
+			for extra_name in ("main.js", "styles.css"):
+				extra_src = desktop_src / extra_name
+				if extra_src.is_file():
+					shutil.copy2(extra_src, dst_dir / extra_name)
+			break
+	repo_root = src_dir.parents[4]
+	scripts_dir = str(repo_root / "scripts")
+	if scripts_dir not in sys.path:
+		sys.path.insert(0, scripts_dir)
+	from sro_paths import PUBLIC_ROOT
+
+	cursors_src = PUBLIC_ROOT / "assets" / "cursors"
+	if cursors_src.is_dir():
+		cursors_dst = dst_dir / "assets" / "cursors"
+		if cursors_dst.exists():
+			shutil.rmtree(cursors_dst)
+		shutil.copytree(cursors_src, cursors_dst)
 	assets_dir = dst_dir / "assets"
 	if assets_dir.is_dir():
 		js_files = sorted(f.name for f in assets_dir.glob("bootstrap-*.js"))
@@ -432,6 +491,8 @@ def assemble_package(go_bin: str, module_root: Path, out_dir: Path, arch: str) -
 		prepare_client_dist(client_dist_src, client_dist_dst)
 		print(f"[linux/{arch}] copied client dist -> {client_dist_dst}")
 
+	last_version_dst = out_dir / "last_version"
+	last_version_dst.mkdir(parents=True, exist_ok=True)
 	updates_dst = out_dir / "updates"
 	updates_dst.mkdir(parents=True, exist_ok=True)
 	baseline_dst = updates_dst / "baseline.json"

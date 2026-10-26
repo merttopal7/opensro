@@ -117,7 +117,7 @@ def table_rows(raw):
 	"""Tab-split rows of a textdata file, comment and blank lines dropped."""
 	rows = []
 	for line in decode_table(raw).splitlines():
-		if not line.strip() or line.startswith("//"):
+		if not line.strip() or line.lstrip().startswith("//"):
 			continue
 		rows.append(line.split("\t"))
 	return rows
@@ -332,12 +332,16 @@ def import_alexandria(vsro_root, extracted):
 		# Port-only, not native: field regions are seeds for complete source
 		# terrain components, not an exhaustive list of regions worth importing.
 		# Empty connecting terrain and mountain sectors have no monster nests.
-		fields = set()
+		fields = {(65, 84), (57, 74)}
 		if os.environ.get("SRO_CAP110_MONSTERS", "").lower() in FLAG_ON:
 			from cap110_monsters import outdoor_regions, SOURCE_ENV, tomb_enabled
 			# The Pharaoh Tomb regions seed their own components the same way.
-			fields = outdoor_regions(os.environ[SOURCE_ENV], tomb_enabled())
-		regions = connected_regions(city, vsro_only_regions(data_data, data_index, extracted), fields)
+			fields |= outdoor_regions(os.environ[SOURCE_ENV], tomb_enabled())
+		candidates = {
+			xy for xy in vsro_only_regions(data_data, data_index, extracted)
+			if xy[0] <= 75 or (xy[0] == 76 and 83 <= xy[1] <= 86) or xy[1] >= 110
+		}
+		regions = connected_regions(city, candidates, fields)
 		log(f"{len(city)} city regions, {len(regions)} regions with the fields around it")
 
 		tile_ids, copied, missing = set(), [], []

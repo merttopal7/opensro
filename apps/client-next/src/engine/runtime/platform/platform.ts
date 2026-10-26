@@ -363,9 +363,9 @@ export function createPlatform(
 		onlineAgain = true;
 	}, { signal: lifetime.signal } );
 	const updateNotice = document.getElementById( "update-notice" );
-	updateNotice?.querySelector( "button" )?.addEventListener( "click", () => location.reload(), {
-		signal: lifetime.signal
-	} );
+	const closeForUpdate = () =>
+		void fetch( "/__desktop/exit", { method: "POST" } ).catch( () => {} ).finally( () => location.reload() );
+	updateNotice?.querySelector( "button" )?.addEventListener( "click", closeForUpdate, { signal: lifetime.signal } );
 	document.addEventListener( "visibilitychange", () => {
 		if ( document.visibilityState === "visible" ) visibleAgain = true;
 	}, { signal: lifetime.signal } );
@@ -979,6 +979,7 @@ export function createPlatform(
 			uiPointer = false;
 			onInput( { kind: "release", timeMs: timeMs() } );
 			updateNotice?.querySelector( "button" )?.focus();
+			setTimeout( closeForUpdate, 5000 );
 		},
 		/*
 		================

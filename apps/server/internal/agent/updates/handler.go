@@ -13,6 +13,8 @@ differential Sync pass whenever the server's built client assets change on disk.
 package updates
 
 import (
+	"context"
+	"hash/fnv"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -27,30 +29,23 @@ import (
 const (
 	syncCheckInterval = 2 * time.Second
 	patchWriteTimeout = 15 * time.Minute
+
+	// AppReleaseDirName is the updates/ subdirectory holding desktop
+	// application releases: AppReleaseManifestName (the Tauri updater's
+	// latest.json) and the signed artifacts it points at.
+	AppReleaseDirName      = "app"
+	AppReleaseManifestName = "latest.json"
 )
-
-/*
-================
-sourceStamp
-
-Captures the modification timestamps and sizes of the top-level client build
-manifests so the HTTP handler only triggers a full differential Sync when the
-server's built assets have changed.
-================
-*/
-type sourceStamp struct {
-	packManifestModNano int64
-	packManifestSize    int64
-	indexHTMLModNano    int64
-	indexHTMLSize       int64
-}
 
 /*
 ================
 Handler
 
 Serves /updates/patches.json and /updates/PatchNNN.temir and watches the
-configured client asset directories for changes.
+configured client asset directories for changes. Sync runs on a background
+goroutine: packing a large patch and merging it into last_version can take
+minutes, and clients fetch patches.json with a 3 second timeout, so requests
+always get the last published manifest immediately.
 ================
 */
 type Handler struct {
@@ -58,16 +53,18 @@ type Handler struct {
 	now         func() time.Time
 	mu          sync.Mutex
 	lastChecked time.Time
-	lastStamp   sourceStamp
+	lastStamp   uint64
 	hasStamp    bool
+	syncing     bool
+	syncDone    chan struct{}
 }
 
 /*
 ================
 NewHandler
 
-Creates an updates HTTP handler and performs an initial differential sync check
-if a baseline and source asset directories are present.
+Creates an updates HTTP handler and starts an initial differential sync in the
+background.
 ================
 */
 func NewHandler(cfg SyncConfig, now func() time.Time) (*Handler, error) {
@@ -91,61 +88,105 @@ func NewHandler(cfg SyncConfig, now func() time.Time) (*Handler, error) {
 		cfg: cfg,
 		now: now,
 	}
-	h.runSyncLocked()
+	h.mu.Lock()
+	h.startSyncLocked()
+	h.mu.Unlock()
 	return h, nil
 }
 
 /*
 ================
 currentStamp
+
+Fingerprints the path, size and modification time of every source file the
+sync packs, plus the PatchNNN.temir files in updates/ (a deploy may upload
+one). Any change to any of them triggers a sync, not only a changed
+manifest.json or index.html.
 ================
 */
-func (h *Handler) currentStamp() sourceStamp {
-	var stamp sourceStamp
-	if h.cfg.ClientPublicDir != "" {
-		manifestPath := filepath.Join(h.cfg.ClientPublicDir, "assets", "packs", "manifest.json")
-		if info, err := os.Stat(manifestPath); err == nil {
-			stamp.packManifestModNano = info.ModTime().UnixNano()
-			stamp.packManifestSize = info.Size()
+func (h *Handler) currentStamp() uint64 {
+	digest := fnv.New64a()
+	write := func(path string) {
+		info, err := os.Stat(path)
+		if err != nil {
+			return
+		}
+		digest.Write([]byte(path))
+		digest.Write([]byte(strconv.FormatInt(info.Size(), 10)))
+		digest.Write([]byte(strconv.FormatInt(info.ModTime().UnixNano(), 10)))
+	}
+	if files, err := CollectSourceFiles(h.cfg.ClientDistDir, h.cfg.ClientPublicDir); err == nil {
+		for _, sf := range files {
+			write(sf.DiskPath)
 		}
 	}
-	if h.cfg.ClientDistDir != "" {
-		indexPath := filepath.Join(h.cfg.ClientDistDir, "index.html")
-		if info, err := os.Stat(indexPath); err == nil {
-			stamp.indexHTMLModNano = info.ModTime().UnixNano()
-			stamp.indexHTMLSize = info.Size()
+	if entries, err := os.ReadDir(h.cfg.UpdatesDir); err == nil {
+		for _, entry := range entries {
+			if !entry.IsDir() && isDifferentialPatchName(entry.Name()) {
+				write(filepath.Join(h.cfg.UpdatesDir, entry.Name()))
+			}
 		}
 	}
-	return stamp
+	return digest.Sum64()
 }
 
 /*
 ================
-runSyncLocked
+startSyncLocked
+
+Starts one background Sync unless one is already running. The stamp is taken
+before the pass, so a change made while it runs is seen by the next check.
+Callers hold h.mu.
 ================
 */
-func (h *Handler) runSyncLocked() {
-	stamp := h.currentStamp()
-	h.lastStamp = stamp
-	h.hasStamp = true
+func (h *Handler) startSyncLocked() {
+	if h.syncing {
+		return
+	}
 	h.lastChecked = h.now()
+	h.lastStamp = h.currentStamp()
+	h.hasStamp = true
+	h.syncing = true
+	done := make(chan struct{})
+	h.syncDone = done
 
-	if h.cfg.ClientPublicDir == "" && h.cfg.ClientDistDir == "" {
-		return
-	}
-	res, err := Sync(h.cfg)
-	if err != nil {
-		log.Warnf("agent: updates sync: %v", err)
-		return
-	}
-	if res != nil && res.CreatedPatch != "" {
-		log.Infof(
-			"agent: updates: packaged %d changed file(s) into %s (%d bytes, manifest v%d)",
-			len(res.ChangedFiles),
-			res.CreatedPatch,
-			res.PatchBytes,
-			res.Version,
-		)
+	go func() {
+		defer close(done)
+		// The pass outlives any request, so it is not tied to one.
+		res, err := Sync(context.Background(), h.cfg)
+		h.mu.Lock()
+		h.syncing = false
+		h.mu.Unlock()
+		if err != nil {
+			log.Warnf("agent: updates sync: %v", err)
+			return
+		}
+		if res != nil && res.CreatedPatch != "" {
+			log.Infof(
+				"agent: updates: packaged %d changed file(s) into %s (%d bytes, manifest v%d)",
+				len(res.ChangedFiles),
+				res.CreatedPatch,
+				res.PatchBytes,
+				res.Version,
+			)
+		}
+	}()
+}
+
+/*
+================
+waitForSync
+
+Blocks until the running background Sync (if any) finishes. Tests use it to
+observe the result of a pass deterministically.
+================
+*/
+func (h *Handler) waitForSync() {
+	h.mu.Lock()
+	done := h.syncDone
+	h.mu.Unlock()
+	if done != nil {
+		<-done
 	}
 }
 
@@ -153,8 +194,8 @@ func (h *Handler) runSyncLocked() {
 ================
 maybeSync
 
-Checks at most once per syncCheckInterval whether the built client manifest or
-index.html changed on disk, and if so runs Sync before serving patches.json.
+Checks at most once per syncCheckInterval whether any source file changed on
+disk, and if so starts a background Sync. Never blocks the request on it.
 ================
 */
 func (h *Handler) maybeSync() {
@@ -162,29 +203,69 @@ func (h *Handler) maybeSync() {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
-	if h.hasStamp && now.Sub(h.lastChecked) < syncCheckInterval {
+	if h.syncing || (h.hasStamp && now.Sub(h.lastChecked) < syncCheckInterval) {
 		return
 	}
 	h.lastChecked = now
-	stamp := h.currentStamp()
-	if !h.hasStamp || stamp != h.lastStamp {
-		h.runSyncLocked()
+	if !h.hasStamp || h.currentStamp() != h.lastStamp {
+		h.startSyncLocked()
 	}
 }
 
 /*
 ================
-isAllowedUpdateFile
+resolveUpdateTargetPath
+
+Maps a relative path under `/updates/` (such as `patches.json`, `Patch001.temir`,
+or `last_version/Media.temir`) to its validated file path on disk.
 ================
 */
-func isAllowedUpdateFile(name string) bool {
-	if name == "" || strings.Contains(name, "/") || strings.Contains(name, "\\") || strings.Contains(name, "..") {
-		return false
+func (h *Handler) resolveUpdateTargetPath(rel string) (string, string, bool) {
+	clean := strings.TrimPrefix(strings.ReplaceAll(rel, "\\", "/"), "/")
+	if clean == "" || strings.Contains(clean, "..") {
+		return "", "", false
 	}
-	if name == ManifestFileName {
-		return true
+	if clean == ManifestFileName {
+		return filepath.Join(h.cfg.UpdatesDir, ManifestFileName), ManifestFileName, true
 	}
-	return strings.HasSuffix(strings.ToLower(name), ".temir")
+	if after, ok := strings.CutPrefix(clean, AppReleaseDirName+"/"); ok {
+		// Desktop application releases: latest.json plus the signed
+		// per-platform artifacts it names, flat inside updates/app/.
+		if after == "" || strings.Contains(after, "/") || strings.HasPrefix(after, ".") {
+			return "", "", false
+		}
+		return filepath.Join(h.cfg.UpdatesDir, AppReleaseDirName, after), after, true
+	}
+	if after, ok := strings.CutPrefix(clean, "last_version/"); ok {
+		for _, baseName := range ArchiveNames {
+			if strings.EqualFold(after, baseName) {
+				lastVerDir := ResolveLastVersionDir(h.cfg)
+				candidate := filepath.Join(lastVerDir, baseName)
+				if _, err := os.Stat(candidate); err == nil {
+					return candidate, baseName, true
+				}
+				return filepath.Join(h.cfg.UpdatesDir, baseName), baseName, true
+			}
+		}
+		return "", "", false
+	}
+	if strings.EqualFold(clean, "Silkroad.exe") {
+		return filepath.Join(h.cfg.UpdatesDir, "Silkroad.exe"), "Silkroad.exe", true
+	}
+	if strings.Contains(clean, "/") || !strings.HasSuffix(strings.ToLower(clean), ".temir") {
+		return "", "", false
+	}
+	for _, baseName := range ArchiveNames {
+		if strings.EqualFold(clean, baseName) {
+			lastVerDir := ResolveLastVersionDir(h.cfg)
+			candidate := filepath.Join(lastVerDir, baseName)
+			if _, err := os.Stat(candidate); err == nil {
+				return candidate, baseName, true
+			}
+			return filepath.Join(h.cfg.UpdatesDir, baseName), baseName, true
+		}
+	}
+	return filepath.Join(h.cfg.UpdatesDir, clean), clean, true
 }
 
 /*
@@ -199,16 +280,16 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	name := strings.TrimPrefix(r.URL.Path, "/updates/")
-	name = strings.TrimPrefix(name, "/")
-	if !isAllowedUpdateFile(name) {
+	rel := strings.TrimPrefix(r.URL.Path, "/updates/")
+	filePath, baseName, ok := h.resolveUpdateTargetPath(rel)
+	if !ok {
 		http.NotFound(w, r)
 		return
 	}
 
-	if name == ManifestFileName {
+	if baseName == ManifestFileName {
 		h.maybeSync()
-		raw, err := os.ReadFile(filepath.Join(h.cfg.UpdatesDir, ManifestFileName))
+		raw, err := os.ReadFile(filePath)
 		if err != nil {
 			raw = []byte("{\n\t\"version\": 0,\n\t\"patches\": []\n}\n")
 		}
@@ -222,7 +303,6 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	filePath := filepath.Join(h.cfg.UpdatesDir, name)
 	f, err := os.Open(filePath)
 	if err != nil {
 		http.NotFound(w, r)
@@ -237,7 +317,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	_ = http.NewResponseController(w).SetWriteDeadline(h.now().Add(patchWriteTimeout))
-	w.Header().Set("Content-Type", "application/octet-stream")
+	contentType := "application/octet-stream"
+	if strings.HasSuffix(strings.ToLower(baseName), ".json") {
+		contentType = "application/json"
+	}
+	w.Header().Set("Content-Type", contentType)
 	w.Header().Set("Cache-Control", "no-store")
-	http.ServeContent(w, r, name, info.ModTime(), f)
+	http.ServeContent(w, r, baseName, info.ModTime(), f)
 }

@@ -295,8 +295,11 @@ export function createSkillTrainingContext( learned: readonly number[], catalog:
 		skill: ( id: number | undefined ) => id === undefined ? undefined : byId.get( id ),
 		learned: ( id: number ) => ids.has( id ),
 		hasGroupLevel: ( id: number, level: number ) => groups.has( id ) && groups.get( id )! >= level,
-		reason( row: SkillMetadata, progression: Progression ): string | null {
+		reason( row: SkillMetadata, progression: Progression, levelCap?: number ): string | null {
 			if ( !row.trainable ) {
+				return "This skill cannot be trained";
+			}
+			if ( levelCap !== undefined && row.masteries.some( r => r.ID && r.Level > levelCap ) ) {
 				return "This skill cannot be trained";
 			}
 			if ( ids.has( row.id ) ) {
@@ -328,9 +331,10 @@ export function skillTrainingReason(
 	row: SkillMetadata,
 	learned: readonly number[],
 	catalog: readonly SkillMetadata[],
-	progression: Progression
+	progression: Progression,
+	levelCap?: number
 ): string | null {
-	return createSkillTrainingContext( learned, catalog ).reason( row, progression );
+	return createSkillTrainingContext( learned, catalog ).reason( row, progression, levelCap );
 }
 export function trainingRequest( kind: "skill-train" | "mastery-train", id: number ) {
 	if ( !Number.isInteger( id ) || id <= 0 || id > 0xffffffff ) {
@@ -348,11 +352,15 @@ export function trainingRequest( kind: "skill-train" | "mastery-train", id: numb
 export function masteryTrainingReason(
 	id: number,
 	progression: Progression,
-	costs: Readonly<Record<number, number>>
+	costs: Readonly<Record<number, number>>,
+	levelCap?: number
 ): string | null {
 	const row = progression.masteries.find( m => m.id === id );
 	if ( !row ) return "Mastery is not available";
-	if ( progression.level === undefined || row.level >= progression.level || row.level >= 120 ) {
+	if (
+		progression.level === undefined || row.level >= progression.level || row.level >= 120 ||
+		(levelCap !== undefined && row.level >= levelCap)
+	) {
 		return "Character level is too low";
 	}
 	if ( row.level === 0 ) return null;

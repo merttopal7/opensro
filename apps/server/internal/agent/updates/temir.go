@@ -18,6 +18,7 @@ package updates
 
 import (
 	"encoding/binary"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -580,6 +581,40 @@ func packSingleEntry(
 		}
 	}
 	return fileLen, hash, nil
+}
+
+/*
+================
+ReadArchiveHeaderTag
+
+Reads only the 64-byte .temir header to return (fileSize, 32-char hex authTag)
+without reading or hashing the payload.
+================
+*/
+func ReadArchiveHeaderTag(archivePath string) (uint64, string, error) {
+	f, err := os.Open(archivePath)
+	if err != nil {
+		return 0, "", err
+	}
+	defer f.Close()
+
+	info, err := f.Stat()
+	if err != nil {
+		return 0, "", err
+	}
+	fileSize := uint64(info.Size())
+	if fileSize < HeaderSize {
+		return 0, "", errors.New("temir: file too small to be TEMIR archive")
+	}
+
+	var header [HeaderSize]byte
+	if _, err := io.ReadFull(f, header[:]); err != nil {
+		return 0, "", err
+	}
+	if string(header[0:8]) != string(temirMagic[:]) {
+		return 0, "", errors.New("temir: invalid TEMIR magic header")
+	}
+	return fileSize, hex.EncodeToString(header[48:64]), nil
 }
 
 /*

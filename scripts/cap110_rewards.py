@@ -269,8 +269,11 @@ def add_rewards(vsro_root, native, output, source_root=None):
 		converted = convert_rows(selected, occupied_identities(text_root, later_rows),
 			{code: entry["target"] for code, entry in prior.get("idMap", {}).items()})
 		text_path = safe_target(text_root, "textdataname.txt")
-		later_texts = [row for name in ("textdata_equip&skill.txt", "textdata_object.txt", "textdata_new.txt")
-			for row in tables.table_rows(read_later(name))]
+		later_texts = [
+			row for name in ("textdata_equip&skill.txt", "textdata_object.txt", "textdata_new.txt")
+			if tables.TEXTDATA + name in index
+			for row in tables.table_rows(read_later(name))
+		]
 		base_text = text_path.read_bytes()
 		merged_text, missing_descriptions = items.merge_texts(base_text, later_texts, converted)
 		known = {row[1] for row in characters.translation_rows(base_text) if len(row) > 1}

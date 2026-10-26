@@ -57,6 +57,7 @@ export interface SkillSlotInput {
 	readonly training: SkillTraining;
 	readonly masteries: readonly { readonly id: number; readonly level: number; }[];
 	readonly progression: Progression | undefined;
+	readonly levelCap?: number;
 }
 
 /*
@@ -142,7 +143,7 @@ function SkillSlot_Button( input: SkillSlotInput, owned: SkillSlotCandidate | un
 	// prerequisites and learned skills only: no request-pending gate. Hiding
 	// every button while one request was in flight made them all blink for a
 	// round trip. A second request is still refused at confirmation (5DE690).
-	if ( ref && input.progression && !input.training.reason( ref, input.progression ) ) {
+	if ( ref && input.progression && !input.training.reason( ref, input.progression, input.levelCap ) ) {
 		return { kind: "learn", skill: ref, upgrade: !!owned };
 	}
 	if ( owned && !next ) {
@@ -159,8 +160,16 @@ Everything the skill window draws for one cell.
 ==================
 */
 export function SkillSlot_Resolve( input: SkillSlotInput ): SkillSlot {
-	const { entry, owned } = SkillSlot_Bind( input.candidates, input.training );
-	const revealed = !!owned || (!!entry && SkillSlot_MasteryLevelMet( entry, input.training, input.masteries ));
+	const candidates = input.levelCap === undefined ?
+		input.candidates :
+		input.candidates.filter( candidate =>
+			input.training.learned( candidate.id ) ||
+			!(input.training.skill( candidate.id )?.masteries.some( r => r.ID && r.Level > input.levelCap! ))
+		);
+	const resolvedInput = candidates === input.candidates ? input : { ...input, candidates };
+	const { entry, owned } = SkillSlot_Bind( resolvedInput.candidates, resolvedInput.training );
+	const revealed = !!owned ||
+		(!!entry && SkillSlot_MasteryLevelMet( entry, resolvedInput.training, resolvedInput.masteries ));
 
 	// 588AF0 0x588D95: only a state-8 preview past the mastery gate dims.
 	const alpha = !owned && entry && revealed ? SKILL_SLOT_PREVIEW_ALPHA : 1;
@@ -170,6 +179,6 @@ export function SkillSlot_Resolve( input: SkillSlotInput ): SkillSlot {
 		owned,
 		icon: SkillSlot_Icon( entry, revealed ),
 		alpha,
-		button: entry ? SkillSlot_Button( input, owned ) : { kind: "none" }
+		button: entry ? SkillSlot_Button( resolvedInput, owned ) : { kind: "none" }
 	};
 }

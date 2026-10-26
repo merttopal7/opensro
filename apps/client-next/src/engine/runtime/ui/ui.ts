@@ -1421,6 +1421,7 @@ export function createUi(
 		catalog: unknown;
 		country: number | undefined;
 		sex: number | undefined;
+		levelCap: number | undefined;
 		rows: readonly TooltipRow[];
 	} | null = null;
 	// The item riding the cursor, by the slot control it left (slot:, avatar:,
@@ -4334,13 +4335,19 @@ export function createUi(
 			if ( practice.mode === PRACTICE_MASTERY ) {
 				if (
 					game?.progression && costs && !game.trainingPending &&
-					!masteryTrainingReason( practice.id, game.progression, costs )
+					!masteryTrainingReason( practice.id, game.progression, costs, game.levelCap )
 				) sendGameplay( { kind: "mastery-train", id: practice.id } );
 			} else {
 				const row = game ? skillMetadataById( game, practice.id ) : undefined;
 				if (
 					row && game?.progression && !game.trainingPending &&
-					!skillTrainingReason( row, game.skills ?? [], game.skillCatalog ?? [], game.progression )
+					!skillTrainingReason(
+						row,
+						game.skills ?? [],
+						game.skillCatalog ?? [],
+						game.progression,
+						game.levelCap
+					)
 				) sendGameplay( { kind: "skill-train", id: practice.id } );
 			}
 			practice = null;
@@ -14548,7 +14555,7 @@ export function createUi(
 						} else if (
 							!restoring &&
 							game?.progression &&
-							!masteryTrainingReason( mastery.id, game.progression, hudData.masteryCosts )
+							!masteryTrainingReason( mastery.id, game.progression, hudData.masteryCosts, game.levelCap )
 						) {
 							authoredButton(
 								board.GDR_SKILLBOARD_BTNLEVUP!,
@@ -14599,7 +14606,8 @@ export function createUi(
 									candidates: catalog.slots[selectedMastery + ":" + group.row + ":" + col] ?? [],
 									training: learned,
 									masteries,
-									progression: game?.progression
+									progression: game?.progression,
+									levelCap: game?.levelCap
 								} ),
 								entry = slot.entry,
 								owned = slot.owned,
@@ -25648,7 +25656,7 @@ export function createUi(
 							tooltipMemo && tooltipMemo.item === item && tooltipMemo.skill === skill &&
 							tooltipMemo.progression === game.progression && tooltipMemo.learned === game.skills &&
 							tooltipMemo.catalog === hudData.tooltipSkills && tooltipMemo.country === country &&
-							tooltipMemo.sex === sex
+							tooltipMemo.sex === sex && tooltipMemo.levelCap === game.levelCap
 						) tooltip = tooltipMemo.rows;
 						else {
 							tooltip = item ?
@@ -25658,7 +25666,8 @@ export function createUi(
 										id: skill,
 										catalog: hudData.tooltipSkills,
 										learned: game.skills ?? [],
-										progression: game.progression ?? { masteries: [] }
+										progression: game.progression ?? { masteries: [] },
+										levelCap: game.levelCap
 									},
 									lookup,
 									id => lookup( hudData.skillUi.masteries.find( m => m.id === id )?.name ?? "" )
@@ -25671,6 +25680,7 @@ export function createUi(
 								catalog: hudData.tooltipSkills,
 								country,
 								sex,
+								levelCap: game.levelCap,
 								rows: tooltip
 							};
 						}
@@ -25916,7 +25926,7 @@ export function createUi(
 			// An open map wants every tile a drag can reveal, even when it opened
 			// before its warm build ran.
 			if ( panel === "Map" ) {
-				const expandedMap = experimental.state().saved.expandedWorldMap;
+				const expandedMap = experimental.state().saved.expandedWorldMap || (game?.levelCap ?? 0) >= 100;
 				paths.push(
 					...worldMapImagePaths(
 						expandedMap ? hud.data()?.expandedMapIcons : hud.data()?.mapIcons,

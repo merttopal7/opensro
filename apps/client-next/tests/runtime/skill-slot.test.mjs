@@ -106,3 +106,61 @@ test("an empty column binds nothing", () => {
 	assert.deepEqual( slot.icon, { kind: "empty" } );
 	assert.equal( slot.button.kind, "none" );
 });
+
+test("shard levelCap isolates 91-100 skill groups and caps existing groups at the shard ceiling", () => {
+	const capCatalog = [
+		meta( 101, 10, 1, none, 88 ),
+		meta( 102, 10, 2, none, 96 ),
+		meta( 201, 20, 1, none, 92 )
+	];
+	const capGroupTen = [ cell( 101, 10, 1 ), cell( 102, 10, 2 ) ];
+	const capGroupTwenty = [ cell( 201, 20, 1 ) ];
+	const highProg = {
+		masteries: [ { id: 257, level: 100 } ],
+		skillPoints: 1000,
+		stats: { strength: 100, intellect: 100 }
+	};
+
+	// On a 90-cap shard, a 92-mastery new skill group renders as an empty cell.
+	const hiddenNewGroup = SkillSlot_Resolve( {
+		candidates: capGroupTwenty,
+		training: createSkillTrainingContext( [], capCatalog ),
+		masteries: highProg.masteries,
+		progression: highProg,
+		levelCap: 90
+	} );
+	assert.equal( hiddenNewGroup.entry, undefined );
+	assert.deepEqual( hiddenNewGroup.icon, { kind: "empty" } );
+
+	// On a 90-cap shard, rank 1 (Lv 88) is the max rank because rank 2 (Lv 96) is above the shard cap.
+	const cappedExisting = SkillSlot_Resolve( {
+		candidates: capGroupTen,
+		training: createSkillTrainingContext( [ 101 ], capCatalog ),
+		masteries: highProg.masteries,
+		progression: highProg,
+		levelCap: 90
+	} );
+	assert.equal( cappedExisting.owned.id, 101 );
+	assert.equal( cappedExisting.button.kind, "max" );
+
+	// On a 100-cap shard, both the 92-mastery new group and rank 2 (Lv 96) are available.
+	const unlockedNewGroup = SkillSlot_Resolve( {
+		candidates: capGroupTwenty,
+		training: createSkillTrainingContext( [], capCatalog ),
+		masteries: highProg.masteries,
+		progression: highProg,
+		levelCap: 100
+	} );
+	assert.equal( unlockedNewGroup.entry?.id, 201 );
+	assert.equal( unlockedNewGroup.button.kind, "learn" );
+
+	const unlockedExisting = SkillSlot_Resolve( {
+		candidates: capGroupTen,
+		training: createSkillTrainingContext( [ 101 ], capCatalog ),
+		masteries: highProg.masteries,
+		progression: highProg,
+		levelCap: 100
+	} );
+	assert.equal( unlockedExisting.button.kind, "learn" );
+	assert.equal( unlockedExisting.button.skill.id, 102 );
+});

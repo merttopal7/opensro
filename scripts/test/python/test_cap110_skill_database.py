@@ -39,7 +39,7 @@ class DatabaseSkillTests(unittest.TestCase):
 	# ================
 	def test_client_rows_above_the_expansion_cap_are_not_imported(self):
 		native = [make_skill(id_="10", mastery_level="90")]
-		later = [make_skill(id_="20", code="SKILL_CH_SWORD_B_01", mastery_level="111")]
+		later = [make_skill(id_="20", code="SKILL_CH_SWORD_B_01", mastery_level="121")]
 		self.assertEqual(skills.merge_skills(native, later)[0], [])
 
 	# ================

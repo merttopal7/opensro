@@ -10,9 +10,16 @@ reason, instead of having their native numbers edited.
 
 ===========================================================================
 */
+import fs from "node:fs";
+import path from "node:path";
+import { extractedRoot } from "../../../../scripts/build/world/paths.mjs";
 import { EXPANDED_BUILD } from "../../../../scripts/lib/expandedBuild.mjs";
+
+const SKILL_IMPORT_BUILD = fs.existsSync( path.join( extractedRoot, ".opensro-cap110-skills.json" ) );
 
 export { EXPANDED_BUILD };
 export const NATIVE_ONLY = {
-	skip: EXPANDED_BUILD ? "native census: this build adds the Alexandria and cap-110 content" : false
+	skip: EXPANDED_BUILD || SKILL_IMPORT_BUILD ?
+		"native census: this build adds the Alexandria and cap-110 content" :
+		false
 };

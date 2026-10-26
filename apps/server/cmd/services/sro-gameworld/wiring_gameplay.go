@@ -721,6 +721,7 @@ func (game *gameplayPlane) register(hub *transport.Hub, loadQuests questDefiniti
 	if err = applyLevelCap(stats); err != nil {
 		return err
 	}
+	game.deps.LevelCap = stats.ShardLevelCap
 	stats.MasteryTotalOverride = masteryOverride
 	if masteryOverride != 0 {
 		log.Infof("progression: beta total mastery allowance %d for both races (%s)", masteryOverride, progression.EnvBetaMastery)

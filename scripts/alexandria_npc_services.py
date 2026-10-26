@@ -28,11 +28,27 @@ RESTORED_STORE_NPCS = {"NPC_SD_M_AREA_ACCESSORY", "NPC_SD_T_AREA_ACCESSORY"}
 
 
 # ================
+# normalize_shop_row
+# ================
+def normalize_shop_row(name, row, width):
+	cells = [cell.strip() for cell in row]
+	if name == "refpricepolicyofitem.txt" and len(cells) == 15 and cells[-1] == "":
+		return cells[:4] + cells[5:14]
+	if width and len(cells) == width + 1 and cells[-1] == "":
+		return cells[:width]
+	return cells
+
+
+# ================
 # merge_shops
 # ================
 def merge_shops(native, later, item_codes, npc_codes):
 	base = {name: tables.table_rows(raw) for name, raw in native.items()}
-	source = {name: tables.table_rows(raw) for name, raw in later.items()}
+	widths = {name: len(base[name][0]) if base[name] else 0 for name in SHOP_TABLES}
+	source = {
+		name: [normalize_shop_row(name, r, widths[name]) for r in tables.table_rows(raw)]
+		for name, raw in later.items()
+	}
 	selected = {name: [] for name in SHOP_TABLES}
 	groups = {r[3] for r in source["refshopgroup.txt"] if len(r) >= 5 and r[0] == "1" and r[4] in npc_codes}
 	selected["refshopgroup.txt"] = [r for r in source["refshopgroup.txt"] if len(r) >= 5 and r[3] in groups]

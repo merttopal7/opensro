@@ -823,6 +823,7 @@ export interface GameplayState extends MoverPublication {
 	readonly shopCompletionRevision?: number;
 	readonly shop?: import("@/engine/foundation/gameplay/commerce").ShopState;
 	readonly masteryTotalOverride?: number;
+	readonly levelCap?: number;
 	readonly trainingPending?: boolean;
 	readonly trainingError?: string | null;
 	// Included with the dynamic snapshot; omission does not retain an older fortress.

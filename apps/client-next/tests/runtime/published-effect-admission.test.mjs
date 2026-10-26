@@ -59,7 +59,7 @@ test("published EasyFX closure fits the actual character-resource request and de
 		assert.ok( result.imagePaths.length > 0 );
 		// The expanded catalog does not expand individual model or image admission.
 		assert.equal( assetRequestBudget( "character" ), 16 * 1048576 );
-		assert.equal( assetRequestBudget( "effects" ), 32 * 1048576 );
+		assert.equal( assetRequestBudget( "effects" ), 64 * 1048576 );
 		await assert.rejects( readBytes( new Response( bytes ).body, bytes.length - 1 ), /byte limit/ );
 	} finally {
 		decoder.dispose();

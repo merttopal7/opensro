@@ -33,6 +33,7 @@ export interface SkillTooltipInput {
 	readonly catalog: TooltipSkillCatalog;
 	readonly learned: readonly number[];
 	readonly progression: Progression;
+	readonly levelCap?: number;
 }
 
 /*
@@ -229,6 +230,8 @@ Native chain attacks display their truncated arithmetic mean.
 		return rows;
 	}
 	const next = groupRecord( row.groupId, row.basicLevel + 1 );
-	if ( next ) conditions( next, "PARAM_CONDITION_OF_NEXT_LEVEL" );
+	if ( next && (input.levelCap === undefined || next.reqMasteryLevel <= input.levelCap) ) {
+		conditions( next, "PARAM_CONDITION_OF_NEXT_LEVEL" );
+	}
 	return rows;
 }

@@ -60,3 +60,36 @@ func (rt *Runtime) levelCap() int64 {
 	}
 	return CurrentLevelCap()
 }
+
+/*
+================
+ShardLevelCap
+
+Exports the active shard level ceiling for enter-world bootstrap publication.
+================
+*/
+func (rt *Runtime) ShardLevelCap() int64 {
+	return rt.levelCap()
+}
+
+/*
+================
+shardSkillCap
+
+Returns the active shard level ceiling when configured (via SetLevelCap,
+SRO_MAX_LEVEL, or Runtime.LevelLimit), or 0 on unconfigured standalone test
+runtimes so unit tests exercising higher-tier fixtures keep their default.
+================
+*/
+func (rt *Runtime) shardSkillCap() int64 {
+	if v := activeLevelCap.Load(); v >= 1 && v <= 140 {
+		return v
+	}
+	if rt.LevelLimit >= 1 && rt.LevelLimit <= 140 {
+		return rt.LevelLimit
+	}
+	if raw := strings.TrimSpace(os.Getenv("SRO_MAX_LEVEL")); raw != "" {
+		return CurrentLevelCap()
+	}
+	return 0
+}

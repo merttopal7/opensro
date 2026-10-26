@@ -375,7 +375,15 @@ def add_monsters(vsro_root, native, output, source_root=None):
 		base_text = (text_root / "textdataname.txt").read_bytes()
 		known = {r[1] for r in characters.translation_rows(base_text) if len(r) > 1}
 		wanted = {r[5] for r in refs.values()} - known
-		texts = [[r[0], r[1], r[2], "", "", r[5], r[4], r[7], r[8], r[9], ""] for r in characters.translation_rows(read("textdata_object.txt")) if len(r) >= 10 and r[1] in wanted]
+		texts = [
+			[
+				r[0], r[1], r[2], "", "", r[5], r[4], r[7],
+				r[8] if r[8] not in ("", "0", "xxx") else (r[9] if len(r) > 9 and r[9] not in ("", "0", "xxx") else ""),
+				r[9], ""
+			]
+			for r in characters.translation_rows(read("textdata_object.txt"))
+			if len(r) >= 10 and r[1] in wanted
+		]
 		if wanted - {r[1] for r in texts}:
 			raise ValueError("missing field monster names")
 		write_atomically(text_root / "textdataname.txt", characters.append_rows(base_text, texts))

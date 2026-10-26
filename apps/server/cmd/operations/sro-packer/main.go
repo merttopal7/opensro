@@ -13,6 +13,7 @@ serve at /updates/*.
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"os"
@@ -136,7 +137,7 @@ func main() {
 		fmt.Printf("Baseline manifest hazir (%s/baseline.json, %d dosya).\n", *updatesDir, count)
 
 	case "sync", "patch":
-		res, err := updates.Sync(updates.SyncConfig{
+		res, err := updates.Sync(context.Background(), updates.SyncConfig{
 			UpdatesDir:      *updatesDir,
 			ClientPublicDir: *assetsDir,
 			ClientDistDir:   *distDir,

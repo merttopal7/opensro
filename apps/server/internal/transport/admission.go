@@ -62,11 +62,11 @@ func (h *Hub) SetHelloCommitAuth(fn HelloCommitAuthFunc) {
 
 /*
 ================
-helloAuthFn
+helloAuthInstalled
 ================
 */
-func (h *Hub) helloAuthFn() HelloAuthFunc {
-	return h.admission.current()
+func (h *Hub) helloAuthInstalled() bool {
+	return h.admission.commitCurrent() != nil || h.admission.current() != nil
 }
 
 /*

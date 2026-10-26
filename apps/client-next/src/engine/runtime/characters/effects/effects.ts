@@ -749,7 +749,7 @@ export function createCharacterEffects(
 					job = {
 						id: assets.request(
 							new URL( "/assets/skill/effectRecords.json", origin ).href,
-							32 << 20,
+							64 << 20,
 							"effects"
 						),
 						kind: "records"
@@ -758,7 +758,7 @@ export function createCharacterEffects(
 					job = {
 						id: assets.request(
 							new URL( "/assets/skill/namedEffectRecords.json", origin ).href,
-							32 << 20,
+							64 << 20,
 							"effects"
 						),
 						kind: "named"

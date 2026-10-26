@@ -13,12 +13,18 @@ and updating updates/patches.json for clients to download.
 package updates
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
+
+	log "github.com/sirupsen/logrus"
+
+	"opensro.online/server/internal/platform/processguard"
 )
 
 const (
@@ -33,6 +39,11 @@ const (
 	ManifestFileName = "patches.json"
 
 	deepHashSizeThreshold uint64 = 32 * 1024 * 1024
+
+	// syncLockFileName serializes Sync across processes: the agent's
+	// automatic sync, `sro-packer sync` run by deploys and start-linux.sh all
+	// write updates/ and last_version/.
+	syncLockFileName = ".sync.lock"
 )
 
 /*
@@ -61,17 +72,34 @@ type BaselineManifest struct {
 
 /*
 ================
+PatchEntryDescriptor
+
+Describes one virtual file inside a differential PatchNNN.temir container so
+clients that absorb patches in-place into Media.temir / Data.temir / World.temir
+can verify in RAM whether all entries are already applied.
+================
+*/
+type PatchEntryDescriptor struct {
+	Path     string `json:"path"`
+	Size     uint64 `json:"size"`
+	Checksum uint64 `json:"checksum"`
+}
+
+/*
+================
 PatchDescriptor
 
 Describes one downloadable .temir archive or differential patch in patches.json.
 ================
 */
 type PatchDescriptor struct {
-	Name     string `json:"name"`
-	Size     uint64 `json:"size"`
-	Checksum uint64 `json:"checksum"`
-	Files    int    `json:"files"`
-	URL      string `json:"url,omitempty"`
+	Name      string                 `json:"name"`
+	Size      uint64                 `json:"size"`
+	Checksum  uint64                 `json:"checksum"`
+	Files     int                    `json:"files"`
+	HeaderTag string                 `json:"headerTag,omitempty"`
+	URL       string                 `json:"url,omitempty"`
+	Entries   []PatchEntryDescriptor `json:"entries,omitempty"`
 }
 
 /*
@@ -129,11 +157,20 @@ func normalizeVirtualKey(vpath string) string {
 /*
 ================
 collectDirFiles
+
+An absent source subtree is normal (not every build publishes every
+subtree); any other stat failure is reported.
 ================
 */
 func collectDirFiles(baseDir, curDir, virtualPrefix string, out *[]SourceFile) error {
 	info, err := os.Stat(curDir)
-	if err != nil || !info.IsDir() {
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() {
 		return nil
 	}
 	entries, err := os.ReadDir(curDir)
@@ -183,6 +220,15 @@ published client-public asset tree in deterministic order.
 */
 func CollectSourceFiles(clientDistDir, clientPublicDir string) ([]SourceFile, error) {
 	var all []SourceFile
+	seen := make(map[string]struct{})
+	addUnique := func(sf SourceFile) {
+		key := normalizeVirtualKey(sf.VirtualPath)
+		if _, exists := seen[key]; exists {
+			return
+		}
+		seen[key] = struct{}{}
+		all = append(all, sf)
+	}
 	if strings.TrimSpace(clientDistDir) != "" {
 		var distFiles []SourceFile
 		if err := collectDirFiles(clientDistDir, clientDistDir, "", &distFiles); err != nil {
@@ -192,20 +238,25 @@ func CollectSourceFiles(clientDistDir, clientPublicDir string) ([]SourceFile, er
 			if strings.EqualFold(sf.VirtualPath, "viewer.html") {
 				continue
 			}
-			all = append(all, sf)
+			addUnique(sf)
 		}
 	}
 	if strings.TrimSpace(clientPublicDir) != "" {
 		subTrees := []string{
 			"assets/packs",
 			"assets/delivery",
+			"assets/cursors",
 			"assets/images/Media_extracted/interface/outer",
 			"assets/images/Media_extracted/interface/loading",
 		}
 		for _, sub := range subTrees {
 			dir := filepath.Join(clientPublicDir, filepath.FromSlash(sub))
-			if err := collectDirFiles(dir, dir, sub, &all); err != nil {
+			var subFiles []SourceFile
+			if err := collectDirFiles(dir, dir, sub, &subFiles); err != nil {
 				return nil, err
+			}
+			for _, sf := range subFiles {
+				addUnique(sf)
 			}
 		}
 	}
@@ -310,9 +361,11 @@ func LoadPatchManifest(updatesDir string) (PatchManifest, error) {
 		}
 		return PatchManifest{}, err
 	}
+	// A damaged manifest is an error, never an empty one: an empty manifest
+	// would be written back and erase every published patch.
 	var manifest PatchManifest
 	if err := json.Unmarshal(raw, &manifest); err != nil {
-		return PatchManifest{Version: 0, Patches: []PatchDescriptor{}}, nil
+		return PatchManifest{}, fmt.Errorf("updates: parse %s: %w", manifestPath, err)
 	}
 	if manifest.Patches == nil {
 		manifest.Patches = []PatchDescriptor{}
@@ -348,7 +401,19 @@ func writeJSONAtomic(targetPath string, value any) error {
 	}
 	encoded = append(encoded, '\n')
 	tmpPath := targetPath + ".tmp"
-	if err := os.WriteFile(tmpPath, encoded, 0o644); err != nil {
+	f, err := os.OpenFile(tmpPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
+	if err != nil {
+		return err
+	}
+	if _, err := f.Write(encoded); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if err := f.Sync(); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if err := f.Close(); err != nil {
 		return err
 	}
 	return os.Rename(tmpPath, targetPath)
@@ -403,15 +468,82 @@ func loadKnownEntries(cfg SyncConfig, manifest PatchManifest) (map[string]Baseli
 
 /*
 ================
+ResolveLastVersionDir
+
+Resolves the directory holding the always-merged base archives (Media.temir,
+Data.temir, World.temir) used for first-time client installations. Defaults to
+the sibling `last_version/` folder next to `updates/` (e.g.
+`linux-server/last_version`).
+================
+*/
+func ResolveLastVersionDir(cfg SyncConfig) string {
+	if strings.TrimSpace(cfg.BaseArchivesDir) != "" {
+		return cfg.BaseArchivesDir
+	}
+	cleanUpdates := filepath.Clean(cfg.UpdatesDir)
+	sibling := filepath.Join(filepath.Dir(cleanUpdates), "last_version")
+	nested := filepath.Join(cleanUpdates, "last_version")
+	if _, err := os.Stat(filepath.Join(nested, "Media.temir")); err == nil {
+		if _, sibErr := os.Stat(filepath.Join(sibling, "Media.temir")); sibErr != nil {
+			return nested
+		}
+	}
+	return sibling
+}
+
+/*
+================
+patchNumber
+
+Returns NNN for "PatchNNN.temir", or 0 when the name does not follow it.
+================
+*/
+func patchNumber(name string) int {
+	if !isDifferentialPatchName(name) {
+		return 0
+	}
+	n, err := strconv.Atoi(strings.TrimSuffix(strings.TrimPrefix(name, "Patch"), ".temir"))
+	if err != nil || n < 0 {
+		return 0
+	}
+	return n
+}
+
+/*
+================
+nextPatchName
+
+Numbers the next patch after the highest number in the manifest or on disk.
+Counting patches instead would reuse a live name as soon as one older patch
+was deleted, and overwrite it.
+================
+*/
+func nextPatchName(updatesDir string, manifest PatchManifest) string {
+	highest := 0
+	for _, p := range manifest.Patches {
+		highest = max(highest, patchNumber(p.Name))
+	}
+	if dirEntries, err := os.ReadDir(updatesDir); err == nil {
+		for _, de := range dirEntries {
+			highest = max(highest, patchNumber(de.Name()))
+		}
+	}
+	return fmt.Sprintf("Patch%03d.temir", highest+1)
+}
+
+/*
+================
 Sync
 
 Checks the server's client asset directories against updates/baseline.json plus
 any existing PatchNNN.temir files. When one or more files differ, packs only
-the changed files into the next updates/PatchNNN.temir and updates
-updates/patches.json.
+the changed files into the next updates/PatchNNN.temir, merges the new patch
+into last_version/*.temir, and updates updates/patches.json. Holds the
+updates/.sync.lock file lock for the whole pass, so concurrent processes run
+one after another.
 ================
 */
-func Sync(cfg SyncConfig) (*SyncResult, error) {
+func Sync(ctx context.Context, cfg SyncConfig) (*SyncResult, error) {
 	if strings.TrimSpace(cfg.UpdatesDir) == "" {
 		return nil, fmt.Errorf("updates: UpdatesDir is required")
 	}
@@ -421,6 +553,12 @@ func Sync(cfg SyncConfig) (*SyncResult, error) {
 	if err := os.MkdirAll(cfg.UpdatesDir, 0o755); err != nil {
 		return nil, err
 	}
+	guard, err := processguard.Acquire(ctx, filepath.Join(cfg.UpdatesDir, syncLockFileName))
+	if err != nil {
+		return nil, fmt.Errorf("updates: lock %s: %w", cfg.UpdatesDir, err)
+	}
+	defer guard.Close()
+
 	if err := ensurePatchManifestFile(cfg.UpdatesDir); err != nil {
 		return nil, err
 	}
@@ -429,10 +567,14 @@ func Sync(cfg SyncConfig) (*SyncResult, error) {
 	if err != nil {
 		return nil, err
 	}
+	backfilledEntries := backfillPatchEntries(cfg, &manifest)
 
 	known, err := loadKnownEntries(cfg, manifest)
 	if err != nil {
 		if os.IsNotExist(err) {
+			if backfilledEntries {
+				_ = writeJSONAtomic(filepath.Join(cfg.UpdatesDir, ManifestFileName), manifest)
+			}
 			return &SyncResult{Version: manifest.Version}, nil
 		}
 		return nil, err
@@ -443,6 +585,9 @@ func Sync(cfg SyncConfig) (*SyncResult, error) {
 		return nil, err
 	}
 	if len(allFiles) == 0 {
+		if backfilledEntries {
+			_ = writeJSONAtomic(filepath.Join(cfg.UpdatesDir, ManifestFileName), manifest)
+		}
 		return &SyncResult{Version: manifest.Version}, nil
 	}
 
@@ -452,11 +597,14 @@ func Sync(cfg SyncConfig) (*SyncResult, error) {
 		return nil, err
 	}
 	if len(changedFiles) == 0 {
+		if backfilledEntries {
+			_ = writeJSONAtomic(filepath.Join(cfg.UpdatesDir, ManifestFileName), manifest)
+		}
 		return &SyncResult{Version: manifest.Version}, nil
 	}
 
-	nextIndex := len(manifest.Patches) + 1
-	patchName := fmt.Sprintf("Patch%03d.temir", nextIndex)
+	patchName := nextPatchName(cfg.UpdatesDir, manifest)
+	nextIndex := patchNumber(patchName)
 	patchPath := filepath.Join(cfg.UpdatesDir, patchName)
 
 	count, sizeBytes, err := PackArchiveFile(patchPath, patchName, changedFiles, cfg.ArchiveKey)
@@ -467,14 +615,37 @@ func Sync(cfg SyncConfig) (*SyncResult, error) {
 	if err != nil {
 		return nil, fmt.Errorf("updates: hash %s: %w", patchName, err)
 	}
+	_, headerTag, _ := ReadArchiveHeaderTag(patchPath)
+	var patchEntries []PatchEntryDescriptor
+	if _, toc, tocErr := ReadArchiveTOC(patchPath, cfg.ArchiveKey); tocErr == nil {
+		patchEntries = make([]PatchEntryDescriptor, 0, len(toc))
+		for _, item := range toc {
+			patchEntries = append(patchEntries, PatchEntryDescriptor{
+				Path:     item.VirtualPath,
+				Size:     item.DataLength,
+				Checksum: item.Checksum,
+			})
+		}
+	}
 
-	manifest.Version = uint32(nextIndex)
+	nextVersion := manifest.Version + 1
+	if uint32(nextIndex) > nextVersion {
+		nextVersion = uint32(nextIndex)
+	}
+	manifest.Version = nextVersion
 	manifest.Patches = append(manifest.Patches, PatchDescriptor{
-		Name:     patchName,
-		Size:     sizeBytes,
-		Checksum: patchChecksum,
-		Files:    count,
+		Name:      patchName,
+		Size:      sizeBytes,
+		Checksum:  patchChecksum,
+		Files:     count,
+		HeaderTag: headerTag,
+		Entries:   patchEntries,
 	})
+
+	// Immediately merge the newly created PatchNNN.temir into last_version/*.temir
+	// and refresh the base archive descriptors in manifest.Patches.
+	_ = backfillPatchEntries(cfg, &manifest)
+
 	if err := writeJSONAtomic(filepath.Join(cfg.UpdatesDir, ManifestFileName), manifest); err != nil {
 		return nil, fmt.Errorf("updates: write %s: %w", ManifestFileName, err)
 	}
@@ -489,6 +660,269 @@ func Sync(cfg SyncConfig) (*SyncResult, error) {
 		PatchBytes:   sizeBytes,
 		Version:      manifest.Version,
 	}, nil
+}
+
+/*
+================
+backfillPatchEntries
+
+Synchronizes `last_version/` base archives and `manifest.Patches`:
+ 1. Moves any base archives (`Media.temir`, `Data.temir`, `World.temir`) placed in
+    `updates/` into `last_version/`.
+ 2. Removes any `PatchNNN.temir` descriptor whose file was deleted from `updates/`.
+ 3. Merges all active `PatchNNN.temir` files in-place into `last_version/*.temir`
+    so first-time installers download already-merged base archives from `last_version/`.
+ 4. Updates the `Media.temir`, `Data.temir`, `World.temir` descriptors (`url: "last_version/<name>"`)
+    and backfills `Entries` on every `PatchNNN.temir`.
+
+================
+*/
+func backfillPatchEntries(cfg SyncConfig, manifest *PatchManifest) bool {
+	updatesDir := cfg.UpdatesDir
+	passphrase := cfg.ArchiveKey
+	if passphrase == "" {
+		passphrase = DefaultArchiveKey
+	}
+	lastVersionDir := ResolveLastVersionDir(cfg)
+	_ = os.MkdirAll(lastVersionDir, 0o755)
+
+	updated := false
+	baseReplaced := false
+	prunedPatches := false
+
+	// 1. Migrate any base .temir archives placed directly in updatesDir into lastVersionDir
+	if filepath.Clean(lastVersionDir) != filepath.Clean(updatesDir) {
+		for _, baseName := range ArchiveNames {
+			oldBase := filepath.Join(updatesDir, baseName)
+			newBase := filepath.Join(lastVersionDir, baseName)
+			if info, err := os.Stat(oldBase); err == nil && info.Mode().IsRegular() {
+				if _, destErr := os.Stat(newBase); os.IsNotExist(destErr) {
+					_ = os.Rename(oldBase, newBase)
+				}
+			}
+		}
+	}
+
+	// 2. Remove any PatchNNN.temir entry whose file was deleted from updatesDir,
+	// and discover any newly uploaded PatchNNN.temir files on disk.
+	kept := make([]PatchDescriptor, 0, len(manifest.Patches))
+	activePatchNames := make([]string, 0)
+	knownPatchNames := make(map[string]struct{}, len(manifest.Patches))
+	for _, p := range manifest.Patches {
+		if strings.HasPrefix(p.Name, "Patch") && strings.HasSuffix(p.Name, ".temir") {
+			patchPath := filepath.Join(updatesDir, p.Name)
+			info, err := os.Stat(patchPath)
+			if err != nil {
+				prunedPatches = true
+				updated = true
+				continue
+			}
+			_, diskTag, tagErr := ReadArchiveHeaderTag(patchPath)
+			if uint64(info.Size()) != p.Size || (tagErr == nil && diskTag != "" && !strings.EqualFold(diskTag, p.HeaderTag)) {
+				updated = true
+				continue
+			}
+			activePatchNames = append(activePatchNames, p.Name)
+			knownPatchNames[strings.ToLower(p.Name)] = struct{}{}
+		}
+		kept = append(kept, p)
+	}
+	if dirEntries, readErr := os.ReadDir(updatesDir); readErr == nil {
+		var diskPatches []string
+		for _, de := range dirEntries {
+			if de.IsDir() {
+				continue
+			}
+			name := de.Name()
+			if strings.HasPrefix(name, "Patch") && strings.HasSuffix(name, ".temir") {
+				if _, exists := knownPatchNames[strings.ToLower(name)]; !exists {
+					diskPatches = append(diskPatches, name)
+				}
+			}
+		}
+		sort.Slice(diskPatches, func(i, j int) bool {
+			return patchNumber(diskPatches[i]) < patchNumber(diskPatches[j])
+		})
+		for _, name := range diskPatches {
+			patchPath := filepath.Join(updatesDir, name)
+			sizeBytes, patchChecksum, hashErr := FNV1a64File(patchPath)
+			if hashErr != nil {
+				continue
+			}
+			_, headerTag, _ := ReadArchiveHeaderTag(patchPath)
+			_, toc, tocErr := ReadArchiveTOC(patchPath, passphrase)
+			if tocErr != nil || len(toc) == 0 {
+				continue
+			}
+			entries := make([]PatchEntryDescriptor, 0, len(toc))
+			for _, item := range toc {
+				entries = append(entries, PatchEntryDescriptor{
+					Path:     item.VirtualPath,
+					Size:     item.DataLength,
+					Checksum: item.Checksum,
+				})
+			}
+			kept = append(kept, PatchDescriptor{
+				Name:      name,
+				Size:      sizeBytes,
+				Checksum:  patchChecksum,
+				Files:     len(toc),
+				HeaderTag: headerTag,
+				Entries:   entries,
+			})
+			activePatchNames = append(activePatchNames, name)
+			manifest.Version++
+			updated = true
+		}
+	}
+	manifest.Patches = kept
+	if fillPatchEntries(updatesDir, passphrase, manifest) {
+		updated = true
+	}
+
+	// 3. Merge the live entries of every active PatchNNN.temir into
+	// last_version/*.temir. Superseded entries are skipped, so this pass is
+	// idempotent and leaves the archives untouched when they are current.
+	mergedIntoLastVersion := false
+	live := livePatchEntryKeys(manifest.Patches)
+	for _, patchName := range activePatchNames {
+		// A patch without entries is absent from live: nil merges it whole.
+		patchPath := filepath.Join(updatesDir, patchName)
+		merged, err := MergePatchIntoBaseArchives(lastVersionDir, patchPath, passphrase, live[patchName])
+		if err != nil {
+			log.Warnf("agent: updates: %v", err)
+			continue
+		}
+		if merged {
+			mergedIntoLastVersion = true
+			updated = true
+		}
+	}
+
+	// Merges only append; reclaim dead bytes while patches are published.
+	// With no patches a changed header tag would read as a replaced base
+	// archive and send every client a full download, so compaction waits.
+	if len(activePatchNames) > 0 {
+		for _, baseName := range ArchiveNames {
+			basePath := filepath.Join(lastVersionDir, baseName)
+			if _, err := os.Stat(basePath); err != nil {
+				continue
+			}
+			if _, err := compactArchive(basePath, passphrase, compactMinDeadBytes); err != nil {
+				log.Warnf("agent: updates: compact %s: %v", baseName, err)
+			}
+		}
+	}
+
+	// 4. Sync Media.temir, Data.temir, World.temir descriptors from lastVersionDir
+	var basePrepend []PatchDescriptor
+	for _, baseName := range ArchiveNames {
+		basePath := filepath.Join(lastVersionDir, baseName)
+		info, err := os.Stat(basePath)
+		if err != nil || !info.Mode().IsRegular() {
+			continue
+		}
+		_, headerTag, tagErr := ReadArchiveHeaderTag(basePath)
+		if tagErr != nil {
+			continue
+		}
+		fileSize := uint64(info.Size())
+		relURL := "last_version/" + baseName
+
+		existingIdx := -1
+		for i := range manifest.Patches {
+			if strings.EqualFold(manifest.Patches[i].Name, baseName) {
+				existingIdx = i
+				break
+			}
+		}
+		if existingIdx >= 0 {
+			cur := &manifest.Patches[existingIdx]
+			if cur.URL != relURL {
+				cur.URL = relURL
+				updated = true
+			}
+			if cur.Size != fileSize || !strings.EqualFold(cur.HeaderTag, headerTag) || cur.Checksum == 0 {
+				_, toc, tocErr := ReadArchiveTOC(basePath, passphrase)
+				_, checksum, hashErr := FNV1a64File(basePath)
+				if tocErr == nil && hashErr == nil {
+					if cur.HeaderTag != "" && !strings.EqualFold(cur.HeaderTag, headerTag) &&
+						!mergedIntoLastVersion && len(activePatchNames) == 0 {
+						baseReplaced = true
+					}
+					cur.Size = fileSize
+					cur.Checksum = checksum
+					cur.Files = len(toc)
+					cur.HeaderTag = headerTag
+					updated = true
+				}
+			}
+			continue
+		}
+
+		_, toc, err := ReadArchiveTOC(basePath, passphrase)
+		if err != nil {
+			continue
+		}
+		// The whole-file checksum lets clients verify a 2 GB download, not
+		// only its header and TOC.
+		_, checksum, err := FNV1a64File(basePath)
+		if err != nil {
+			continue
+		}
+		basePrepend = append(basePrepend, PatchDescriptor{
+			Name:      baseName,
+			Size:      fileSize,
+			Checksum:  checksum,
+			Files:     len(toc),
+			HeaderTag: headerTag,
+			URL:       relURL,
+		})
+	}
+	if len(basePrepend) > 0 {
+		manifest.Patches = append(basePrepend, manifest.Patches...)
+		updated = true
+	}
+
+	if baseReplaced || prunedPatches {
+		manifest.Version++
+		_, _ = WriteBaselineFromArchives(lastVersionDir, updatesDir, passphrase)
+	}
+	return updated
+}
+
+/*
+================
+fillPatchEntries
+
+Backfills Entries on every PatchNNN.temir descriptor that lacks them, from the
+patch's own TOC. Runs before the merge so livePatchEntryKeys sees every patch.
+================
+*/
+func fillPatchEntries(updatesDir, passphrase string, manifest *PatchManifest) bool {
+	updated := false
+	for i := range manifest.Patches {
+		p := &manifest.Patches[i]
+		if !isDifferentialPatchName(p.Name) || len(p.Entries) > 0 {
+			continue
+		}
+		patchPath := filepath.Join(updatesDir, p.Name)
+		_, toc, err := ReadArchiveTOC(patchPath, passphrase)
+		if err != nil || len(toc) == 0 {
+			continue
+		}
+		entries := make([]PatchEntryDescriptor, 0, len(toc))
+		for _, item := range toc {
+			entries = append(entries, PatchEntryDescriptor{
+				Path:     item.VirtualPath,
+				Size:     item.DataLength,
+				Checksum: item.Checksum,
+			})
+		}
+		p.Entries = entries
+		updated = true
+	}
+	return updated
 }
 
 /*

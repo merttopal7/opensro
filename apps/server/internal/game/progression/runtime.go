@@ -549,7 +549,8 @@ func (rt *Runtime) HandleMasteryLevelUp(divisionID string, character *enterworld
 			return false
 		}
 		newLevel = current + 1
-		if newLevel > MasteryLevelCap || newLevel > characterLevel(character) {
+		shardCap := rt.shardSkillCap()
+		if newLevel > MasteryLevelCap || newLevel > characterLevel(character) || (shardCap > 0 && newLevel > shardCap) {
 			return false
 		}
 
@@ -683,9 +684,14 @@ func (rt *Runtime) HandleSkillLearn(divisionID string, character *enterworld.Cha
 		if character.DeletePending {
 			return false
 		}
+		shardCap := rt.shardSkillCap()
 		for _, requirement := range row.Masteries {
 			if requirement.ID == 0 {
 				continue
+			}
+			if shardCap > 0 && requirement.Level > shardCap {
+				refusal = skillLearnUnavailable
+				return false
 			}
 			level, exists := enterworld.MasteryLevel(character, requirement.ID)
 			if !exists {

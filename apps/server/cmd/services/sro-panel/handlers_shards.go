@@ -27,6 +27,7 @@ import (
 
 	"opensro.online/server/internal/cluster/shard"
 	"opensro.online/server/internal/data/store"
+	"opensro.online/server/internal/gamedata"
 	"opensro.online/server/internal/security/auth"
 )
 
@@ -924,9 +925,8 @@ func (s *panelServer) triggerNomadDeploy() {
 	}
 
 	env := os.Environ()
-	if strings.TrimSpace(os.Getenv("SRO_SERVER_GAME_DATA_ROOT")) == "" {
-		srogz := filepath.Join(s.moduleRoot, ".generated", "game-data", "1.150", "server.srogz")
-		env = append(env, "SRO_SERVER_GAME_DATA_ROOT="+srogz)
+	if paths, err := gamedata.Resolve(); err == nil {
+		env = append(env, gamedata.EnvRoot+"="+paths.RuntimeRoot)
 	}
 	if strings.TrimSpace(os.Getenv("SRO_AGENT_POSTGRES_DSN")) == "" {
 		if raw, err := os.ReadFile(filepath.Join(s.stateDir, "postgres-dsn.txt")); err == nil {

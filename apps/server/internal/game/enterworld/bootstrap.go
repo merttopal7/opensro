@@ -305,6 +305,7 @@ func buildCharacterProjection(deps *Deps, divisionID string, character *Characte
 		Packets:              packets,
 		UnlimitedItems:       StarterKitRefObjIDs(deps.StarterKit),
 		MasteryTotalOverride: deps.MasteryTotalOverride,
+		LevelCap:             shardLevelCap(deps),
 		StorageAutoStack:     deps.StorageAutoStack,
 		FastDenReturn:        deps.FastDenReturn,
 		TradeTiers:           deps.TradeTiers,
@@ -312,6 +313,18 @@ func buildCharacterProjection(deps *Deps, divisionID string, character *Characte
 		MoonlitThiefSuit:     deps.MoonlitThiefSuit,
 		UiTuning:             UiTuningFrom(tunables.Current()),
 	}
+}
+
+/*
+================
+shardLevelCap
+================
+*/
+func shardLevelCap(deps *Deps) int64 {
+	if deps == nil || deps.LevelCap == nil {
+		return 0
+	}
+	return deps.LevelCap()
 }
 
 /*

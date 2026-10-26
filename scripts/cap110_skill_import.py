@@ -119,7 +119,12 @@ def add_skills(vsro_root, native, output, database_export=None):
 			summary["databaseSnapshotSha256"] = database_hash
 		text_path = output / TEXT_ROOT / "textdataname.txt"
 		base_text = text_path.read_bytes() if text_path.exists() else read_native("textdataname.txt")
-		known_text = {r[1] for r in text_tables.translation_rows(base_text) if len(r) > 8 and r[8] not in ("", "0", "xxx")}
+		completions_path = REPO_ROOT / "scripts" / "build" / "shared" / "englishCompletions" / "textdataname.json"
+		completions = set(json.loads(completions_path.read_text(encoding="utf-8"))) if completions_path.exists() else set()
+		known_text = {
+			r[1] for r in text_tables.translation_rows(base_text)
+			if len(r) > 8 and (r[8] not in ("", "0", "xxx") or r[1] in completions)
+		}
 		wanted_names = {r[62] for r in added if r[62] not in ("", "xxx")} - known_text
 		wanted_text = {r[column] for r in added for column in (62, 64, 65) if r[column] not in ("", "xxx")} - known_text
 		new_text = []
@@ -128,8 +133,11 @@ def add_skills(vsro_root, native, output, database_export=None):
 			if not wanted_text or not name.startswith("textdata_") or not name.endswith(".txt"):
 				continue
 			for row in text_tables.translation_rows(read_later(name)):
-				if len(row) >= 10 and row[1] in wanted_text and row[8] not in ("", "0", "xxx"):
-					new_text.append([row[0], row[1], row[2], "", "", row[5], row[4], row[7], row[8], row[9], ""])
+				english = row[8] if len(row) > 8 and row[8] not in ("", "0", "xxx") else (
+					row[9] if len(row) > 9 and row[9] not in ("", "0", "xxx") else ""
+				)
+				if len(row) >= 10 and row[1] in wanted_text and english:
+					new_text.append([row[0], row[1], row[2], "", "", row[5], row[4], row[7], english, row[9], ""])
 					wanted_text.remove(row[1])
 		if wanted_names & wanted_text:
 			raise ValueError(f"missing imported skill names: {sorted(wanted_names & wanted_text)}")

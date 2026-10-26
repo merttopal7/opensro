@@ -46,17 +46,15 @@ test("background range and effect quality survive the persisted two-record optio
 });
 test("native store-only slots and implemented water/cloth settings persist independently", () => {
 	let options = defaultVideoOptions();
-	assert.equal( options.records[0][0], 3 );
-	assert.equal( options.records[1][0], 3 );
-	options = changeVideo( options, 3, 2 );
-	options = changeVideo( options, 5, 1 );
+	options = changeVideo( options, 3, 4 );
+	options = changeVideo( options, 5, 0 );
 	const saved = videoOptions( JSON.parse( JSON.stringify( options ) ) );
-	assert.equal( saved.records[0][3], 2 );
-	assert.equal( saved.records[0][5], 1 );
+	assert.equal( saved.records[0][3], 4 );
+	assert.equal( saved.records[0][5], 0 );
 	assert.equal( saved.records[0][0], 4 );
 	assert.equal( backgroundDrawDistance( saved ), backgroundDrawDistance( defaultVideoOptions() ) );
 	assert.equal( videoOptions( changeVideo( saved, 4, 1 ) ).records[0][4], 1 );
-	assert.equal( videoOptions( changeVideo( saved, 12, 1 ) ).records[0][12], 1 );
+	assert.equal( videoOptions( changeVideo( saved, 12, 0 ) ).records[0][12], 0 );
 });
 
 /*

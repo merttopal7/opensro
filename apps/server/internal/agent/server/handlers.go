@@ -584,6 +584,7 @@ func (server *Server) handleDynamicShardTransport(w http.ResponseWriter, r *http
 		return
 	}
 	proxy := httputil.NewSingleHostReverseProxy(targetURL)
+	proxy.FlushInterval = -1
 	originalDirector := proxy.Director
 	proxy.Director = func(req *http.Request) {
 		originalDirector(req)

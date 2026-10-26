@@ -113,6 +113,7 @@ BUILDING_COLUMNS = 58
 
 # Areas of regioninfo.txt / effectenvsnd.txt: the city and the field around it.
 MUSIC_AREAS = ("알렉산드리아", "델타지역")
+EFFECTENVSND_ALIASES = {"알렉산드리아": "Egypt_Town_Alexandria", "델타지역": "Egypt_Field_Delta"}
 EFFECTENVSND_COLUMNS = 7
 
 # The VSRO characterdata files (characterdata.txt lists them).
@@ -261,11 +262,23 @@ def enable_regions(mapinfo, regions):
 
 
 # ================
+# trim_db_row
+# ================
+def trim_db_row(row, width):
+	"""Strip DbToMedia cell padding and drop a trailing empty tab cell."""
+	cells = [cell.strip() for cell in row]
+	if len(cells) == width + 1 and cells[-1] == "":
+		return cells[:width]
+	return cells
+
+
+# ================
 # by_column
 # ================
 def by_column(raw, column, width=0):
 	"""{value of column: row} of a table, keeping rows at least width wide."""
-	return {row[column]: row for row in stage1.table_rows(raw) if len(row) > column and len(row) >= width}
+	rows = [trim_db_row(row, width) if width else [c.strip() for c in row] for row in stage1.table_rows(raw)]
+	return {row[column]: row for row in rows if len(row) > column and len(row) >= width}
 
 
 # ================
@@ -323,11 +336,14 @@ def merge_gate_tables(native, vsro, codes=GATE_CODES, level_cap=NATIVE_LEVEL_CAP
 		data_rows.append(row)
 	building_ids = {row[3] for row in data_rows}
 	buildings = [
-		row for row in stage1.table_rows(vsro["teleportbuilding.txt"])
+		row for row in (trim_db_row(r, BUILDING_COLUMNS) for r in stage1.table_rows(vsro["teleportbuilding.txt"]))
 		if len(row) >= BUILDING_COLUMNS and row[1] in building_ids
 	]
 	links = []
-	for row in stage1.table_rows(vsro["teleportlink.txt"]):
+	for raw_row in stage1.table_rows(vsro["teleportlink.txt"]):
+		row = [cell.strip() for cell in raw_row]
+		if len(row) == LINK_COLUMNS + 2 and row[-1] == "":
+			row = row[:6] + row[7:LINK_COLUMNS + 1]
 		if len(row) != LINK_COLUMNS or row[0] != "1" or not ({row[1], row[2]} & new_ids):
 			continue
 		other = row[2] if row[1] in new_ids else row[1]
@@ -398,15 +414,20 @@ def effectenvsnd_section(lines, name):
 	One area's block of effectenvsnd.txt: its "<1>" line and everything below
 	it up to the next "<1>", padded to the v1.150 file's seven columns.
 	"""
+	targets = (name, EFFECTENVSND_ALIASES.get(name))
 	for start, line in enumerate(lines):
 		cells = line.split("\t")
-		if cells[0] == "<1>" and len(cells) > 1 and cells[1] == name:
+		if cells[0] == "<1>" and len(cells) > 1 and cells[1] in targets:
 			end = start + 1
 			while end < len(lines) and not lines[end].startswith("<1>"):
 				end += 1
+			rows = [row for row in lines[start:end] if row.strip("\t")]
+			head_cells = rows[0].split("\t")
+			head_cells[1] = name
+			rows[0] = "\t".join(head_cells)
 			return [
 				row + "\t" * (EFFECTENVSND_COLUMNS - len(row.split("\t")))
-				for row in lines[start:end] if row.strip("\t")
+				for row in rows
 			]
 	raise SystemExit(f"effectenvsnd.txt has no area {name!r}")
 
@@ -687,7 +708,7 @@ def add_map(vsro_root, native, out, regions, text_base):
 		replace_file(out / textdata / name, content)
 
 	present = lower_paths(native / "Media_extracted")
-	overrides = set(overview_tiles(summary["overview"], regions))
+	overrides = set(overview_tiles(summary["overview"]))
 	icons = {row[2].replace("\\", "/").lower() for row in stage1.table_rows(merged["worldmap_localinfo.txt"])
 		if len(row) == LOCALINFO_COLUMNS and row[1] == "2" and row[2].lower().endswith(".ddj")}
 	path, handle, data = stage1.open_archive(vsro_root, "Media")
@@ -828,7 +849,9 @@ def add_missing_files(vsro_root, archive, destination, present, skip_prefix=()):
 			key = entry.path.replace("\\", "/").lower()
 			if key in present or key.startswith(skip_prefix):
 				continue
-			write_atomically(safe_target(destination, entry.path), sro_pk2.payload(data, entry))
+			target = safe_target(destination, entry.path)
+			if not (target.is_file() and target.stat().st_size == entry.size):
+				write_atomically(target, sro_pk2.payload(data, entry))
 			added += 1
 		log(f"{destination.name}: {added} VSRO files added")
 		return added

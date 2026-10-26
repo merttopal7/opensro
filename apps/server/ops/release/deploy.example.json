@@ -1,0 +1,12 @@
+{
+	"host": "sro.ftemir.com",
+	"port": 22,
+	"user": "root",
+	"password": "",
+	"keyFile": "",
+	"remoteDir": "/root/linux-server",
+	"mode": "ssh",
+	"buildBeforeDeploy": true,
+	"restartServices": true
+}
+

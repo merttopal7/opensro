@@ -54,7 +54,14 @@ def read_item_tables(read):
 		raise ValueError("invalid item manifest")
 	if len(set(map(sro_pk2.fold_ascii, names))) != len(names):
 		raise ValueError("duplicate item manifest entry")
-	return [row for name in names for row in tables.table_rows(read(sro_pk2.fold_ascii(name)))]
+	rows = []
+	for name in names:
+		for raw_row in tables.table_rows(read(sro_pk2.fold_ascii(name))):
+			row = [cell.strip() for cell in raw_row]
+			if len(row) == items.ITEM_COLUMNS + 1 and row[-1] == "":
+				row = row[:items.ITEM_COLUMNS]
+			rows.append(row)
+	return rows
 
 
 # ================
@@ -208,6 +215,7 @@ def add_items(vsro_root, native, output):
 		base_text = text_path.read_bytes() if text_path.exists() else read_native("textdataname.txt")
 		later_texts = [
 			row for name in ("textdata_equip&skill.txt", "textdata_object.txt", "textdata_new.txt")
+			if tables.TEXTDATA + name in index
 			for row in tables.table_rows(read_later(name))
 		]
 		merged_text, missing_descriptions = items.merge_texts(base_text, later_texts, equipment)

@@ -131,6 +131,7 @@ func main() {
 		},
 	}
 	srv.syncCatalogToDatabase()
+	_ = srv.saveDatabaseToCatalogFile()
 
 	addr := strings.TrimSpace(os.Getenv("SRO_PANEL_ADDR"))
 	if addr == "" {

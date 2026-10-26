@@ -43,8 +43,8 @@ SoundEntity
 export type SoundEntity = Pick<EntityState, "refObjId" | "groundItem" | "transformSkin">;
 
 const CATALOG_LIMIT = 16 << 20;
-// Effect records share the 32 MiB admission contract of character effects.
-const EFFECT_CATALOG_LIMIT = 32 << 20;
+// Effect records share the 64 MiB admission contract of character effects.
+const EFFECT_CATALOG_LIMIT = 64 << 20;
 const CATALOG_PATHS = [
 	"/assets/audio/effectsound.json",
 	"/assets/char/roster.json",

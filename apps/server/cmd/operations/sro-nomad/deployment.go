@@ -632,7 +632,7 @@ gameVariables
 func (deployment *deployment) gameVariables(
 	game shardDeployment,
 ) map[string]any {
-	return deployment.nodeVariables(deployment.GameCPU, deployment.GameMemoryMB, deployment.PortOnly.jobVariables(map[string]any{
+	vars := deployment.PortOnly.jobVariables(map[string]any{
 		"shard_id":                         game.Definition.ID,
 		"binary_path":                      slashPath(deployment.GameBinary),
 		"catalog_path":                     slashPath(deployment.Catalog),
@@ -665,7 +665,11 @@ func (deployment *deployment) gameVariables(
 		"public_api_addr":     game.PublicAPIAddr,
 		"transport_pprof":     boolEnvValue(game.PprofAddr != ""),
 		"pprof_addr":          pprofAddrValue(game.PprofAddr),
-	}))
+	})
+	if game.Definition.MaxLevel >= 100 && strings.TrimSpace(os.Getenv("SRO_ALEXANDRIA")) == "" {
+		vars["alexandria"] = "on"
+	}
+	return deployment.nodeVariables(deployment.GameCPU, deployment.GameMemoryMB, vars)
 }
 
 /*

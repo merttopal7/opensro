@@ -361,7 +361,7 @@ export function experimentalOptions( value: unknown = null ): ExperimentalOption
 		petFilterPotions: record.petFilterPotions !== false,
 		petFilterOther: record.petFilterOther !== false,
 		touchInspect: record.touchInspect !== false,
-		expandedWorldMap: enabled( "expandedWorldMap" ),
+		expandedWorldMap: record.expandedWorldMap !== false,
 		questTrackerMarkers: enabled( "questTrackerMarkers" )
 	};
 }

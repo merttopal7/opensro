@@ -66,7 +66,8 @@ def native_text_row(row):
 	key, Korean, '', zh-TW, zh-CN, de, ja, en, vi; v1.150: service, key,
 	Korean, '', description, zh-CN, zh-TW, ja, en, vi, ''.
 	"""
-	return [row[0], row[1], row[2], "", "", row[5], row[4], row[7], row[8], row[9], ""]
+	en = row[8] if row[8] not in ("", "0", "xxx") else (row[9] if len(row) > 9 and row[9] not in ("", "0", "xxx") else "")
+	return [row[0], row[1], row[2], "", "", row[5], row[4], row[7], en, row[9], ""]
 
 
 # ================
@@ -235,12 +236,10 @@ def overview_tiles(box, regions=None):
 def map_media_paths(regions, box=None, native_box=None):
 	"""
 	The Media.pk2 files the map needs: the local-map art, the minimap tiles and
-	the overview tiles the widened box adds or whose imported land changes.
+	the overview tiles of the widened box.
 	"""
 	tiles = [f"minimap/{x}x{y}.ddj" for x, y in regions]
 	overview = overview_tiles(box) if box else []
-	known = set(overview_tiles(native_box)) if native_box else set()
-	changed = set(overview_tiles(box, regions)) if box else set()
-	return list(MAP_TEXTURES) + tiles + [path for path in overview if path not in known or path in changed]
+	return list(MAP_TEXTURES) + tiles + overview
 
 
