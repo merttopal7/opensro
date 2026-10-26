@@ -49,6 +49,14 @@ export SRO_LEVEL_CAP="${SRO_LEVEL_CAP:-110}"
 export SRO_CAP110_MONSTERS="${SRO_CAP110_MONSTERS:-on}"
 export SRO_PHARAOH_TOMB="${SRO_PHARAOH_TOMB:-on}"
 export SRO_PHARAOH_TOMB_GEAR_RATE="${SRO_PHARAOH_TOMB_GEAR_RATE:-5}"
+# Browser origins the Agent and GameWorld accept (sro-nomad -allowed-origins),
+# comma-separated, e.g. "https://sro.ftemir.com" for a browser client or
+# installed PWA served from the server's domain. The environment wins, else
+# config/allowed-origins, which lives only on the host (deploys add files and
+# never remove one) so it survives this script being regenerated. Empty keeps
+# sro-nomad's loopback development list. The desktop shell drops its Origin
+# header and needs no entry.
+export SRO_ALLOWED_ORIGINS="${SRO_ALLOWED_ORIGINS:-$(if [ -f config/allowed-origins ]; then tr -d '[:space:]' < config/allowed-origins; fi)}"
 
 mkdir -p .state/cluster
 echo "$SRO_AGENT_POSTGRES_DSN" > .state/cluster/postgres-dsn.txt
@@ -157,7 +165,8 @@ for auth_dir in .state/shards/*/authority; do
 done
 echo "[6/6] Deploying sro-agent and sro-gameworld..."
 "$SRO_NOMAD_BINARY" var purge sro/operations/fleet >/dev/null 2>&1 || true
-./sro-nomad deploy -agent-cpu=100 -agent-memory-mb=128 -gameworld-cpu=200 -gameworld-memory-mb=1024
+./sro-nomad deploy -agent-cpu=100 -agent-memory-mb=128 -gameworld-cpu=200 -gameworld-memory-mb=1024 \\
+	${SRO_ALLOWED_ORIGINS:+-allowed-origins="$SRO_ALLOWED_ORIGINS"}
 
 echo ""
 echo "=== OpenSRO Server Active! ==="
