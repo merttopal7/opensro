@@ -27,3 +27,4 @@
 *.exe binary
 *.dll binary
 *.wasm binary
+*.temir binary

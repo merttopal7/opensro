@@ -28,4 +28,5 @@ go.sum		text eol=lf
 *.db		binary
 *.db-shm	binary
 *.db-wal	binary
+*.temir		binary
 *.pem		text eol=lf

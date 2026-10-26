@@ -50,6 +50,17 @@ const SHARED_FIXTURES = [
 	{
 		canonical: `${CLIENT_NATIVE}/buff-replacement-cases.json`,
 		copy: "apps/server/internal/game/item/statuseffect/testdata/buff-replacement-cases.json"
+	},
+	// The other way round: the Go packer writes this archive
+	// (TestTemirClientReaderFixture), so the server copy is canonical and the
+	// browser's TEMIR reader test reads the copy.
+	{
+		canonical: "apps/server/internal/agent/updates/testdata/client-reader.temir",
+		copy: "apps/client-next/tests/fixtures/temir/client-reader.temir"
+	},
+	{
+		canonical: "apps/server/internal/agent/updates/testdata/client-reader-patch.temir",
+		copy: "apps/client-next/tests/fixtures/temir/client-reader-patch.temir"
 	}
 ];
 
@@ -88,7 +99,7 @@ function main() {
 		);
 		process.exit( 1 );
 	}
-	process.stdout.write( `shared-fixtures: ${SHARED_FIXTURES.length} server copies match their canonical captures\n` );
+	process.stdout.write( `shared-fixtures: ${SHARED_FIXTURES.length} copies match their canonical files\n` );
 }
 
 main();
