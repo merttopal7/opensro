@@ -1,0 +1,120 @@
+/*
+===========================================================================
+
+install-gate.css - the install page a gated build shows in a browser tab
+
+Loaded from index.html. foundation/install/install-gate.ts reveals
+#install-gate and sets data-route (which panel) and data-state (the prompt
+button's progress); every panel and message is static markup, selected
+here. Port-only, not native.
+
+===========================================================================
+*/
+
+.sro-install-gate {
+	position: fixed;
+	inset: 0;
+	z-index: 10;
+	display: grid;
+	place-items: center;
+	padding: 24px;
+	overflow: auto;
+	background: radial-gradient(circle at 50% 30%, rgba(116, 88, 31, 0.14), transparent 40%), #020202;
+	color: #d8c8a7;
+	font: 15px/1.5 system-ui, sans-serif;
+	box-sizing: border-box;
+}
+
+.sro-install-gate[hidden] {
+	display: none;
+}
+
+/* The game's FPS chip sits above every layer; a page that never starts the
+   game has nothing for it to show. */
+.sro-install-gate:not([hidden]) ~ #fps-chip {
+	display: none;
+}
+
+.sro-install-gate__card {
+	width: min(560px, 100%);
+	text-align: center;
+}
+
+/* The app's own icon (/pwa-icon.png, tools/pwa-manifest.mjs): a gated
+   build always publishes it, while the game's art lives only inside the
+   archives the page has not downloaded. */
+.sro-install-gate__logo {
+	width: 128px;
+	height: 128px;
+	border-radius: 24px;
+}
+
+.sro-install-gate h1 {
+	margin: 12px 0 8px;
+	color: #ead69c;
+	font: 600 22px/1.3 Georgia, "Times New Roman", serif;
+}
+
+.sro-install-gate__lead {
+	margin: 0 0 20px;
+	color: #9d9a91;
+}
+
+.sro-install-gate ol {
+	margin: 0 auto;
+	padding-left: 1.4em;
+	max-width: 420px;
+	text-align: left;
+}
+
+.sro-install-gate li + li {
+	margin-top: 6px;
+}
+
+.sro-install-gate b {
+	color: #f0dfb7;
+}
+
+.sro-install-gate button[data-install] {
+	min-width: 220px;
+	padding: 12px 24px;
+	border: 1px solid #cba85e;
+	border-radius: 4px;
+	background: linear-gradient(#5a4520, #3a2c14);
+	color: #f0dfb7;
+	font: inherit;
+	font-weight: 600;
+	cursor: pointer;
+}
+
+/* Only the panel for this page's route. */
+.sro-install-gate [data-route-panel],
+.sro-install-gate [data-state-text] {
+	display: none;
+}
+
+.sro-install-gate[data-route="prompt"] [data-route-panel="prompt"],
+.sro-install-gate[data-route="ios"] [data-route-panel="ios"],
+.sro-install-gate[data-route="mac-safari"] [data-route-panel="mac-safari"],
+.sro-install-gate[data-route="unsupported"] [data-route-panel="unsupported"],
+.sro-install-gate[data-route="no-webgpu"] [data-route-panel="no-webgpu"] {
+	display: block;
+}
+
+/* The prompt button works only once Chrome has offered its prompt. */
+.sro-install-gate:not([data-state="ready"]) button[data-install] {
+	opacity: 0.45;
+	cursor: default;
+	pointer-events: none;
+}
+
+.sro-install-gate[data-state="installed"] button[data-install] {
+	display: none;
+}
+
+.sro-install-gate[data-state="waiting"] [data-state-text="waiting"],
+.sro-install-gate[data-state="installed"] [data-state-text="installed"] {
+	display: block;
+	margin: 14px 0 0;
+	color: #a7b7c8;
+}

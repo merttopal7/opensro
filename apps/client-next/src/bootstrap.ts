@@ -12,6 +12,12 @@ the modules under engine/.
 */
 
 import { requestPersistentStorage } from "./engine/foundation/assets/persistent-storage";
+import {
+	installEnvironment,
+	installMode,
+	installRoute,
+	showInstallGate
+} from "./engine/foundation/install/install-gate";
 import { startRuntime, startViewerRuntime } from "./engine/runtime/runtime";
 
 /*
@@ -71,4 +77,25 @@ function startViewer() {
 	return null;
 }
 
-export const runtime = document.documentElement.dataset.page === "viewer" ? startViewer() : startGame();
+/*
+================
+gatedOut
+
+True when this build plays only from the installed app (SRO_INSTALL_GATE=1,
+docs/PWA-OPFS-MIGRATION.md A2) and the page is a browser tab: the tab shows
+how to install instead of starting the game. Off in every other build.
+Port-only, not native.
+================
+*/
+function gatedOut() {
+	if ( import.meta.env.SRO_INSTALL_GATE !== true ) return false;
+	const env = installEnvironment( window );
+	if ( installMode( env ) !== "browser" ) return false;
+	return showInstallGate( document, window, installRoute( env ) );
+}
+
+export const runtime = document.documentElement.dataset.page === "viewer" ?
+	startViewer() :
+	gatedOut() ?
+	null :
+	startGame();
