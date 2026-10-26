@@ -240,6 +240,9 @@ export type GameplayCommand =
 	// An arrow key's press or release (#1574): Up walks the facing, Left and
 	// Right turn it (arrow-keys.ts).
 	| { readonly kind: "arrow-key"; readonly key: "up" | "left" | "right"; readonly down: boolean; }
+	// Port-only mobile virtual joystick (docs/MOBILE-HUD.md): 360-degree
+	// camera-relative direction walk along heading (0..65534), or null to stop.
+	| { readonly kind: "joystick-move"; readonly heading: number | null; }
 	| {
 		readonly kind: "ground-move";
 		readonly query: import("./navigation").GroundPickQuery;

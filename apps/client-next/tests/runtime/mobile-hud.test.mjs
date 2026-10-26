@@ -17,6 +17,11 @@ const { emptySocial } = await import( "../../src/engine/foundation/gameplay/soci
 const { experimentalOptions } = await import( "../../src/engine/foundation/ui/experimental-options.ts" );
 const { topmostControlAt } = await import( "../../src/engine/foundation/ui/hit-test.ts" );
 const {
+	OP_STEER,
+	OP_DIRECTION_STOP,
+	createArrowKeys
+} = await import( "../../src/engine/runtime/simulation/worker/session/world/gameplay/arrow-keys/arrow-keys.ts" );
+const {
 	JOYSTICK_BASE_RADIUS,
 	normalizeSafeArea,
 	mobileHudActive,
@@ -24,6 +29,7 @@ const {
 	mobileTargetOrigin,
 	mobileBuffLayout,
 	mobilePartyLayout,
+	mobileJoystickHeading,
 	mobileJoystickStep,
 	createMobileJoystick,
 	mobileCycleTarget,
@@ -391,6 +397,96 @@ test("M3: virtual joystick emits ArrowUp/ArrowLeft/ArrowRight transitions and pr
 	const endTap = joy.up( 2, 154, 247 );
 	assert.equal( endTap.tap, true );
 	assert.deepEqual( endTap.outputs, [] );
+
+	// Touching the rim of the visible resting pad anchors to restOrigin and engages immediately on pointerdown.
+	const restOrigin = /** @type {const} */ ([ 140, 260 ]);
+	joy.down( 3, 140, 224, restOrigin );
+	assert.deepEqual( joy.state().origin, [ 140, 260 ] );
+	assert.deepEqual( joy.state().knob, [ 140, 224 ] );
+	assert.deepEqual( joy.state().vector, [ 0, -36 ] );
+
+	// Dynamic base following: dragging beyond JOYSTICK_BASE_RADIUS pulls origin behind the thumb.
+	joy.move( 3, 240, 260 );
+	assert.deepEqual( joy.state().origin, [ 240 - JOYSTICK_BASE_RADIUS, 260 ] );
+	assert.deepEqual( joy.state().knob, [ 240, 260 ] );
+	// Reversing 55 px left from 240 -> 185 crosses the pulled origin (198) immediately!
+	joy.move( 3, 185, 260 );
+	assert.ok(
+		defined( joy.state().vector )[0] < 0,
+		"reversing thumb direction crosses pulled origin without dead travel"
+	);
+	joy.up( 3, 185, 260 );
+});
+
+test("M3: mobileJoystickHeading maps screen-relative deflections and camera yaw to 360-degree native headings", () => {
+	// Camera yaw = Math.PI (camera behind player looking North +Z; screen Right is East +X):
+	// Right (dx > 0, dy = 0) -> East (+X, heading 0)
+	assert.equal( mobileJoystickHeading( 30, 0, Math.PI ), 0 );
+	// Up (dx = 0, dy < 0) -> North (+Z, heading ~16383)
+	assert.equal( mobileJoystickHeading( 0, -30, Math.PI ), 16383 );
+	// Left (dx < 0, dy = 0) -> West (-X, heading ~32767)
+	assert.equal( mobileJoystickHeading( -30, 0, Math.PI ), 32767 );
+	// Down (dx = 0, dy > 0) -> South (-Z, heading ~49151)
+	assert.equal( mobileJoystickHeading( 0, 30, Math.PI ), 49151 );
+
+	// Camera yaw = 0 (camera looking South -Z; screen Right is West -X):
+	// Up (dx = 0, dy < 0) -> South (-Z, heading ~49151)
+	assert.equal( mobileJoystickHeading( 0, -30, 0 ), 49151 );
+	// Down (dx = 0, dy > 0) -> North (+Z, heading ~16383)
+	assert.equal( mobileJoystickHeading( 0, 30, 0 ), 16383 );
+	// Right (dx > 0, dy = 0) -> West (-X, heading ~32767)
+	assert.equal( mobileJoystickHeading( 30, 0, 0 ), 32767 );
+	// Left (dx < 0, dy = 0) -> East (+X, heading 0)
+	assert.equal( mobileJoystickHeading( -30, 0, 0 ), 0 );
+});
+
+test("M3: arrowKeys.joystick starts 360-degree direction walk, steers smoothly, and stops on release", () => {
+	const frames = [];
+	const keys = createArrowKeys( frame => frames.push( frame ) );
+	let walking = false;
+	let currentPose = { regionId: 25000, x: 100, y: 0, z: 100, angle: 0 };
+	const mover = {
+		pose: () => currentPose,
+		walkingDirection: () => walking,
+		direct: heading => {
+			walking = true;
+			currentPose = { ...currentPose, angle: heading };
+			const frame = { opcode: 0x7738, payload: new Uint8Array( [ heading & 0xff, heading >> 8 ] ) };
+			frames.push( frame );
+			return frame;
+		},
+		steer: heading => {
+			currentPose = { ...currentPose, angle: heading };
+		},
+		stop: () => {
+			walking = false;
+		},
+		vehicle: () => undefined,
+		cancelCast: () => false
+	};
+
+	// 1. First deflection starts a direction walk at the target heading (16383).
+	const start = keys.joystick( 16383, 1000, mover, "open" );
+	assert.equal( start?.opcode, 0x7738 );
+	assert.equal( walking, true );
+	assert.equal( currentPose.angle, 16383 );
+
+	// 2. Small steer within throttle window updates local heading immediately without spamming 0x72CF.
+	frames.length = 0;
+	keys.joystick( 17000, 1020, mover, "open" );
+	assert.equal( currentPose.angle, 17000 );
+	assert.equal( frames.length, 0 );
+
+	// 3. Larger turn after 50 ms sends 0x72CF steer packet.
+	const steered = keys.joystick( 24000, 1060, mover, "open" );
+	assert.equal( steered?.opcode, OP_STEER );
+	assert.equal( currentPose.angle, 24000 );
+
+	// 4. Releasing joystick (heading === null) sends 0x72F5 stop packet and stops local walk.
+	frames.length = 0;
+	const stopped = keys.joystick( null, 1120, mover, "open" );
+	assert.equal( stopped?.opcode, OP_DIRECTION_STOP );
+	assert.equal( walking, false );
 });
 
 test("M3: mobileCycleTarget and mobileAttackTarget sort alive monsters by distance and skip dead targets", () => {

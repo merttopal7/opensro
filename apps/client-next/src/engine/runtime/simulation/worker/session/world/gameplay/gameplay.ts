@@ -3052,6 +3052,37 @@ state here before a command can claim a native wire conversation.
 				dirty = true;
 				return frame;
 			}
+			if ( command.kind === "joystick-move" ) {
+				if ( command.heading !== null ) {
+					if (
+						local?.appearanceState?.[0] === 2 ||
+						combat.guidedActive( localGid, now ) ||
+						teleportMode === 1 ||
+						interactionBlocked() ||
+						frozen()
+					) return null;
+					approach = interactionApproachTransition( approach, { kind: "cancel" } );
+					cancelActionForMovement();
+					chase = undefined;
+					if ( local?.movementMode === MOVEMENT_SEATED ) {
+						arrowKeys.joystick( command.heading, now, arrowMover( local ), "closed" );
+						return sendFrame( { opcode: 0x7017, payload: Uint8Array.of( 4 ) } );
+					}
+				}
+				const frame = arrowKeys.joystick(
+					command.heading,
+					now,
+					arrowMover( local ),
+					arrowGate( now, local )
+				);
+				if ( frame ) {
+					moveReservation.clear();
+					pickup.clear();
+					selectionDecal = null;
+				}
+				dirty = true;
+				return frame;
+			}
 			if ( command.kind === "ground-move" || command.kind === "move" ) {
 				if ( protocol !== 1 ) {
 					throw new Error( "Server does not support simulation protocol 1" );

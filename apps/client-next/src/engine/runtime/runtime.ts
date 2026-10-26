@@ -16,6 +16,7 @@ import { nativeHeadingYaw } from "@/engine/foundation/math/angles";
 import { createRuntimeErrors } from "./runtime-errors";
 import { createPresentationRandom } from "./random/random";
 import { worldCursor } from "@/engine/foundation/ui/world-cursor";
+import { mobileJoystickHeading } from "@/engine/foundation/ui/mobile-hud";
 import { experimentalGameplay, experimentalVideo } from "@/engine/foundation/ui/experimental-options";
 import { sampleWorldClock } from "@/engine/foundation/gameplay/world-clock";
 import { createWorldDoubleClick } from "@/engine/foundation/gameplay/world-double-click";
@@ -306,6 +307,13 @@ export function startRuntime(
 					else frontend.creationAction( event.id + ":" + event.value );
 				}
 			}
+			if ( event.kind === "mobile-joystick" ) {
+				const prev = joystickVector;
+				joystickVector = event.vector ?? null;
+				if ( joystickVector === null || prev === null || joystickSentHeading === null ) {
+					syncJoystick( performance.now() );
+				}
+			}
 			ui.event( event );
 		}
 		// Hosted deployments route /api to Agent. A build-time override supports a
@@ -418,6 +426,74 @@ export function startRuntime(
 			ArrowRight: "right"
 		};
 		const arrowsHeld = new Set<"up" | "left" | "right">();
+		let joystickVector: readonly [number, number] | null = null;
+		let joystickSentHeading: number | null = null;
+		let joystickSentAt = -Infinity;
+		/*
+		================
+		syncJoystick
+
+		Port-only mobile virtual joystick (docs/MOBILE-HUD.md): translates the
+		thumb deflection vector and live follow-camera yaw into a 360-degree
+		native heading word (0..65534) so pushing up/down/left/right or any
+		diagonal walks in that exact screen-relative direction, including while
+		orbiting the camera with the right thumb.
+		================
+		*/
+		function syncJoystick( now: number ): void {
+			if ( joystickVector === null ) {
+				if ( joystickSentHeading === null ) return;
+				joystickSentHeading = null;
+				joystickSentAt = -Infinity;
+				const seq = simulation.session( {
+					kind: "gameplay",
+					command: { kind: "joystick-move", heading: null }
+				} );
+				const drawn = mainThreadOwnWalk && seq !== undefined ?
+					characters.drawnPose( presentation.gameplay()?.localGid ?? 0 ) :
+					undefined;
+				if ( seq !== undefined && drawn ) {
+					localMover.arrow( seq, false, drawn, now, moverWorld() );
+				}
+				return;
+			}
+			const game = presentation.gameplay();
+			if (
+				frontend.snapshot().phase !== "world" ||
+				sessionState?.phase !== "world" ||
+				!game?.localGid ||
+				!game.pose
+			) {
+				return;
+			}
+			const heading = mobileJoystickHeading(
+				joystickVector[0],
+				joystickVector[1],
+				input.camera().yaw
+			);
+			if ( joystickSentHeading !== null ) {
+				const diff = Math.abs( heading - joystickSentHeading ) % 65535;
+				const gap = Math.min( diff, 65535 - diff );
+				if ( gap < 364 ) return;
+				if ( now - joystickSentAt < 40 && gap < 4096 ) return;
+			}
+			joystickSentHeading = heading;
+			joystickSentAt = now;
+			const seq = simulation.session( {
+				kind: "gameplay",
+				command: { kind: "joystick-move", heading }
+			} );
+			const drawn = mainThreadOwnWalk && seq !== undefined ?
+				characters.drawnPose( game.localGid ) :
+				undefined;
+			const world = moverWorld();
+			if ( seq !== undefined && drawn && world.walkPredictable && world.speed !== undefined ) {
+				localMover.predict(
+					{ seq, aim: { kind: "direction", heading }, speed: world.speed, drawn, now },
+					world
+				);
+			}
+		}
 		/*
 		================
 		arrowInput
@@ -813,6 +889,7 @@ export function startRuntime(
 			const visible = !maintenance && globalThis.document?.visibilityState !== "hidden";
 			try {
 				// Input is delivered even when this display refresh needs no new draw.
+				syncJoystick( now );
 				const commands = input.drain();
 				if ( commands ) simulation.sendInput( commands );
 				if ( !framePacing.admit( now, visible ) ) {
@@ -870,6 +947,8 @@ export function startRuntime(
 								navigation.reset();
 								characters.reset();
 								localMover.reset();
+								joystickSentHeading = null;
+								joystickSentAt = -Infinity;
 								audio.reset();
 								readySent = false;
 							} else pendingWorldReset = true;

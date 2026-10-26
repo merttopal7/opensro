@@ -12722,10 +12722,7 @@ export function createUi(
 					// 3. Bottom-left floating virtual joystick (does not push to blocks so world taps pass through).
 					const joyOrigin = mobileJoystick.active ?
 						mobileJoystick.origin :
-						([
-							mobile.joystickZone[0] + JOYSTICK_BASE_RADIUS + 16,
-							mobile.chatPreview[1] - JOYSTICK_BASE_RADIUS - 12
-						] as const);
+						mobile.joystickOrigin;
 					const joyKnob = mobileJoystick.active ? mobileJoystick.knob : joyOrigin;
 					const baseAlpha = mobileJoystick.active ? 0.45 : 0.22;
 					const ringAlpha = mobileJoystick.active ? 0.75 : 0.38;

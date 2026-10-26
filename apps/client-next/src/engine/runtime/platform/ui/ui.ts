@@ -978,6 +978,19 @@ export function createUiBridge(
 		},
 		/*
 		================
+		releaseTouch
+
+		Removes a canvas-owned touch pointer (such as the left-thumb virtual
+		joystick) from touchHold tracking so right-thumb UI button taps still
+		fire while the joystick is held.
+		================
+		*/
+		releaseTouch( pointerId: number ) {
+			touchHold.pointers.delete( pointerId );
+			touchHold.clicks.delete( pointerId );
+		},
+		/*
+		================
 		dispose
 
 		Abort delegated listeners before discarding controls and their state.

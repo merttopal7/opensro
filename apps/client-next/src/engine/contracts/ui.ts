@@ -247,6 +247,14 @@ export type UiEvent =
 		composing: boolean;
 	}
 	| { kind: "focus"; id: string | null; }
+	| { kind: "viewport-environment"; touch: boolean; safeArea: SafeAreaInsets; }
+	| {
+		kind: "mobile-joystick";
+		active: boolean;
+		origin: readonly [number, number];
+		knob: readonly [number, number];
+		vector?: readonly [number, number] | null;
+	}
 	| { kind: "key"; code: string; shift?: boolean; ctrl?: boolean; };
 /*
 ================
@@ -255,7 +263,19 @@ UiBridge
 */
 export interface UiBridge {
 	present( state: UiSemantics ): void;
+	releaseTouch?( pointerId: number ): void;
 	dispose(): void;
+}
+/*
+================
+SafeAreaInsets
+================
+*/
+export interface SafeAreaInsets {
+	readonly top: number;
+	readonly right: number;
+	readonly bottom: number;
+	readonly left: number;
 }
 /*
 ================
@@ -263,6 +283,8 @@ UiView
 ================
 */
 export interface UiView {
+	readonly touch?: boolean;
+	readonly safeArea?: SafeAreaInsets;
 	readonly worldError?: string | null;
 	readonly worldRetrying?: boolean;
 	readonly resourceError?: string | null;

@@ -78,6 +78,8 @@ export const JOYSTICK_KNOB_RADIUS = 18;
 export const JOYSTICK_DEADZONE = 8;
 const JOYSTICK_STEER_DEADZONE = 10;
 const JOYSTICK_FORWARD_MAX_DY = 14;
+const JOYSTICK_REST_SNAP_RADIUS = 53;
+const HEADING_WORDS = 65535;
 const MONSTER_DEAD_STATE = 2;
 
 const ARROW_KEY_CODES = [
@@ -132,6 +134,7 @@ export interface MobileHudLayout {
 	readonly minimap: MobileMinimapLayout;
 	readonly targetBand: UiRect;
 	readonly joystickZone: UiRect;
+	readonly joystickOrigin: readonly [number, number];
 	readonly actionCluster: MobileActionCluster;
 	readonly expBar: UiRect;
 	readonly chatPreview: UiRect;
@@ -297,8 +300,12 @@ export function mobileHudLayout(
 		safe.left,
 		joystickTop,
 		Math.floor( safeWidth * 0.44 ),
-		Math.max( 1, chatPreview[1] - joystickTop - SECTION_GAP )
+		Math.max( 1, expBar[1] - joystickTop - SECTION_GAP )
 	];
+	const joystickOrigin = [
+		joystickZone[0] + JOYSTICK_BASE_RADIUS + 16,
+		chatPreview[1] - JOYSTICK_BASE_RADIUS - 12
+	] as const;
 
 	const clusterBottom = expBar[1] - SECTION_GAP;
 	const rightColumnX = width - safe.right - SKILL_SLOT_SIZE - SECTION_GAP;
@@ -350,6 +357,7 @@ export function mobileHudLayout(
 		minimap,
 		targetBand,
 		joystickZone,
+		joystickOrigin,
 		actionCluster,
 		expBar,
 		chatPreview,
@@ -469,6 +477,7 @@ export interface MobileJoystickStep {
 	readonly dragged: boolean;
 	readonly origin: readonly [number, number];
 	readonly knob: readonly [number, number];
+	readonly vector: readonly [number, number] | null;
 	readonly arrows: MobileJoystickArrows;
 }
 
@@ -485,11 +494,30 @@ export interface MobileJoystickKeyOutput {
 
 /*
 ================
+mobileJoystickHeading
+
+Maps a screen-space joystick deflection (dx right, dy down) and the follow
+camera's yaw (radians) to a 360-degree native Silkroad heading word (0..65534).
+In world.ts (updateCamera) and world-math.ts (cameraBasis), the horizontal
+camera forward vector (screen up, dy < 0) is (-sin(yaw), -cos(yaw)) and the
+horizontal camera right vector (screen right, dx > 0) is (-cos(yaw), +sin(yaw)).
+================
+*/
+export function mobileJoystickHeading( dx: number, dy: number, cameraYaw: number ): number {
+	const twoPi = Math.PI * 2;
+	const wx = dy * Math.sin( cameraYaw ) - dx * Math.cos( cameraYaw );
+	const wz = dy * Math.cos( cameraYaw ) + dx * Math.sin( cameraYaw );
+	const bearing = (Math.atan2( wz, wx ) + twoPi) % twoPi;
+	return Math.trunc( bearing / twoPi * HEADING_WORDS ) % HEADING_WORDS;
+}
+
+/*
+================
 mobileJoystickStep
 
 Pure deflection math for the floating bottom-left virtual joystick.
-Maps thumb displacement to clamped knob coordinates and the existing
-ArrowUp / ArrowLeft / ArrowRight locomotion inputs.
+Maps thumb displacement to clamped knob coordinates, a continuous 2D deflection
+vector for 360-degree camera-relative movement, and legacy arrow transitions.
 ================
 */
 export function mobileJoystickStep(
@@ -509,13 +537,16 @@ export function mobileJoystickStep(
 			dragged: false,
 			origin: [ ox, oy ],
 			knob: [ ox, oy ],
+			vector: null,
 			arrows: { up: false, left: false, right: false }
 		};
 	}
 	const scale = dist > JOYSTICK_BASE_RADIUS ? JOYSTICK_BASE_RADIUS / dist : 1;
+	const clampedDx = dx * scale;
+	const clampedDy = dy * scale;
 	const knob: readonly [number, number] = [
-		Math.round( originX + dx * scale ),
-		Math.round( originY + dy * scale )
+		Math.round( originX + clampedDx ),
+		Math.round( originY + clampedDy )
 	];
 	const up = dy <= JOYSTICK_FORWARD_MAX_DY;
 	const left = dx < -JOYSTICK_STEER_DEADZONE ||
@@ -526,6 +557,7 @@ export function mobileJoystickStep(
 		dragged: true,
 		origin: [ ox, oy ],
 		knob,
+		vector: [ clampedDx, clampedDy ],
 		arrows: { up, left, right }
 	};
 }
@@ -534,8 +566,11 @@ export function mobileJoystickStep(
 ================
 createMobileJoystick
 
-Tracks the bottom-left thumb touch that drives ArrowUp / ArrowLeft / ArrowRight
-while preserving tap-to-walk when released within the deadzone.
+Tracks the bottom-left thumb touch that drives 360-degree camera-relative
+direction walking while preserving tap-to-walk when released within the deadzone.
+Anchors to the visible resting pad when touched inside it so pressing its rim
+engages immediately, and pulls the base along when dragged past JOYSTICK_BASE_RADIUS
+so reversing thumb direction has zero dead travel.
 ================
 */
 export function createMobileJoystick() {
@@ -545,6 +580,7 @@ export function createMobileJoystick() {
 	let knobX = 0;
 	let knobY = 0;
 	let dragged = false;
+	let vector: readonly [number, number] | null = null;
 	let held: MobileJoystickArrows = { up: false, left: false, right: false };
 
 	/*
@@ -587,9 +623,11 @@ export function createMobileJoystick() {
 		*/
 		state() {
 			return {
-				active: activeId !== null && dragged,
+				active: activeId !== null,
+				dragged,
 				origin: [ Math.round( originX ), Math.round( originY ) ] as const,
-				knob: [ Math.round( knobX ), Math.round( knobY ) ] as const
+				knob: [ Math.round( knobX ), Math.round( knobY ) ] as const,
+				vector: activeId !== null ? vector : null
 			};
 		},
 		/*
@@ -609,14 +647,33 @@ export function createMobileJoystick() {
 		down
 		================
 		*/
-		down( pointerId: number, x: number, y: number ): MobileJoystickKeyOutput[] {
+		down(
+			pointerId: number,
+			x: number,
+			y: number,
+			restOrigin?: readonly [number, number]
+		): MobileJoystickKeyOutput[] {
 			const released = transitionOutputs( { up: false, left: false, right: false } );
 			activeId = pointerId;
+			if (
+				restOrigin &&
+				Math.hypot( x - restOrigin[0], y - restOrigin[1] ) <= JOYSTICK_REST_SNAP_RADIUS
+			) {
+				originX = restOrigin[0];
+				originY = restOrigin[1];
+				const step = mobileJoystickStep( originX, originY, x, y );
+				knobX = step.knob[0];
+				knobY = step.knob[1];
+				dragged = step.dragged;
+				vector = step.vector;
+				return [ ...released, ...transitionOutputs( step.arrows ) ];
+			}
 			originX = x;
 			originY = y;
 			knobX = x;
 			knobY = y;
 			dragged = false;
+			vector = null;
 			return released;
 		},
 		/*
@@ -626,10 +683,19 @@ export function createMobileJoystick() {
 		*/
 		move( pointerId: number, x: number, y: number ): MobileJoystickKeyOutput[] {
 			if ( activeId !== pointerId ) return [];
+			const dx = x - originX;
+			const dy = y - originY;
+			const dist = Math.hypot( dx, dy );
+			if ( dist > JOYSTICK_BASE_RADIUS ) {
+				const pull = (dist - JOYSTICK_BASE_RADIUS) / dist;
+				originX += dx * pull;
+				originY += dy * pull;
+			}
 			const step = mobileJoystickStep( originX, originY, x, y );
 			knobX = step.knob[0];
 			knobY = step.knob[1];
 			if ( step.dragged ) dragged = true;
+			vector = step.vector;
 			return transitionOutputs( step.arrows );
 		},
 		/*
@@ -648,6 +714,7 @@ export function createMobileJoystick() {
 			const tap = !dragged;
 			activeId = null;
 			dragged = false;
+			vector = null;
 			return {
 				outputs: transitionOutputs( { up: false, left: false, right: false } ),
 				tap
@@ -661,6 +728,7 @@ export function createMobileJoystick() {
 		interrupt(): MobileJoystickKeyOutput[] {
 			activeId = null;
 			dragged = false;
+			vector = null;
 			return transitionOutputs( { up: false, left: false, right: false } );
 		}
 	};

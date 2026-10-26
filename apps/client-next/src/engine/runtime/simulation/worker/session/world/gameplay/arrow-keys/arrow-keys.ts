@@ -63,6 +63,9 @@ const STEER_SEND_WORDS = HEADING_SCALE / 8;
 // 0x6931D9: one keyboard cancel per 2000 ms (cmp 0x7D0 / jb).
 const KEYBOARD_CANCEL_THROTTLE_MS = 2000;
 const RELEASE_SEND_WORDS = HEADING_SCALE / 360;
+const JOYSTICK_STEER_SEND_WORDS = HEADING_SCALE / 36;
+const JOYSTICK_STEER_THROTTLE_MS = 50;
+const JOYSTICK_SETTLE_THROTTLE_MS = 100;
 
 export type ArrowKey = "up" | "left" | "right";
 
@@ -145,6 +148,12 @@ export function createArrowKeys( send: ( frame: WireFrame ) => void ) {
 	// The turn in progress: its unrounded heading, when it was last stepped,
 	// and the heading last sent to the server.
 	let turn: { heading: number; atMs: number; sent: number; } | null = null;
+	// Port-only mobile virtual joystick (docs/MOBILE-HUD.md): desired 360°
+	// heading, whether a direction walk is latched, and the heading last sent.
+	let joyTarget: number | null = null;
+	let joyLatched = false;
+	let joySent: number | null = null;
+	let joySentAt = -Infinity;
 	/*
 	================
 	turnRate
@@ -250,6 +259,69 @@ export function createArrowKeys( send: ( frame: WireFrame ) => void ) {
 		},
 		/*
 		================
+		joystick
+
+		Port-only 360-degree mobile virtual joystick (docs/MOBILE-HUD.md):
+		starts a direction walk along heading, steers an active direction walk
+		immediately on the client while throttling 0x72CF server steers, and
+		sends 0x72F5 stop on release (heading === null).
+		================
+		*/
+		joystick(
+			heading: number | null,
+			now: number,
+			mover: ArrowKeyMover,
+			gate: ArrowGate
+		): WireFrame | null {
+			const pose = mover.pose();
+			if ( heading === null ) {
+				joyTarget = null;
+				if ( !joyLatched ) return null;
+				joyLatched = false;
+				joySent = null;
+				joySentAt = -Infinity;
+				if ( !pose || !mover.walkingDirection() ) return null;
+				const frame = headingFrame( "stop", pose.angle, mover.vehicle() );
+				send( frame );
+				mover.stop( now );
+				return frame;
+			}
+			const normalized = ((Math.round( heading ) % HEADING_SCALE) + HEADING_SCALE) % HEADING_SCALE;
+			joyTarget = normalized;
+			if ( gate === "closed" || !pose ) return null;
+			if ( gate === "cast" ) {
+				cancelCast( now, mover );
+				return null;
+			}
+			if ( !mover.walkingDirection() ) {
+				if (
+					joyLatched && joySent !== null &&
+					headingGap( normalized, joySent ) < RELEASE_SEND_WORDS
+				) {
+					return null;
+				}
+				joyLatched = true;
+				joySent = normalized;
+				joySentAt = now;
+				return mover.direct( normalized, now );
+			}
+			joyLatched = true;
+			mover.steer( normalized, now );
+			if (
+				joySent === null ||
+				(headingGap( normalized, joySent ) >= JOYSTICK_STEER_SEND_WORDS &&
+					now - joySentAt >= JOYSTICK_STEER_THROTTLE_MS)
+			) {
+				const frame = headingFrame( "steer", normalized, mover.vehicle() );
+				send( frame );
+				joySent = normalized;
+				joySentAt = now;
+				return frame;
+			}
+			return null;
+		},
+		/*
+		================
 		step
 
 		Turns the facing, and retries every held key the gate held back
@@ -262,6 +334,24 @@ export function createArrowKeys( send: ( frame: WireFrame ) => void ) {
 			let frame: WireFrame | null = null;
 			for ( const key of [ "up", "left", "right" ] as const ) {
 				if ( held[key] && !latched[key] ) frame = act( key, now, mover ) ?? frame;
+			}
+			if ( joyTarget !== null && mover.pose() ) {
+				if ( !joyLatched ) {
+					joyLatched = true;
+					joySent = joyTarget;
+					joySentAt = now;
+					frame = (mover.walkingDirection() ? null : mover.direct( joyTarget, now )) ?? frame;
+				} else if (
+					mover.walkingDirection() && joySent !== null &&
+					headingGap( joyTarget, joySent ) >= RELEASE_SEND_WORDS &&
+					now - joySentAt >= JOYSTICK_SETTLE_THROTTLE_MS
+				) {
+					const steerFrame = headingFrame( "steer", joyTarget, mover.vehicle() );
+					send( steerFrame );
+					joySent = joyTarget;
+					joySentAt = now;
+					frame ??= steerFrame;
+				}
 			}
 			return frame;
 		},
@@ -287,6 +377,10 @@ export function createArrowKeys( send: ( frame: WireFrame ) => void ) {
 			held.up = held.left = held.right = false;
 			latched.up = latched.left = latched.right = false;
 			turn = null;
+			joyTarget = null;
+			joyLatched = false;
+			joySent = null;
+			joySentAt = -Infinity;
 		}
 	};
 }

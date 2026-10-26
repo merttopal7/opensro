@@ -31,6 +31,8 @@ import { sightMode, type SightMode } from "@/engine/foundation/rendering/camera-
 import { initialAudioOptions, audioOptions, type AudioOptions } from "@/engine/foundation/audio/options";
 import { cameraWheelDelta } from "@/engine/foundation/rendering/camera-wheel";
 import { createTouchCamera, type TouchCameraOutput } from "@/engine/foundation/rendering/touch-camera";
+import { containsPoint } from "@/engine/foundation/ui/hit-test";
+import { createMobileJoystick, mobileHudActive, mobileHudLayout } from "@/engine/foundation/ui/mobile-hud";
 import {
 	EXPERIMENTAL_STORAGE_KEY,
 	experimentalOptions,
@@ -78,6 +80,8 @@ export function createPlatform(
 	// clientWidth every frame forces a synchronous layout whenever the UI
 	// touched the DOM that frame (a trace showed it among the top costs).
 	const canvasBox = { width: canvas.clientWidth, height: canvas.clientHeight };
+	let safeCssTop = 0, safeCssRight = 0, safeCssBottom = 0, safeCssLeft = 0;
+	let publishEnvironment: (() => void) | null = null;
 	const canvasObserver = typeof ResizeObserver === "undefined" ?
 		null :
 		new ResizeObserver( refreshCanvasBox );
@@ -91,6 +95,14 @@ export function createPlatform(
 		const box = canvas.getBoundingClientRect();
 		canvasBox.width = box.width;
 		canvasBox.height = box.height;
+		if ( typeof getComputedStyle === "function" && typeof document !== "undefined" && document.documentElement ) {
+			const rootStyle = getComputedStyle( document.documentElement );
+			safeCssTop = parseFloat( rootStyle.getPropertyValue( "--safe-top" ) ) || 0;
+			safeCssRight = parseFloat( rootStyle.getPropertyValue( "--safe-right" ) ) || 0;
+			safeCssBottom = parseFloat( rootStyle.getPropertyValue( "--safe-bottom" ) ) || 0;
+			safeCssLeft = parseFloat( rootStyle.getPropertyValue( "--safe-left" ) ) || 0;
+		}
+		publishEnvironment?.();
 	}
 	/*
 	================
@@ -212,6 +224,9 @@ export function createPlatform(
 	function displayScale(): number {
 		return uiPixelScale() / devicePixelRatio * uiScaleFactor( experimental ); // UI size: 1 at native 100
 	}
+	const viewport = { width: 1, height: 1 }, uiViewport = { width: 1, height: 1 };
+	let pinVisualViewport = false;
+	let pendingRefitFrames = 0, lastRefitAt = -Infinity, refitFrameStepped = false;
 	/*
 	================
 	uiPixelScale
@@ -228,6 +243,47 @@ export function createPlatform(
 		const physical = readViewport();
 		return uiPixelScaleFor( physical.width, physical.height, devicePixelRatio );
 	}
+	let lastTouch: boolean | null = null,
+		lastSafeTop = -1,
+		lastSafeRight = -1,
+		lastSafeBottom = -1,
+		lastSafeLeft = -1;
+	/*
+	================
+	publishViewportEnvironment
+
+	Delivers touch capability and viewport-fit=cover safe-area insets (in
+	native UI pixels) to the UI whenever startup, resize, rotation, or UI scale
+	changes them.
+	================
+	*/
+	function publishViewportEnvironment(): void {
+		const scale = Math.max( 0.0001, displayScale() );
+		const top = Math.max( 0, Math.round( safeCssTop / scale ) ),
+			right = Math.max( 0, Math.round( safeCssRight / scale ) ),
+			bottom = Math.max( 0, Math.round( safeCssBottom / scale ) ),
+			left = Math.max( 0, Math.round( safeCssLeft / scale ) );
+		const coarse = typeof matchMedia === "function" && matchMedia( "(pointer: coarse)" ).matches;
+		const touch = (typeof navigator !== "undefined" && (navigator.maxTouchPoints ?? 0) > 0) ||
+			coarse ||
+			"ontouchstart" in window;
+		if (
+			touch === lastTouch &&
+			top === lastSafeTop &&
+			right === lastSafeRight &&
+			bottom === lastSafeBottom &&
+			left === lastSafeLeft
+		) {
+			return;
+		}
+		lastTouch = touch;
+		lastSafeTop = top;
+		lastSafeRight = right;
+		lastSafeBottom = bottom;
+		lastSafeLeft = left;
+		onUi( { kind: "viewport-environment", touch, safeArea: { top, right, bottom, left } } );
+	}
+	publishEnvironment = publishViewportEnvironment;
 	/*
 	================
 	layoutCanvas
@@ -239,7 +295,6 @@ export function createPlatform(
 	rotation settle, when it pins to the settled visualViewport box.
 	================
 	*/
-	let pinVisualViewport = false;
 	function layoutCanvas() {
 		if ( typeof window.scrollTo === "function" ) window.scrollTo( 0, 0 );
 		const fit = fitCanvasViewport( window, video.displaySize, pinVisualViewport ), style = canvas.style;
@@ -263,7 +318,6 @@ export function createPlatform(
 		refreshCanvasBox();
 	}
 	layoutCanvas();
-	let pendingRefitFrames = 0, lastRefitAt = -Infinity, refitFrameStepped = false;
 	/*
 	================
 	resizeCanvas
@@ -438,10 +492,26 @@ export function createPlatform(
 			status.value = "Experimental options could not be saved: " + String( error );
 		}
 		telemetry.setDiagnostics( experimental.developerDiagnostics );
+		if ( !experimental.mobileHud && mobileJoystick.ownsAny() ) {
+			mobileJoystick.interrupt();
+			publishJoystick();
+		}
 		onUi( { kind: "experimental-preferences", value: experimental } );
+		publishViewportEnvironment();
 	}
 	window.addEventListener( "pointerdown", onGesture, { signal: lifetime.signal, capture: true } );
 	window.addEventListener( "pagehide", onClose, { signal: lifetime.signal } );
+	const mobileJoystick = createMobileJoystick();
+	const publishJoystick = () => {
+		const state = mobileJoystick.state();
+		onUi( {
+			kind: "mobile-joystick",
+			active: state.active,
+			origin: state.origin,
+			knob: state.knob,
+			vector: state.vector
+		} );
+	};
 	const bridge = createUiBridge(
 		canvas,
 		onUi,
@@ -499,6 +569,24 @@ export function createPlatform(
 	}
 	const pointer = ( event: PointerEvent ) => {
 		if ( event.pointerType === "touch" ) {
+			if ( mobileJoystick.owns( event.pointerId ) ) {
+				const [x, y] = uiPoint( event );
+				if ( event.type === "pointerup" ) {
+					const { tap } = mobileJoystick.up( event.pointerId, x, y );
+					publishJoystick();
+					const box = canvas.getBoundingClientRect();
+					if ( tap && !blocksUi( x, y ) && box.width > 0 && box.height > 0 ) {
+						onWorldClick( (event.clientX - box.left) / box.width, (event.clientY - box.top) / box.height, {
+							shift: event.shiftKey,
+							alt: event.altKey
+						} );
+					}
+				} else {
+					mobileJoystick.move( event.pointerId, x, y );
+					publishJoystick();
+				}
+				return;
+			}
 			if ( !touchCamera.owns( event.pointerId ) ) return;
 			const [x, y] = uiPoint( event );
 			if ( event.type === "pointerup" ) {
@@ -538,7 +626,33 @@ export function createPlatform(
 			// issue a ground command, never the first finger of a future pinch.
 			event.preventDefault();
 			const [x, y] = uiPoint( event );
-			if ( uiTouches.size || blocksUi( x, y ) ) return;
+			if ( blocksUi( x, y ) ) return;
+			const size = canvasSize(), scale = Math.max( 0.0001, displayScale() );
+			const uiW = Math.max( 1, Math.round( size.width / scale ) );
+			const uiH = Math.max( 1, Math.round( size.height / scale ) );
+			if (
+				!mobileJoystick.ownsAny() &&
+				mobileHudActive( uiW, uiH, { enabled: experimental.mobileHud, touch: true } )
+			) {
+				const layout = mobileHudLayout( uiW, uiH, {
+					safeArea: {
+						top: Math.max( 0, lastSafeTop ),
+						right: Math.max( 0, lastSafeRight ),
+						bottom: Math.max( 0, lastSafeBottom ),
+						left: Math.max( 0, lastSafeLeft )
+					}
+				} );
+				if ( containsPoint( layout.joystickZone, x, y ) ) {
+					if ( document.activeElement instanceof HTMLElement ) document.activeElement.blur();
+					bridge.releaseTouch?.( event.pointerId );
+					uiTouches.delete( event.pointerId );
+					canvas.setPointerCapture( event.pointerId );
+					mobileJoystick.down( event.pointerId, x, y, layout.joystickOrigin );
+					publishJoystick();
+					return;
+				}
+			}
+			if ( uiTouches.size ) return;
 			if ( document.activeElement instanceof HTMLElement ) document.activeElement.blur();
 			canvas.setPointerCapture( event.pointerId );
 			touchInput( touchCamera.down( event.pointerId, x, y, cameraDragButtons( bindings.mouseMode ) ) );
@@ -591,7 +705,13 @@ export function createPlatform(
 		}
 	}, { signal: lifetime.signal } );
 	canvas.addEventListener( "pointercancel", event => {
-		if ( event.pointerType === "touch" ) touchCamera.up( event.pointerId );
+		if ( event.pointerType === "touch" ) {
+			if ( mobileJoystick.owns( event.pointerId ) ) {
+				mobileJoystick.interrupt();
+				publishJoystick();
+			}
+			touchCamera.up( event.pointerId );
+		}
 		uiPointer = false;
 		onInput( { kind: "release", timeMs: timeMs() } );
 	}, { signal: lifetime.signal } );
@@ -632,6 +752,10 @@ export function createPlatform(
 		uiPointer = false;
 		touchCamera.reset();
 		uiTouches.clear();
+		if ( mobileJoystick.ownsAny() ) {
+			mobileJoystick.interrupt();
+			publishJoystick();
+		}
 		onInput( { kind: "release", timeMs: timeMs() } );
 	}, { signal: lifetime.signal } );
 	canvas.addEventListener( "wheel", event => {
@@ -639,7 +763,6 @@ export function createPlatform(
 		if ( blocksUi( ...uiPoint( event ) ) ) return;
 		onInput( { kind: "wheel", delta: cameraWheelDelta( event ), timeMs: timeMs() } );
 	}, { signal: lifetime.signal, passive: false } );
-	const viewport = { width: 1, height: 1 }, uiViewport = { width: 1, height: 1 };
 	/*
 	================
 	readViewport

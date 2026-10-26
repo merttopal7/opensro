@@ -1720,15 +1720,17 @@ receive
 				// a full one ended on a contact and stops the reference there.
 				const heading = command.direction, start = replacement?.from ?? to;
 				const blocked = !s || directionLegBlocked( poseDistance( s.from, to ) );
-				walk.reference = {
-					from: start,
-					start: now,
-					heading,
-					limit: blocked ? poseDistance( start, to ) : Infinity
-				};
+				if ( walk.heading === heading ) {
+					walk.reference = {
+						from: start,
+						start: now,
+						heading,
+						limit: blocked ? poseDistance( start, to ) : Infinity
+					};
+				}
 				const walkingOwner = owner;
 				authoritative = reconcile( start, RECEIPT_CELL );
-				if ( segment?.direction && !blocked ) owner = walkingOwner;
+				if ( segment?.direction && (!blocked || walk.heading !== heading) ) owner = walkingOwner;
 				else {
 					// Nothing was predicted: follow the server's leg.
 					pose = authoritative;
