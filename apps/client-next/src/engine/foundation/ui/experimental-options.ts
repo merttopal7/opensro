@@ -74,14 +74,6 @@ export interface ExperimentalOptions {
 	// On unless turned off (the owner's choice, 2026-10-14); off is the
 	// previous rule, characters first.
 	readonly sharedActorRoom: boolean;
-	// Port-only, not native: the local mover's walk is drawn between its
-	// worker ticks, a little behind them, instead of extrapolated past the
-	// newest one (own-walk-interpolation.ts; Unreal's fixed-tick smoothing).
-	// No longer a row of its own (owner, 2026-10-25): always on. It presents
-	// every own walk the main-thread mover does not predict, and its step
-	// cap (drawn-step.ts) bounds the mover's corrections too. A stored false
-	// from the old row is ignored.
-	readonly interpolatedOwnWalk: boolean;
 	// Port-only, not native: the local player's ground-click walk is stepped
 	// on the main thread from the click frame (runtime/movement/local-mover.ts,
 	// Unreal's locally controlled character, epic #1437, with
@@ -170,6 +162,11 @@ export interface ExperimentalOptions {
 	// (transport-auto-potion.ts). The original watches only the player
 	// (70C550). Off unless turned on.
 	readonly transportAutoPotion: boolean;
+	// Port-only, not native (#1448): connect over WebTransport (QUIC/UDP)
+	// first and fall back to the WebSocket when the path fails. Off unless
+	// turned on: the WebSocket stays the default until #1450's
+	// measurements say otherwise. Applies from the next connect.
+	readonly webTransport: boolean;
 	// Port-only, not native: left-clicking the attack pet's mini panel
 	// (CIFPetMiniInfo 6B3460 / 6B3760) or a companion's status portrait
 	// (CIFCOSStatus 6A9BC0) selects the companion and toggles its window
@@ -217,6 +214,11 @@ export interface ExperimentalOptions {
 	// the world map and the minimap, not only the one quest the journal
 	// tracks. Off unless turned on; off is the native tracked quest only.
 	readonly questTrackerMarkers: boolean;
+	// Port-only, not native (#1640): the player's own degree-9-or-higher
+	// Seal of Sun drops get a gold name plate and a soft ground ring, so
+	// the top seal reads differently the moment it lands. Other players'
+	// drops are never marked. Off unless turned on.
+	readonly sunDropMarker: boolean;
 }
 
 /*
@@ -298,7 +300,6 @@ Only an explicit true enables a toggle, except smoothCamera, enchantSparks,
 compressedTextures, sharedActorRoom, mainThreadOwnWalk, greyDisabledTabs, jobKillNotices, dropPlusNotices,
 plusSevenNotices, fitWindowLabels, dropOnBagTab, exchangeClickShortcuts, noticeLinks, shortNotices, confirmGuildBan,
 petClickOpensWindow, smartPetPickup, touchInspect and dungeonCharacterPvs, which only an explicit false turns off.
-interpolatedOwnWalk is always on: it has no row, and a stored value is ignored.
 The pickup filter's kinds (petFilterGold and its siblings) also only turn off
 explicitly, and are read only while petPickupFilter is on.
 Missing or invalid render scales restore full resolution and missing or
@@ -333,7 +334,6 @@ export function experimentalOptions( value: unknown = null ): ExperimentalOption
 		enchantSparks: record.enchantSparks !== false,
 		compressedTextures: record.compressedTextures !== false,
 		sharedActorRoom: record.sharedActorRoom !== false,
-		interpolatedOwnWalk: true,
 		mainThreadOwnWalk: record.mainThreadOwnWalk !== false,
 		greyDisabledTabs: record.greyDisabledTabs !== false,
 		jobKillNotices: record.jobKillNotices !== false,
@@ -351,6 +351,7 @@ export function experimentalOptions( value: unknown = null ): ExperimentalOption
 		confirmGuildBan: record.confirmGuildBan !== false,
 		homingProjectiles: enabled( "homingProjectiles" ),
 		transportAutoPotion: enabled( "transportAutoPotion" ),
+		webTransport: enabled( "webTransport" ),
 		petClickOpensWindow: record.petClickOpensWindow !== false,
 		smartPetPickup: record.smartPetPickup !== false,
 		spreadClothSteps: enabled( "spreadClothSteps" ),
@@ -362,7 +363,8 @@ export function experimentalOptions( value: unknown = null ): ExperimentalOption
 		petFilterOther: record.petFilterOther !== false,
 		touchInspect: record.touchInspect !== false,
 		expandedWorldMap: record.expandedWorldMap !== false,
-		questTrackerMarkers: enabled( "questTrackerMarkers" )
+		questTrackerMarkers: enabled( "questTrackerMarkers" ),
+		sunDropMarker: enabled( "sunDropMarker" )
 	};
 }
 
@@ -410,7 +412,6 @@ export interface ExperimentalVideo {
 	readonly smoothCamera: boolean;
 	readonly enchantSparks: boolean;
 	readonly sharedActorRoom: boolean;
-	readonly interpolatedOwnWalk: boolean;
 	readonly vHidesCompanions: boolean;
 	readonly dungeonCharacterPvs: boolean;
 	readonly spreadClothSteps: boolean;
@@ -435,7 +436,6 @@ export function experimentalVideo( options: ExperimentalOptions ): ExperimentalV
 		smoothCamera: options.smoothCamera,
 		enchantSparks: options.enchantSparks,
 		sharedActorRoom: options.sharedActorRoom,
-		interpolatedOwnWalk: options.interpolatedOwnWalk,
 		vHidesCompanions: options.vHidesCompanions,
 		dungeonCharacterPvs: options.dungeonCharacterPvs,
 		spreadClothSteps: options.spreadClothSteps
@@ -455,8 +455,10 @@ export interface ExperimentalGameplay {
 	readonly jobKillNotices: boolean;
 	readonly dropPlusNotices: boolean;
 	readonly plusSevenNotices: boolean;
+	readonly webTransport: boolean;
 	readonly homingProjectiles?: boolean;
 	readonly smartPetPickup?: boolean;
+	readonly sunDropMarker?: boolean;
 	// The pickup pet filter's kind mask (ground-item's PICKUP_KIND bits);
 	// undefined while the filter row is off, which is the native loop.
 	readonly petPickupKinds?: number;
@@ -470,11 +472,13 @@ experimentalGameplay
 export function experimentalGameplay( options: ExperimentalOptions ): ExperimentalGameplay {
 	return {
 		predictedRunUp: options.predictedRunUp,
+		webTransport: options.webTransport,
 		jobKillNotices: options.jobKillNotices,
 		dropPlusNotices: options.dropPlusNotices,
 		plusSevenNotices: options.plusSevenNotices,
 		homingProjectiles: options.homingProjectiles,
 		smartPetPickup: options.smartPetPickup,
+		sunDropMarker: options.sunDropMarker,
 		petPickupKinds: options.petPickupFilter ?
 			(options.petFilterGold ? PICKUP_KIND_GOLD : 0) |
 			(options.petFilterEquipment ? PICKUP_KIND_EQUIPMENT : 0) |

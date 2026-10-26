@@ -49,8 +49,6 @@ const OFF = Object.freeze( {
 	compressedTextures: true,
 	// On by default (owner 2026-10-14): near effects outrank far characters.
 	sharedActorRoom: true,
-	// Always on, no row (owner 2026-10-25): the fallback own-walk presenter.
-	interpolatedOwnWalk: true,
 	// On by default (owner 2026-10-25): the own walk is stepped on the main thread.
 	mainThreadOwnWalk: true,
 	// On by default (owner 2026-10-15): a disabled tab is dimmed.
@@ -104,10 +102,14 @@ const OFF = Object.freeze( {
 	petFilterOther: true,
 	// On by default (owner 2026-10-22, #1243): a touch tap keeps an item or skill tooltip up.
 	touchInspect: true,
+	// Off by default (#1448): the WebSocket stays the default transport until #1450.
+	webTransport: false,
 	// On by default: the M window shows published extra town pages (Alexandria) and wider overview.
 	expandedWorldMap: true,
 	// Off by default (#840): the maps mark the tracked quest's targets only.
-	questTrackerMarkers: false
+	questTrackerMarkers: false,
+	// Off by default (#1640): only the native plate and no ground ring.
+	sunDropMarker: false
 } );
 
 test("touch inspection defaults on and only an explicit false turns it off", () => {
@@ -221,8 +223,6 @@ test("every video stage defaults off and only an explicit true enables it", () =
 		enchantSparks: true,
 		// The shared actor room is on by default (owner 2026-10-14).
 		sharedActorRoom: true,
-		// Interpolated own movement is always on, no row (owner 2026-10-25).
-		interpolatedOwnWalk: true,
 		vHidesCompanions: false,
 		dungeonCharacterPvs: true,
 		spreadClothSteps: false
@@ -309,8 +309,8 @@ test("the window's tabs cover every preference once and Open returns to Image", 
 	);
 	for ( const tab of EXPERIMENTAL_TABS ) assert.ok( tab.rows.length <= 7, "At most seven rows a tab" );
 	const keys = EXPERIMENTAL_TABS.flatMap( tab => tab.rows.map( row => row.key ) ).sort();
-	// interpolatedOwnWalk is always on and has no row (owner 2026-10-25).
-	assert.deepEqual( keys, Object.keys( OFF ).filter( key => key !== "interpolatedOwnWalk" ).sort() );
+	// Every option has a row; the own-walk presenter has none (owner 2026-10-25).
+	assert.deepEqual( keys, Object.keys( OFF ).sort() );
 	const ids = EXPERIMENTAL_TABS.flatMap( tab => tab.rows.map( row => row.id ) );
 	assert.equal( new Set( ids ).size, ids.length );
 	const hud = createExperimentalHud();
@@ -468,11 +468,13 @@ test("the predicted run-up defaults on and reaches only the worker's slice", () 
 	// walks before the server answers, so the row remains the off switch.
 	assert.deepEqual( experimentalGameplay( experimentalOptions() ), {
 		predictedRunUp: true,
+		webTransport: false,
 		jobKillNotices: true,
 		dropPlusNotices: true,
 		plusSevenNotices: true,
 		homingProjectiles: false,
 		smartPetPickup: true,
+		sunDropMarker: false,
 		petPickupKinds: undefined
 	} );
 	for ( const value of [ 1, "true", null, {} ] ) {
@@ -482,11 +484,13 @@ test("the predicted run-up defaults on and reaches only the worker's slice", () 
 	const on = experimentalOptions( { predictedRunUp: true } );
 	assert.deepEqual( experimentalGameplay( on ), {
 		predictedRunUp: true,
+		webTransport: false,
 		jobKillNotices: true,
 		dropPlusNotices: true,
 		plusSevenNotices: true,
 		homingProjectiles: false,
 		smartPetPickup: true,
+		sunDropMarker: false,
 		petPickupKinds: undefined
 	} );
 	assert.equal( "predictedRunUp" in experimentalVideo( on ), false );
@@ -721,15 +725,13 @@ test("spread cloth steps default off (native accumulator start) and reach only t
 	assert.ok( EXPERIMENTAL_TABS.some( tab => tab.rows.some( row => row.key === "spreadClothSteps" ) ) );
 });
 
-test("interpolated own movement is always on, has no row, and reaches the renderer's video options", () => {
+test("interpolated own movement has no option, no row, and no video slice (#1564)", () => {
 	for ( const value of [ undefined, null, {}, { interpolatedOwnWalk: false }, { interpolatedOwnWalk: "false" } ] ) {
-		assert.equal( experimentalOptions( value ).interpolatedOwnWalk, true );
+		const options = experimentalOptions( value );
+		assert.equal( "interpolatedOwnWalk" in options, false );
+		assert.equal( "interpolatedOwnWalk" in experimentalVideo( options ), false );
 	}
-	assert.equal(
-		experimentalVideo( experimentalOptions( { interpolatedOwnWalk: false } ) ).interpolatedOwnWalk,
-		true
-	);
-	assert.ok( !EXPERIMENTAL_TABS.some( tab => tab.rows.some( row => row.key === "interpolatedOwnWalk" ) ) );
+	assert.ok( !EXPERIMENTAL_TABS.some( tab => tab.rows.some( row => String( row.key ) === "interpolatedOwnWalk" ) ) );
 });
 
 test("main-thread own movement defaults on, turns off only on an explicit false, and stays out of the worker's and renderer's slices", () => {

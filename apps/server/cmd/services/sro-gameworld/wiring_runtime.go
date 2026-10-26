@@ -19,6 +19,7 @@ import (
 	"opensro.online/server/internal/data/store"
 	"opensro.online/server/internal/game/action"
 	"opensro.online/server/internal/game/world/monster"
+	"opensro.online/server/internal/game/world/movement"
 	"opensro.online/server/internal/game/world/simulation"
 	"opensro.online/server/internal/security/auth"
 	"opensro.online/server/internal/transport"
@@ -111,14 +112,34 @@ func (game *gameplayPlane) newMissionTicker(peerReferences *action.PeerReference
 	if game.deps.MonsterState != nil {
 		navigation := &simulation.NavigationMetrics{}
 		game.hub.SetNavigationMetrics(navigation.Snapshot)
+		// The mover's routes come from the plane that owns the
+		// region: the open-terrain search outdoors, the cave's
+		// region route inside a dungeon floor (#1645/#1646).
+		planes := movement.NewPlanes(game.movement, game.water)
 		ticker.Monsters = &simulation.MonsterMoverOps{
-			Navigation:     navigation,
-			Monsters:       game.deps.MonsterState,
-			TacticsFor:     monster.ResolveTactics,
-			TerrainHeight:  game.water.TerrainHeightAt,
-			PlanPath:       game.water.PlanMonsterPath,
-			PlanPathFrom:   game.water.PlanMonsterPathFrom,
-			PlanRoute:      game.water.PlanMonsterRoute,
+			Navigation: navigation,
+			Monsters:   game.deps.MonsterState,
+			TacticsFor: monster.ResolveTactics,
+			// #1695: live heights come from the plane that owns the
+			// region (the deck/cave-floor surface nearest the caller),
+			// not the bare terrain sampler.
+			GroundHeight: func(pose monster.Pose) (float64, bool) {
+				return planes.For(pose.RegionID).HeightAt(simulation.Spawn{
+					RegionID: pose.RegionID, X: pose.X, Y: pose.Y, Z: pose.Z,
+				})
+			},
+			PlanPath:     game.water.PlanMonsterPath,
+			PlanPathFrom: game.water.PlanMonsterPathFrom,
+			PlanRoute: func(from, goal monster.Pose) *monster.NavigationRoute {
+				plane, ok := planes.Between(from.RegionID, goal.RegionID)
+				if !ok {
+					// No plane owns a route across the outdoor/cave
+					// boundary: the mover waits and replans, as it
+					// does for any unresolved route.
+					return monster.UnresolvedNavigationRoute(goal, monster.NavigationRouteBlocked)
+				}
+				return plane.NextWaypoint(from, goal)
+			},
 			MessageBlockAt: game.water.MessageBlockAt,
 			Rand:           rand.Float64,
 			AttackPlan:     game.items.MonsterAttackPlan,

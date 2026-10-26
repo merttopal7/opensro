@@ -6,9 +6,8 @@ portItemRows.mjs - port-only item rows appended to the itemdata projections
 Port-only, not native (owner, 2026-10-14): the attack-pet expansion's
 equipment (SRO_ATTACK_PET_EXPANSION). Every pet wears one gear family in
 three slots (collar, harness, charm) of degrees 1-9, dropped by monsters
-with random blue options. The rows come from the design JSON's export
-(pet-design.json beside this file, written by
-scripts/tools/pet_design_export.py from docs/pet-expansion/pet-design.json).
+with random blue options. The rows come from the pet design's one source,
+the server's embedded companion/petdesign.json (#1631), read in place.
 v1.150 has no pet equipment, so each piece is a plain carry item cloned
 from a native no-use ETC row (TypeID 3/3/9/0) with an owned32x32 gear icon; its blue
 options ride the item body like equipment (item/wire IsPetGearRef). The
@@ -19,7 +18,13 @@ text, so every product sees the same reference IDs and names.
 
 ===========================================================================
 */
-import design from "./pet-design.json" with { type: "json" };
+import fs from "node:fs";
+import path from "node:path";
+import { serverSourceRoot } from "../world/paths.mjs";
+
+// The pet design under the server tree; the fingerprint's server-pet-design root.
+export const PET_DESIGN_PATH = path.join( "internal", "game", "companion", "petdesign.json" );
+const design = JSON.parse( fs.readFileSync( path.join( serverSourceRoot(), PET_DESIGN_PATH ), "utf8" ) );
 
 // The native template: an ETC item with no use, no stats and a ground model.
 export const PORT_ITEM_TEMPLATE = "ITEM_ETC_E051021_REDPEARL";
@@ -46,18 +51,23 @@ Every pet gear row: ID, codename, English name and description, icon and
 gold price (sell price a tenth).
 ================
 */
-export const PORT_ITEMS = Object.freeze( design.gear.flatMap( degree =>
-	degree.items.map( item => ({
-		id: item.id,
-		slot: item.slot,
-		degree: degree.degree,
-		codename: item.codename,
-		icon: `item\\pet\\${item.slot.toLowerCase()}_${String( degree.degree ).padStart( 2, "0" )}.ddj`,
-		price: 5000 * degree.degree * degree.degree,
-		name: `${item.name} (Degree ${degree.degree})`,
-		description: `Attack-pet gear (${item.slot}). Up to ${degree.maxBlues} blues.`
-	}) )
-) );
+export const PORT_ITEMS = Object.freeze(
+	design.gear.flatMap( degree =>
+		degree.items.flatMap( item =>
+			[ 0, 1, 2, 3 ].map( seal => ({
+				id: item.id + seal * 10,
+				seal,
+				slot: item.slot,
+				degree: degree.degree,
+				codename: item.codename + [ "", "_STAR", "_MOON", "_SUN" ][seal],
+				icon: `item\\pet\\${item.slot.toLowerCase()}_${String( degree.degree ).padStart( 2, "0" )}.ddj`,
+				price: 5000 * degree.degree * degree.degree,
+				name: `${item.name} (Degree ${degree.degree})`,
+				description: `Attack-pet gear (${item.slot}). Up to ${degree.maxBlues} blues.`
+			}) )
+		)
+	)
+);
 
 /*
 ================
@@ -92,6 +102,8 @@ export function portItemColumns( template ) {
 		columns[COL_ICON] = item.icon;
 		columns[COL_DROP_MODEL] = PORT_PET_DROP_MODEL;
 		columns[COL_MAX_STACK] = "1";
+		columns[15] = item.seal ? "2" : "0";
+		columns[61] = String( (item.degree - 1) * 3 + (item.seal || 1) );
 		return columns;
 	} );
 }

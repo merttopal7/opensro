@@ -32,12 +32,14 @@ import (
 	"opensro.online/server/internal/game/world/monster"
 	"opensro.online/server/internal/game/world/movement"
 	"opensro.online/server/internal/game/world/simulation"
+	"opensro.online/server/internal/platform/economy"
 )
 
 // unlistedSettings are the shard settings the rules page leaves out, each
 // with the reason; every other setting is a rule (public_rules_test.go).
 var unlistedSettings = map[string]string{
 	action.EnvGMSetSpeed:            "a GM command, not a rule players meet",
+	monster.EnvTrainingDummy:        "GM-only training targets",
 	simulation.EnvBetaUniqueRespawn: "unique monster spawn timing is not published",
 	// The tunables a rule's own text shows (game/tunables).
 	"SRO_MOST_WANTED_TEST_KILLS":      "shown in the Most Wanted test pacing rule",
@@ -66,6 +68,12 @@ var unlistedSettings = map[string]string{
 	// rule players meet (their client is offered the same world either
 	// way).
 	"SRO_WEBTRANSPORT_PUBLIC": "operator transport serving switch, not a gameplay rule",
+	// Staff telemetry (#1639): name-free kill and EXP rates for the
+	// staff console; players never meet it.
+	action.EnvKillStats: "staff kill and EXP rate telemetry, not a rule players meet",
+	// Staff telemetry (#1691): name-free seal counts by degree and tier
+	// for the staff console; players never meet it.
+	economy.EnvSealCensus: "staff seal census telemetry, not a rule players meet",
 }
 
 /*
@@ -78,6 +86,7 @@ so the list cannot change while the GameWorld runs.
 */
 func publicRules() publicstats.RulesResponse {
 	silkRate, _ := action.BetaSilkFromEnv()
+	silkActiveOnly, _ := action.BetaSilkActiveOnlyFromEnv()
 	stackSizes, _ := enterworld.StackSizesFromEnv()
 	alchemyRates, _ := alchemy.ReinforceRatesFromEnv()
 	alchemyMaxPlus, _ := alchemy.ReinforceMaxPlusFromEnv()
@@ -168,7 +177,7 @@ func publicRules() publicstats.RulesResponse {
 				Why:    "Requested for the beta, to keep the top seal rare; the original returns with one setting."},
 			{Flag: progression.EnvSunDropRate, On: progression.SunRateFromEnv().Active(),
 				Native: "Degree-9 Seal of Sun gear almost never drops from monsters.",
-				Now:    fmt.Sprintf("It drops from monsters of level 76 to 90 at %d times its original chance.", progression.SunRateFromEnv().MassMultiplier()),
+				Now:    fmt.Sprintf("It drops from monsters of level 76 to 90 at up to %d times its original chance, but never wider than the Moon class, so a Sun stays about twice as rare as a Moon.", progression.SunRateFromEnv().MassMultiplier()),
 				Why:    "Owner-approved for the beta so the top seal enters the economy from hunting; shops never sell it, and the original chance returns with one setting."},
 			{Flag: progression.EnvUniqueGapExempt, On: progression.UniqueRulesFromEnv().GapExempt,
 				Native: "A monster's drops thin out once you are more than six levels above it and stop entirely far above it, uniques included.",
@@ -194,6 +203,10 @@ func publicRules() publicstats.RulesResponse {
 				Native: "Silk is bought for the account.",
 				Now:    "Every full hour in the world earns silk, up to a cap.",
 				Why:    "Lets testers try the Item Mall; beta silk never reaches the launch shard."},
+			{Flag: action.EnvBetaSilkActiveOnly, On: silkRate > 0 && silkActiveOnly,
+				Native: "Silk is bought for the account.",
+				Now:    "The hourly silk counts only while you play: each action keeps it going for ten minutes.",
+				Why:    "A character left idle in town earned as much as one playing."},
 			{Flag: enterworld.EnvBetaStarterKit, On: enterworld.BetaStarterKitEnabled(),
 				Native: "Characters start with the retail creation items only.",
 				Now:    "Every character also holds a return scroll and a speed scroll that are never used up.",
@@ -212,7 +225,7 @@ func publicRules() publicstats.RulesResponse {
 				Why:    "Owner decision: storage fills less with split stacks."},
 			{Flag: action.EnvReverseReturnMap, On: action.ReverseReturnMapFromEnv(),
 				Native: "The reverse return scroll offers the last recall point and the last death point.",
-				Now:    "It also offers town gates and unique monster areas on the map.",
+				Now:    "It also offers places on the map: the later client's own list when the server imported it, else town gates and unique monster areas.",
 				Why:    "Later clients offer a map choice; the destinations are places the original already sends players to."},
 			{Flag: enterworld.EnvHuntingGuide, On: enterworld.HuntingGuideFromEnv(),
 				Native: "The world map shows no monster information.",
@@ -342,6 +355,11 @@ func publicRules() publicstats.RulesResponse {
 				Now: "A trader killed while riding drops the goods around the transport. Logging out outside a town kills a loaded transport where it stands and drops " +
 					"its goods; in town the transport is dismissed as before. A parked transport stays when its trader dies, and a server restart drops nothing.",
 				Why: "Traders made goods vanish by dying on the transport or logging out when thieves or hunters caught them; the original rule returns with one setting."},
+			{Flag: action.EnvPremiumUpgrade, On: action.PremiumUpgradeFromEnv(),
+				Native: "A premium time ticket refuses while any premium already runs; the running one must expire first.",
+				Now: "Using a strictly higher-grade premium of the same family (a bigger daily allowance first, then a longer period) replaces the running lower one. " +
+					"The replaced ticket's unused time is added to the new ticket's end and the daily allowance restarts with the new ticket; lower or equal grades still refuse.",
+				Why: "Owner request (#1624): a better premium bought with silk could not be used until a four-week ticket expired."},
 			{Flag: enterworld.EnvMallTransportSpeed, On: enterworld.MallTransportSpeedFromEnv(),
 				Native: "Item Mall transports (buffalo, rhinoceros, white elephant) move at their listed speed.",
 				Now:    "They move 50% faster.",
@@ -352,9 +370,13 @@ func publicRules() publicstats.RulesResponse {
 				Why:    "Requested for the beta; the original speed returns with one setting."},
 			{Flag: action.EnvAnnounceSoxDrop, On: action.AnnouncementsFromEnv().SoxDrop,
 				Native: "A Seal of Star, Moon or Sun drop is not announced.",
-				Now: fmt.Sprintf("Everyone sees \"<player> has dropped <item> (<seal>) from <monster>\" for degree %d and above.",
+				Now: fmt.Sprintf("Everyone sees a seal drop notice for degree %d and above; a Sun's leads with SEAL OF SUN and its line is coloured, as the Star's and Moon's are by their tiers.",
 					settings.Int(tunables.SoxNoticeMinDegree)),
 				Why: "Requested for the beta; the original quiet drop returns with one setting."},
+			{Flag: action.EnvSealBoard, On: action.SealBoardFromEnv(),
+				Native: "A seal drop is the looter's own business; nothing tallies them.",
+				Now:    "The site's seal board counts the week's Star, Moon and Sun drops for each job alias, resetting every Monday. Aliases only: no character names, and a player who hides from the public pages is not on it.",
+				Why:    "Owner-approved vote (#1604 P9), so the week's seal luck is visible without naming anyone's characters."},
 			{Flag: action.EnvAnnouncePlus, On: action.AnnouncementsFromEnv().Plus,
 				Native: "Reinforcement results are private.",
 				Now:    "Everyone sees \"<player> advanced <item> (<seal>) to +N\" for +7 and above.",

@@ -13,6 +13,7 @@
 			"provider": "src/engine/runtime/simulation/worker/session/world/gameplay/gameplay.ts",
 			"functions": [
 				"callback:createArrowKeys:0",
+				"cancelCast",
 				"direct",
 				"pose",
 				"steer",
@@ -609,6 +610,13 @@
 			]
 		},
 		{
+			"consumer": "src/engine/runtime/simulation/worker/session/world/world.ts",
+			"provider": "src/engine/runtime/simulation/worker/session/world/gameplay/gameplay.ts",
+			"functions": [
+				"experimental"
+			]
+		},
+		{
 			"consumer": "src/engine/runtime/simulation/worker/session/http/http.ts",
 			"provider": "src/engine/runtime/simulation/worker/session/world/world.ts",
 			"functions": [
@@ -633,6 +641,7 @@
 				"setWorld",
 				"cancelWorldUpdate",
 				"setWorldCamera",
+				"setWorldCameraCollision",
 				"setWorldTexture",
 				"worldStats",
 				"neededWorldTextures",
@@ -1034,9 +1043,11 @@
 				"callback:createUi:16",
 				"saveExperimental",
 				"saveWindowPositions",
+				"setCameraCollision",
 				"setCameraZoomRail",
 				"setCursorVisible",
 				"setFreeCamera",
+				"setRenderMode",
 				"setWorldFieldOfView"
 			]
 		},
@@ -2008,7 +2019,6 @@
 			"functions": [
 				"audioListener",
 				"dungeonCharacterPvs",
-				"interpolatedOwnWalk",
 				"presentationCamera",
 				"presentationNight"
 			]
@@ -2028,7 +2038,6 @@
 				"carry",
 				"clear",
 				"createOwnWalkPresenter",
-				"enable",
 				"handles",
 				"moving",
 				"pose",
@@ -2239,6 +2248,13 @@
 			]
 		},
 		{
+			"consumer": "src/engine/runtime/runtime.ts",
+			"provider": "src/engine/runtime/platform/keep-awake.ts",
+			"functions": [
+				"set"
+			]
+		},
+		{
 			"consumer": "src/engine/runtime/renderer/frame/frame.ts",
 			"provider": "src/engine/runtime/renderer/device/geometry.ts",
 			"functions": [
@@ -2386,6 +2402,14 @@
 				"footprints"
 			],
 			"reason": "The footprint owner publishes or clears its retained decals at the original frame and teardown positions."
+		},
+		{
+			"consumer": "src/engine/runtime/characters/sun-drop-markers.ts",
+			"provider": "src/engine/runtime/renderer/world/world.ts",
+			"functions": [
+				"sunDropMarkers"
+			],
+			"reason": "The Sun-marker owner publishes or clears its retained ground rings at the original frame and teardown positions."
 		},
 		{
 			"consumer": "src/engine/foundation/gameplay/player-attack.ts",
@@ -2549,6 +2573,15 @@
 			"functions": [
 				"resolveDrawnPoses"
 			]
+		},
+		{
+			"consumer": "src/engine/runtime/characters/characters.ts",
+			"provider": "src/engine/runtime/characters/sun-drop-markers.ts",
+			"functions": [
+				"clear",
+				"createSunDropMarkers",
+				"step"
+			]
 		}
 	],
 	"boundaries": [
@@ -2642,6 +2675,20 @@
 			"function": "wakeIdleWaiters",
 			"kind": "callback",
 			"reason": "Promise resolvers of background-install waiters (worker/install.ts): settled when the last foreground load releases capacity."
+		},
+		{
+			"file": "src/engine/runtime/platform/keep-awake.ts",
+			"expression": "release",
+			"function": "set",
+			"kind": "callback",
+			"reason": "Promise resolver of the held Web Lock: settling it releases the tab's keep-awake lock when the world session ends."
+		},
+		{
+			"file": "src/engine/runtime/platform/keep-awake.ts",
+			"expression": "release",
+			"function": "dispose",
+			"kind": "callback",
+			"reason": "Promise resolver of the held Web Lock: settling it releases the tab's keep-awake lock when the platform is disposed."
 		},
 		{
 			"file": "src/engine/runtime/runtime.ts",
@@ -3485,6 +3532,13 @@
 		},
 		{
 			"file": "src/engine/runtime/characters/actor-appearance.ts",
+			"expression": "resources.prioritize",
+			"function": "resolve",
+			"kind": "callback",
+			"reason": "The per-actor phase declares the local player's worn sources to the resource owner, synchronously, so its single load slot serves a fresh equip ahead of unrelated character assets."
+		},
+		{
+			"file": "src/engine/runtime/characters/actor-appearance.ts",
 			"expression": "allocateActor",
 			"function": "resolve",
 			"kind": "callback",
@@ -4100,8 +4154,8 @@
 		{
 			"file": "src/engine/runtime/runtime.ts",
 			"function": "frame",
-			"sourceSha256": "557ef0004333bad21d6706e8a2708c3657c21948cb7338525ab9276e5a477acb",
-			"reason": "AEBD90 synchronously waits for visibility before AEC180 advances EFP ticks. The browser yields at the GPU readback barrier; the runtime retains the current frame and schedules the next RAF only after completion. Ordinary frames do not await a readback. A hidden frame renders only while a world entry awaits game-ready, under the same barrier: native keeps updating while inactive (A0F430 OnUpdate; A11650 skips drawing) and finishes loading in CPSMission_OnUpdate (728E10). A visible window that gets no RAF for STARVED_FRAME_MS runs the same delivery-paced maintenance frames. Device disposal cancels pending mapping. Startup also hands the asset owner the device texture features once (port-only texture variants), outside the frame.",
+			"sourceSha256": "28e5bc5cedcda7b99f677420268bb7bdd7df4b2283f6f0fe54c5cedff86c1531",
+			"reason": "AEBD90 synchronously waits for visibility before AEC180 advances EFP ticks. The browser yields at the GPU readback barrier; the runtime retains the current frame and schedules the next RAF only after completion. Ordinary frames do not await a readback. A hidden frame renders only while a world entry awaits game-ready, under the same barrier: native keeps updating while inactive (A0F430 OnUpdate; A11650 skips drawing) and finishes loading in CPSMission_OnUpdate (728E10). A visible window that gets no RAF for STARVED_FRAME_MS runs the same delivery-paced maintenance frames. Device disposal cancels pending mapping. Startup also hands the asset owner the device texture features once (port-only texture variants), outside the frame. The frame also derives the own-mover step at its existing call site (the local mover's next frame, or the published own cast displacement adopted as a fixed segment, #1569); the readback ordering above is unchanged by it.",
 			"evidence": "tests/fixtures/native/bsr-query-native.json",
 			"nativeFunction": 11451792,
 			"tests": [

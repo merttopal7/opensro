@@ -33,7 +33,15 @@ test("the published table keys each row by its pattern's first word", () => {
 	assert.equal( table.get( "/PlayerCount" ), 0 );
 	assert.equal( table.get( "/Debug" ), 1 );
 	assert.equal( table.get( "/Pos" ), 3 );
+	assert.equal( table.get( "/fast" ), 111 );
+	assert.equal( table.get( "/frame" ), 117 );
+	assert.equal( table.get( "/cwgo" ), 132 );
+	assert.equal( table.get( "/cs" ), 136 );
+	assert.equal( table.get( "/id" ), 137 );
 	assert.equal( table.get( "/setfov" ), 500 );
+	assert.equal( table.get( "/setspeed" ), 600 );
+	assert.equal( table.get( "/equip" ), 601 );
+	assert.equal( table.get( "/makeobj" ), 602 );
 	assert.equal( table.get( "/snd" ), 603 );
 	assert.equal( table.size, 47 );
 });
@@ -148,6 +156,32 @@ test("command words read as wcstol reads them", () => {
 	assert.equal( commands.commandFloat( "hour" ), 0 );
 });
 
+test("the bounded integer rows read their words as 9C3720 reads them", () => {
+	// /cs (690C40 case 136): exactly one word, clamped to 1..500; the
+	// handler's unsigned compares put a negative word on the top rail.
+	assert.equal( commands.debugCameraSpeedValue( [ "250" ] ), 250 );
+	assert.equal( commands.debugCameraSpeedValue( [ "1" ] ), 1 );
+	assert.equal( commands.debugCameraSpeedValue( [ "0" ] ), 1 );
+	assert.equal( commands.debugCameraSpeedValue( [ "99999" ] ), 500 );
+	assert.equal( commands.debugCameraSpeedValue( [ "-3" ] ), 500 );
+	assert.equal( commands.debugCameraSpeedValue( [ "abc" ] ), 1 );
+	assert.equal( commands.debugCameraSpeedValue( [] ), null );
+	assert.equal( commands.debugCameraSpeedValue( [ "1", "2" ] ), null );
+	// /setspeed (case 600): the first word alone (a missing word reads
+	// as zero), times ten, clamped to 10..500 the same unsigned way.
+	assert.equal( commands.debugSetSpeedValue( [] ), 10 );
+	assert.equal( commands.debugSetSpeedValue( [ "10" ] ), 100 );
+	assert.equal( commands.debugSetSpeedValue( [ "3" ] ), 30 );
+	assert.equal( commands.debugSetSpeedValue( [ "100" ] ), 500 );
+	assert.equal( commands.debugSetSpeedValue( [ "-1" ] ), 500 );
+	assert.equal( commands.debugSetSpeedValue( [ "7", "9" ] ), 70 );
+	// /fast (case 111): the 50/240 snap against the double 50.
+	assert.equal( commands.debugFastSpeedValue( 50 ), 240 );
+	assert.equal( commands.debugFastSpeedValue( 240 ), 50 );
+	assert.equal( commands.debugFastSpeedValue( 100 ), 50 );
+	assert.equal( commands.debugFastSpeedValue( 30 ), 240 );
+});
+
 /*
 ================
 consoleFixture
@@ -224,6 +258,40 @@ test("the GM console sends /Pos as one move and /GetPos as the body-visual flip"
 	}
 });
 
+test("the GM console runs /hideme, /showme, /uioff and /uion", () => {
+	const { f, sent, type, now } = consoleFixture();
+	try {
+		type( "/hideme" );
+		assert.deepEqual( sent, [ { kind: "debug-local-visible", visible: false } ] );
+		type( "/showme" );
+		assert.deepEqual( sent[1], { kind: "debug-local-visible", visible: true } );
+		type( "/Debug" );
+		assert.ok( f.hasText( "DebugMsg On" ) );
+		const hudResult = f.ui.step( f.state, now() + 100 );
+		assert.ok( hudResult, "the HUD step produced nothing" );
+		const hudQuads = f.scenes.at( -1 ).quads.length,
+			hudControls = hudResult.controls.map( c => c.id );
+		assert.ok(
+			hudControls.some( id => !id.startsWith( "gm-" ) ),
+			"the fixture HUD never came up: " + hudControls.join( "," )
+		);
+		type( "/uioff" );
+		assert.equal( sent.length, 2, "a UI row reached the worker" );
+		assert.ok( f.hasText( "DebugMsg On" ), "the console hid with the UI" );
+		const offResult = f.ui.step( f.state, now() + 100 );
+		assert.ok( offResult, "the /uioff step produced nothing" );
+		assert.ok( f.scenes.at( -1 ).quads.length < hudQuads, "the HUD stayed up under /uioff" );
+		assert.ok(
+			offResult.controls.length > 0 && offResult.controls.every( c => c.id.startsWith( "gm-" ) ),
+			"controls besides the console's survived /uioff: " + offResult.controls.map( c => c.id ).join( "," )
+		);
+		type( "/uion" );
+		assert.ok( f.scenes.at( -1 ).quads.length >= hudQuads, "the HUD did not return under /uion" );
+	} finally {
+		f.dispose();
+	}
+});
+
 test("timeoff before the first clock lands the hold when the clock arrives", async () => {
 	const { sampleWorldClock } = await import(
 		"../../src/engine/foundation/gameplay/world-clock.ts"
@@ -279,6 +347,40 @@ test("the GM console drives the local clock", async () => {
 		assert.equal( wallNow().hour, 12 );
 		type( "/night" );
 		assert.equal( wallNow().hour, 0 );
+	} finally {
+		f.dispose();
+	}
+});
+
+test("the GM console consumes the remaining table rows without sending", () => {
+	const { f, sent, type } = consoleFixture();
+	try {
+		// The slow camera rows, the 600 family and the camera-waypoint
+		// rows: every row the table names is consumed by the dispatch,
+		// so none of these lines may reach the server (or the chat).
+		for (
+			const line of [
+				"/fast",
+				"/frame",
+				"/cs 250",
+				"/cs",
+				"/cs 1 2",
+				"/id",
+				"/setspeed 30",
+				"/setspeed",
+				"/equip 1234",
+				"/equip",
+				"/makeobj 1234",
+				"/snd hello",
+				"/snd",
+				"/cwclear",
+				"/cwpop",
+				"/cwgo",
+				"/cwstop",
+				"/cwsave"
+			]
+		) type( line );
+		assert.deepEqual( sent, [], "a remaining table row reached the server" );
 	} finally {
 		f.dispose();
 	}

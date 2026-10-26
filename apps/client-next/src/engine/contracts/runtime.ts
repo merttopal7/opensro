@@ -221,6 +221,8 @@ export interface Platform extends Disposable {
 	presentUpdate( newer: boolean ): void;
 	presentTelemetry( sample: FrameTelemetry ): void;
 	diagnosticsActive(): boolean;
+	/** Holds the tab awake (no background freeze) while a world session is live. */
+	setKeepAwake( active: boolean ): void;
 	/** The canvas CSS size, observed rather than read (no forced layout). */
 	canvasSize(): { readonly width: number; readonly height: number; };
 	readViewport(): Viewport;
@@ -251,9 +253,6 @@ export interface Renderer extends Disposable {
 	// Port-only, not native: whether characters and effects share one
 	// nearest-first actor room (Experimental; the original has no cap).
 	sharedActorRoom?(): boolean;
-	// Port-only, not native: whether the local mover's walk is drawn between
-	// its worker ticks (always on since 2026-10-25; it was the Experimental "Interpolated own movement" row).
-	interpolatedOwnWalk?(): boolean;
 	// Port-only, not native: whether holding V also hides other players'
 	// companions (Experimental, off by default).
 	vHidesCompanions?(): boolean;
@@ -268,7 +267,14 @@ export interface Renderer extends Disposable {
 	setSelectionDecal(
 		value: { readonly pose: import("./gameplay").Pose; readonly slot: 0 | 1 | 2 | 3; } | null
 	): void;
+	// One SWorld graphic option (foundation/rendering/graphic-options.ts)
+	// as negated by the console's render family: the world renderer and
+	// the character renderer each apply the options they own.
+	setWorldRenderMode( mode: number, enabled: boolean ): void;
 	setFootprints( value: readonly import("./footprint").Footprint[] ): void;
+	// Port-only, not native (#1640): the ground rings under the player's
+	// own admitted Seal of Sun drops (runtime/characters/sun-drop-markers.ts).
+	setSunDropMarkers( value: readonly import("./sun-drop-marker").SunDropMarker[] ): void;
 	pickGround( x: number, y: number ): import("./navigation").GroundPickQuery | null;
 	presentationCamera(): import("@/engine/foundation/animation/entity-lod").LodPoint | null;
 	audioListener(): import("./audio").SoundListener | null;
@@ -341,6 +347,9 @@ export interface Renderer extends Disposable {
 	// is not the drawn scene or not at full terrain detail.
 	settleWorld( sceneId: string ): boolean;
 	setWorldCamera( camera: import("./scene").WorldCamera ): void;
+	// The GM /colon byte (+0x3CC): false keeps the requested camera
+	// distance (68FAD0's no-hit arm); the follow runs either way.
+	setWorldCameraCollision( enabled: boolean ): void;
 	setWorldTexture(
 		path: string,
 		image: import("./texture").WorldTexture,

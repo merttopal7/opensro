@@ -22,7 +22,11 @@ func (rt *Runtime) KillUpdater() func(*enterworld.Character, string, uint8) ([]w
 		if character == nil || character.DeletePending {
 			return nil, false
 		}
+		rt.noteRahid6Kill(character, codename)
+		rt.noteEasteu21Kill(character, codename)
 		var frames []wire.Frame
+		frames = append(frames, rt.noteIvy3Kill(character, codename)...)
+		frames = append(frames, rt.ivy3BloodGrant(character, codename)...)
 		for i, record := range character.ActiveQuests {
 			def, ok := rt.Defs.ByRefID(record.RefID)
 			if ok {

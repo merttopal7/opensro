@@ -39,6 +39,16 @@ export const CHECK_TASKS = [
 		args: [ "-B", "scripts/build/generate_compiled_quests.py", "--check" ]
 	} ),
 	commandTask( {
+		name: "check:pet-design",
+		description: "Verify the client's pet design module matches the server's design JSON",
+		kind: "check",
+		ci: true,
+		requires: [],
+		timeoutClass: "short",
+		command: "python",
+		args: [ "-B", "scripts/tools/pet_design_export.py", "--check" ]
+	} ),
+	commandTask( {
 		name: "check:client-preparation",
 		description: "Test the PK2 reader and the client preparation tool on synthetic archives",
 		kind: "check",
@@ -124,6 +134,16 @@ export const CHECK_TASKS = [
 		timeoutClass: "short",
 		command: "node",
 		args: [ "scripts/checks/check_world_space.mjs" ]
+	} ),
+	commandTask( {
+		name: "check:plane-branches",
+		description: "Refuse new dungeon region-bit branches outside the server's plane owner (#1646)",
+		kind: "check",
+		ci: true,
+		requires: [],
+		timeoutClass: "short",
+		command: "node",
+		args: [ "scripts/checks/check_plane_branches.mjs" ]
 	} ),
 	commandTask( {
 		name: "check:source-encoding",
@@ -283,12 +303,14 @@ const sourceTasks = [
 	"check:console",
 	"check:loot-catalog",
 	"check:compiled-quests",
+	"check:pet-design",
 	"check:client-preparation",
 	"check:pipeline-contracts",
 	"check:source-size",
 	"check:source-encoding",
 	"check:generated-root",
 	"check:world-space",
+	"check:plane-branches",
 	"check:shared-fixtures",
 	"check:format",
 	"check:scripts",
@@ -326,12 +348,14 @@ export const CHECK_PIPELINES = Object.freeze( {
 		{ id: "release", task: "check:release", after: [] },
 		{ id: "loot-catalog", task: "check:loot-catalog", after: [] },
 		{ id: "compiled-quests", task: "check:compiled-quests", after: [] },
+		{ id: "pet-design", task: "check:pet-design", after: [] },
 		{ id: "client-preparation", task: "check:client-preparation", after: [] },
 		{ id: "pipeline-contracts", task: "check:pipeline-contracts", after: [] },
 		{ id: "source-size", task: "check:source-size", after: [] },
 		{ id: "source-encoding", task: "check:source-encoding", after: [] },
 		{ id: "generated-root", task: "check:generated-root", after: [] },
 		{ id: "world-space", task: "check:world-space", after: [] },
+		{ id: "plane-branches", task: "check:plane-branches", after: [] },
 		{ id: "shared-fixtures", task: "check:shared-fixtures", after: [] },
 		{ id: "format", task: "check:format", after: [] },
 		{ id: "typecheck-scripts", task: "check:scripts", after: [] },

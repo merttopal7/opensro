@@ -106,7 +106,7 @@ func (ops *MonsterMoverOps) startChaseLeg(
 		return ops.startReturnLeg(divisionID, instance, tactics, mover, monster.MoverEventAttackUnavailable, nowMs)
 	}
 
-	live := mover.LivePoseAt(nowMs, ops.TerrainHeight)
+	live := mover.LivePoseAt(nowMs, ops.GroundHeight)
 	mover.Pose = live
 	mustMoverTransition(&mover, monster.MoverEventChaseStarted, target.Gid)
 	// ChaseGuidance is target movement state, not spatial approach geometry. A
@@ -129,13 +129,27 @@ func (ops *MonsterMoverOps) startChaseLeg(
 	// 548CE2..548D75: travel actor-to-target center distance along the
 	// approach direction while the target moves. AutoCommand's two-unit inset
 	// is insufficient when a running target advances five units per tick.
-	// Outdoor only: dungeon actors run 549460, which has no such branch.
-	if targetGuidance.TargetMoving() && ordinarySquadApproach(instance) && !IsDungeonRegion(live.RegionID) {
+	// Outdoor only: dungeon actors run 549460, which has no such branch
+	// (tactics_plane.go).
+	if targetGuidance.TargetMoving() && ordinarySquadApproach(instance) && pursuitAt(live.RegionID).ExtendsTowardMovingTarget() {
 		goal = NormalizeSpawnFrame(target.Pose)
 	}
 	before := ops.Monsters.prepareApproachNavigation(divisionID, instance, mover, target, nowMs)
 	if before.approach != nil {
 		goal = squadApproachGoal(live, target, spacing, before.approach.slot)
+	}
+
+	// The outdoor routine decides the step direction on the authored goal
+	// before the segment is planned (pursuit_direction.go): a probe from
+	// rest, the direction gate while far and aligned. A guard veto issues
+	// no step at all this authoring; the mover keeps its current segment
+	// and the uncommitted approach admission is dropped with the copy.
+	if pursuitAt(live.RegionID).GatesStepDirection() && ordinarySquadApproach(instance) {
+		adjusted, step := ops.applyChaseDirectionGate(live, mover, spawnToPose(goal), nowMs)
+		if !step {
+			return nil
+		}
+		goal = poseToSpawn(adjusted)
 	}
 
 	if err := mover.SetChaseGuidance(targetGuidance); err != nil {

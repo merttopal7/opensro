@@ -34,16 +34,13 @@ func (v *WaterValidator) PlanMonsterPath(from, goal monster.Pose) *monster.Navig
 /*
 ================
 monsterPathHeightAt
+
+The height of a monster path's sample at chord parameter t, by the
+plane the sample is on (pathHeightOnPlane, plane_height.go).
 ================
 */
 func (v *WaterValidator) monsterPathHeightAt(t float64, p monster.Pose, walk *navWalk) (float64, bool) {
-	if simulation.IsDungeonRegion(p.RegionID) {
-		return v.dungeonSpawnHeightAt(p.RegionID, p.X, p.Y, p.Z)
-	}
-	if y, ok := walk.heightAt(t); ok {
-		return y, true
-	}
-	return v.TerrainHeightAt(p.RegionID, p.X, p.Z)
+	return pathHeightOnPlane(v, t, p, walk)
 }
 
 /*
@@ -57,11 +54,24 @@ The returned path carries the walked owners so the next plan can do the same.
 ================
 */
 func (v *WaterValidator) PlanMonsterPathFrom(from monster.Pose, fromOwner simulation.NavOwner, goal monster.Pose) *monster.NavigationPath {
+	path, _ := v.planMonsterPathFrom(from, fromOwner, goal)
+	return path
+}
+
+/*
+================
+planMonsterPathFrom
+
+PlanMonsterPathFrom, plus the clip's deterministic work (ClipReport.Work),
+for the cave planner, which prices each probe by its scan (#1678).
+================
+*/
+func (v *WaterValidator) planMonsterPathFrom(from monster.Pose, fromOwner simulation.NavOwner, goal monster.Pose) (*monster.NavigationPath, int) {
 	fromSpawn := simulation.Spawn{RegionID: from.RegionID, X: from.X, Y: from.Y, Z: from.Z, Angle: from.Heading}
 	goalSpawn := simulation.Spawn{RegionID: goal.RegionID, X: goal.X, Y: goal.Y, Z: goal.Z, Angle: goal.Heading}
 	report, walk := v.clipMovementPathFromWithWalk(fromSpawn, fromOwner, goalSpawn)
 	if report.Truncated || report.TilesUncovered != 0 || report.Outcome == ClipNoCoverage || report.Outcome == ClipDungeonExempt || report.Outcome == ClipStartBlocked {
-		return nil
+		return nil, report.Work
 	}
 	rest := monster.Pose{RegionID: report.Rest.RegionID, X: report.Rest.X, Y: report.Rest.Y, Z: report.Rest.Z, Heading: goal.Heading}
 	if walk == nil || rest.RegionID != goal.RegionID || rest.X != goal.X || rest.Z != goal.Z {
@@ -69,7 +79,7 @@ func (v *WaterValidator) PlanMonsterPathFrom(from monster.Pose, fromOwner simula
 	}
 	y, ok := v.monsterPathHeightAt(1, rest, walk)
 	if !ok {
-		return nil
+		return nil, report.Work
 	}
 	rest.Y = y
 	height := func(t float64, p monster.Pose) (float64, bool) {
@@ -78,7 +88,24 @@ func (v *WaterValidator) PlanMonsterPathFrom(from monster.Pose, fromOwner simula
 		}
 		return p.Y, true
 	}
-	return monster.NewNavigationPath(from, goal, rest, report.NativeResult, height).WithOwners(walk.spans())
+	return monster.NewNavigationPath(from, goal, rest, report.NativeResult, height).WithOwners(pathOwnerSpans(walk, report)), report.Work
+}
+
+/*
+================
+pathOwnerSpans
+
+The owner spans a monster path carries: the owner walk's, and on the cave
+plane, which walks no surface owners, the rest's dungeon owner over the
+whole chord (#1727). The cell-by-cell spans arrive with the native
+dungeon walk (#1728).
+================
+*/
+func pathOwnerSpans(walk *navWalk, report ClipReport) []simulation.NavOwnerSpan {
+	if spans := walk.spans(); len(spans) > 0 || report.RestOwner.Kind != simulation.NavOwnerDungeon {
+		return spans
+	}
+	return []simulation.NavOwnerSpan{{From: 0, To: 1, Owner: report.RestOwner}}
 }
 
 /*

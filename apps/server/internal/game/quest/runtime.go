@@ -19,6 +19,7 @@ import (
 	"opensro.online/server/internal/game/item/inventory"
 	"opensro.online/server/internal/game/item/wire"
 	"opensro.online/server/internal/game/world/calendar"
+	"opensro.online/server/internal/game/world/instance"
 	"opensro.online/server/internal/game/world/simulation"
 )
 
@@ -59,6 +60,28 @@ type Runtime struct {
 	// instanceHandlers is the instanced-world handler registry
 	// (instance_handlers.go), keyed by instance definition.
 	instanceHandlers instanceHandlerTable
+	// The instanced-world doors below serve the quest programmes
+	// (rahid6.go is the first). The action lane owns parties, layers and
+	// transfers; the composition root wires these to it, binding the
+	// division there - quest code is division-agnostic, like the
+	// SpawnQuestMonster door above. All are nil in detached tests.
+	// InstanceInvite opens a layer, moves the leader in and prompts the
+	// eligible members; InstancePartyFacts answers the talk gates;
+	// InstanceReturn returns one character to its transfer anchor and
+	// InstanceClose ends a layer; PushCharacterFrames delivers frames
+	// to one character by name; NowMs is the runtime clock.
+	InstanceInvite      func(leader *enterworld.Character, call InstanceInviteCall) InstanceInviteOutcome
+	InstancePartyFacts  func(c *enterworld.Character) InstancePartyFacts
+	InstanceReturn      func(c *enterworld.Character) bool
+	InstanceClose       func(lease instance.Lease)
+	PushCharacterFrames func(name string, frames []wire.Frame)
+	NowMs               func() int64
+	// rahid6 is the Rahid 6 programme's state (rahid6.go).
+	rahid6 rahid6Programme
+	// easteu21 is the EASTEU 21 programme's state (easteu21.go).
+	easteu21 easteu21Programme
+	// ivy3 is the IVY 3 programme's state (ivy3.go).
+	ivy3 ivy3Programme
 }
 
 /*
@@ -342,6 +365,9 @@ func (rt *Runtime) StartQuest(character *enterworld.Character, codename string) 
 		}
 		var acceptanceItems []inventory.ItemAmount
 		acceptanceItems = acceptanceGrants(def)
+		acceptanceItems = append(acceptanceItems, rahid6AcceptanceItems(def)...)
+		acceptanceItems = append(acceptanceItems, easteu21AcceptanceItems(def)...)
+		acceptanceItems = append(acceptanceItems, ivy3AcceptanceItems(def)...)
 		supply, suppliesTraps := captureSupplyForQuest(def.Codename)
 		suppliesTraps = suppliesTraps && !supply.afterCompletion
 		if suppliesTraps {
@@ -376,6 +402,12 @@ func (rt *Runtime) StartQuest(character *enterworld.Character, codename string) 
 			progress = heldCollectCount(character, def)
 		}
 		record = BuildActiveQuestRecord(def, progress)
+		if def.Codename == easteu21QuestCodename {
+			rt.stampEasteu21Acceptance(character, def)
+		}
+		if def.Codename == ivy3QuestCodename {
+			rt.stampIvy3Acceptance(character, def)
+		}
 		if branched {
 			record.Branch = uint8(branch)
 			if wait := def.OfferBranches[branch].WaitMinutes; wait > 0 {
@@ -509,6 +541,16 @@ func (rt *Runtime) OptionsForNpc(character *enterworld.Character, npcCodename st
 			})
 			continue
 		}
+		if !active {
+			if option, offered := rt.easteu21NoPartyOption(character, def, npcCodename, level); offered {
+				completes = append(completes, option)
+				continue
+			}
+			if option, offered := rt.ivy3NoPartyOption(character, def, npcCodename, level); offered {
+				completes = append(completes, option)
+				continue
+			}
+		}
 		// The level gates taking a quest, never reporting one already taken:
 		// a character that lost a level keeps its turn-in (as MarkerStates).
 		if !active && admissionLevel(def) <= level && canAcceptAgain(character, def) && prerequisitesMet(character, def) && rt.calendarAvailable(def, false) && questNpcMatches(def, def.StartNpcCodename, npcCodename) {
@@ -532,6 +574,18 @@ func (rt *Runtime) OptionsForNpc(character *enterworld.Character, npcCodename st
 			})
 		}
 		if active && questNpcMatches(def, def.EndNpcCodename, npcCodename) && def.NotAchievedSymbol != "" {
+			if travel, offered := rt.rahid6TravelOption(character, def, npcCodename); offered {
+				completes = append(completes, travel)
+				continue
+			}
+			if grant, offered := rt.easteu21GrantOption(character, def, npcCodename); offered {
+				completes = append(completes, grant)
+				continue
+			}
+			if grant, offered := rt.ivy3GrantOption(character, def, npcCodename); offered {
+				completes = append(completes, grant)
+				continue
+			}
 			if supply, available := rt.captureSupplyOption(character, def, npcCodename); available {
 				completes = append(completes, supply)
 				continue
@@ -757,6 +811,7 @@ func (rt *Runtime) settleReward(character *enterworld.Character, def *Definition
 			consume = append(consume, captureSupplyCleanup(character, def)...)
 			consume = append(consume, exchangeReturns(character, def)...)
 			consume = append(consume, questToolCleanup(character, def)...)
+			consume = append(consume, ivy3CompletionCleanup(character, def)...)
 			consume = append(consume, optionalMissionCleanup(character, def)...)
 			if force {
 				consume = clampToHeld(character, consume)

@@ -141,10 +141,10 @@ export const EXPERIMENTAL_TABS: readonly {
 				description: "Steer straight projectiles toward a moving target."
 			},
 			{
-				key: "spreadClothSteps",
-				id: "experimental-spread-cloth-steps",
-				label: "Spread cloth steps",
-				description: "Smoother frames: cloth and hair step in different frames."
+				key: "sunDropMarker",
+				id: "experimental-sun-drop-marker",
+				label: "Seal of Sun drop marker",
+				description: "Mark your own degree-9+ Sun drops on the ground."
 			}
 		]
 	},
@@ -206,6 +206,16 @@ export const EXPERIMENTAL_TABS: readonly {
 			id: "experimental-touch-inspect",
 			label: "Tap shows item details",
 			description: "On touch, a tap on an item or skill keeps its tooltip up."
+		}, {
+			key: "webTransport",
+			id: "experimental-web-transport",
+			label: "WebTransport connection",
+			description: "Connect over QUIC/UDP; falls back to WebSocket."
+		}, {
+			key: "spreadClothSteps",
+			id: "experimental-spread-cloth-steps",
+			label: "Spread cloth steps",
+			description: "Smoother frames: cloth and hair step in different frames."
 		} ]
 	},
 	{

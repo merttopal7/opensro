@@ -493,7 +493,10 @@ the entry continues it like the one after a world transfer.
 		notice: gameplay.notice,
 		chatBlocks: gameplay.chatBlocks,
 		options: gameplay.options,
-		experimental: gameplay.experimental,
+		experimental( value: import("@/engine/foundation/ui/experimental-options").ExperimentalGameplay ) {
+			gameplay.experimental( value );
+			entities.sunDropMarker( value.sunDropMarker === true );
+		},
 		/*
 ================
 command
@@ -539,6 +542,12 @@ UI and quickslot commands. A skill aims at the newest selection intent
 			// gameplay lane never sees the command.
 			if ( command.kind === "debug-body-visual" ) {
 				entities.debugBodyVisual( gameplay.localIdentity() );
+				return;
+			}
+			// /showme and /hideme write only the entity owner's shown byte;
+			// the gameplay lane never sees the command.
+			if ( command.kind === "debug-local-visible" ) {
+				entities.debugLocalVisible( gameplay.localIdentity(), command.visible );
 				return;
 			}
 			const itemType = command.kind === "item-use" ? gameplay.itemUseType( command.slot ) : undefined;
