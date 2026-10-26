@@ -507,31 +507,67 @@ Bekletilen (K7, yalnızca ihtiyaç olursa):
    gönderildi. Cloudflare arkasından (`cf-cache-status: DYNAMIC`) `206`
    yerine **`200` ve dosyanın tamamı** döndü. Bu, `patches.json`'da,
    küçük patch dosyalarında ve `last_version`'da aynı. Agent'ın kendisi
-   Range'i destekliyor (`http.ServeContent`, yerel testlerde 206). Yani
-   aradaki bir katman (hosting panelindeki nginx ya da Cloudflare)
-   başlığı düşürüyor. Sonuç: indirici doğru davranıp baştan başlıyor, ama
-   **kopan bir indirme kaldığı yerden devam edemiyor** (1,5 GB baştan
-   iner). Teşhis için sunucuda sırayla:
-   - `curl -s -D - -o /dev/null -r 0-9 http://127.0.0.1:<agent-portu>/updates/Patch002.temir` →
-     Agent (206 beklenir)
-   - aynısı nginx üzerinden (`-H "Host: sro.ftemir.com"`, nginx portu)
-   - aynısı alan adı üzerinden (Cloudflare)
+   Range'i destekliyor: `TestArchiveRangeResume`
+   (`internal/agent/updates/handler_test.go`) `206`'yı, doğru
+   `Content-Range`'i ve eski bir `If-Range` için tam `200`'ü sabitliyor.
+   `sro.ftemir.com`'un nginx yapılandırmasında (`location /updates/`)
+   Range'i düşüren bir ayar yok, nginx bu başlığı varsayılan olarak
+   iletiyor. En olası katman Cloudflare. Sonuç: indirici doğru davranıp
+   baştan başlıyor, ama **kopan bir indirme kaldığı yerden devam
+   edemiyor** (1,5 GB baştan iner). Kesinleştirmek için sunucuda:
+   - `curl -s -D - -o /dev/null -r 0-9 http://127.0.0.1:8787/updates/Patch002.temir`
+     → Agent (206 beklenir)
+   - `curl -s -D - -o /dev/null -r 0-9 -k --resolve sro.ftemir.com:443:127.0.0.1 https://sro.ftemir.com/updates/Patch002.temir`
+     → nginx, Cloudflare'siz (206 beklenir)
 
-   Hangi adımda `200`'e dönüyorsa sorun o katmanda. nginx'te `/updates/`
-   için `proxy_set_header Range $http_range;` ve
-   `proxy_set_header If-Range $http_if_range;` eklenebilir ya da
-   `proxy_cache`/`slice` ayarlarına bakılabilir. Bir doğrulayıcı da var:
-   `Last-Modified` geliyor, `ETag` yok. İndirici `Last-Modified`'ı
-   `If-Range` olarak kullanıyor.
+   İkisi de 206 ise sorun Cloudflare'de. Seçenekler: (a) güncelleme
+   dosyalarını Cloudflare'den geçmeyen (DNS only) bir alt alan adından
+   sunmak ve build'de `SRO_UPDATES_URL`'i ona yönlendirmek (Agent'ın CORS
+   ayarı sayfanın kökenine izin vermeli); (b) Cloudflare'de `/updates/*`
+   için kuralları gözden geçirmek. Bir doğrulayıcı da var: `Last-Modified`
+   geliyor, `ETag` yok. İndirici `Last-Modified`'ı `If-Range` olarak
+   kullanıyor.
 4. Build:
 
    ```
    SRO_INSTALL_GATE=1 SRO_PWA_ICON=<kare ≥512 px PNG> pnpm --filter @sro/client-next build
    ```
 
-   Çıktı `apps/client-next/temp/artifacts/dist` (deploy betiğinin
-   `client-dist`'i). Web kökü bu `dist`'i sunmalı. `/updates/`, `/api/` ve
-   shard yolları Agent'a gitmeli.
+   Çıktı `apps/client-next/temp/artifacts/dist`. Web kökü bu `dist`'i
+   sunmalı. `/updates/`, `/api/` ve shard yolları Agent'a gitmeli.
+
+#### `sro.ftemir.com`'a yayın (aaPanel nginx)
+
+Mevcut yapılandırmada `/api/`, `/updates/` ve `/shards/` zaten Agent ile
+GameWorld'e gidiyor. Geri kalan her şey site kökünden
+(`/www/wwwroot/sro.ftemir.com`) sunuluyor. Yayın:
+
+1. Kapı build'inin içeriğini (2026-10-26: `EYLUL2026/pwa-dist`, zip'i
+   `pwa-dist.zip`, 23 dosya, 2,8 MB) site köküne kopyalamak. Panelin
+   varsayılan `index.html`'i değişir, `404.html`/`502.html` kalabilir. Tauri
+   istemcisi bundan etkilenmez: kendi edge'i üzerinden çalışıyor.
+2. Önerilen nginx eklemeleri (sunucu bloğuna, `location /updates/`'in
+   yanına):
+
+   ```
+   # Yeni bir yayından sonra tarayıcı eski index.html'e (eski paket adlarına)
+   # takılı kalmasın. expires, add_header kullanmadığı için sunucu
+   # düzeyindeki HSTS/Alt-Svc başlıkları korunur.
+   location = /index.html {
+       expires -1;
+   }
+   location = /manifest.webmanifest {
+       types { }
+       default_type application/manifest+json;
+       expires -1;
+   }
+   ```
+
+   Hash'li paketler (`/assets/*-<hash>.js`) mevcut `expires 12h` kuralıyla
+   uyumlu, çünkü adları her build'de değişiyor.
+3. İstemci ve sunucu protokolü: 2026-10-26'da sunucu `8bbf2b34`'ten
+   derlenmiş ve protokol 10 bekliyor. Bu build de protokol 10 gönderiyor.
+   Sunucu ilerlerse istemci de aynı commit'ten yeniden derlenmeli.
 
 #### Cihaz başına kontrol listesi
 
