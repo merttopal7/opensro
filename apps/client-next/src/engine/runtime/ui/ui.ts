@@ -4896,7 +4896,10 @@ export function createUi(
 		else if ( id === "minimap-out" ) minimapTarget = minimapZoomTarget( minimapTarget, -1 );
 		else if ( id === "hotbar-prev" ) hotbarPage = (hotbarPage + 3) % 4;
 		else if ( id === "hotbar-next" ) hotbarPage = (hotbarPage + 1) % 4;
-		else if ( id === "mobile-pickup" ) executeAction( 1008 );
+		else if ( id.startsWith( "hotbar-page:" ) ) {
+			const page = Number( id.slice( 12 ) );
+			if ( Number.isInteger( page ) && page >= 0 && page < 4 ) hotbarPage = page;
+		} else if ( id === "mobile-pickup" ) executeAction( 1008 );
 		else if ( id === "mobile-target-cycle" && view.gameplay ) {
 			const gid = mobileCycleTarget(
 				view.entities,
@@ -13217,6 +13220,7 @@ export function createUi(
 					}
 
 					// 4. Bottom-right 10 skill slots (slots 1..9, 0 on the active quickslot page; stay visible alongside left-docked single-panel drawers).
+					blocks.push( mobile.actionCluster.bounds );
 					if ( (!mobileFullWindowOpen && !mobileMenuOpen) || carriedShortcut !== null ) {
 						for ( let i = 0; i < mobile.actionCluster.skills.length; i++ ) {
 							const n = i + 1;
@@ -13245,7 +13249,7 @@ export function createUi(
 						}
 					}
 
-					// 5. Primary Attack button + Target Cycle + Pickup + Quickslot Page toggle.
+					// 5. Primary Attack button + F1..F4 quickslot page tabs + Target Cycle + Pickup.
 					/*
 					================
 					mobileActionButton
@@ -13257,13 +13261,16 @@ export function createUi(
 						caption: string,
 						r: UiRect,
 						actionId?: number,
-						primary = false
+						primary = false,
+						selected = false
 					) => {
 						const down = pressed === id && hover === id;
 						const bg: readonly [number, number, number, number] = primary ?
 							(down ? [ 0.38, 0.12, 0.1, 0.92 ] : [ 0.24, 0.08, 0.08, 0.86 ]) :
+							selected ?
+							(down ? [ 0.28, 0.24, 0.14, 0.94 ] : [ 0.22, 0.18, 0.1, 0.9 ]) :
 							(down ? [ 0.16, 0.18, 0.22, 0.9 ] : [ 0.08, 0.1, 0.14, 0.84 ]);
-						const border = primary ?
+						const border = primary || selected ?
 							([ 0.95, 0.72, 0.28, 0.95 ] as const) :
 							([ 0.72, 0.64, 0.42, 0.85 ] as const);
 						rect( r, bg );
@@ -13289,7 +13296,13 @@ export function createUi(
 								vAlign: 1
 							} )
 						);
-						controls.push( { id, label: labelText, kind: "button", rect: r } );
+						controls.push( {
+							id,
+							label: labelText,
+							kind: "button",
+							rect: r,
+							...(selected ? { selected: true } : {})
+						} );
 						blocks.push( r );
 					};
 					if ( !mobileFullWindowOpen && !mobileMenuOpen ) {
@@ -13301,6 +13314,18 @@ export function createUi(
 							1002,
 							true
 						);
+						for ( let page = 0; page < mobile.actionCluster.pageTabs.length; page++ ) {
+							const tab = "F" + (page + 1);
+							mobileActionButton(
+								"hotbar-page:" + page,
+								"Quickslot bar " + tab,
+								tab,
+								mobile.actionCluster.pageTabs[page]!,
+								undefined,
+								false,
+								hotbarPage === page
+							);
+						}
 						mobileActionButton(
 							"mobile-target-cycle",
 							"Next target",
@@ -13313,12 +13338,6 @@ export function createUi(
 							"Pick",
 							mobile.actionCluster.pickup,
 							1008
-						);
-						mobileActionButton(
-							"hotbar-next",
-							"Next quickslot bar",
-							"F" + (hotbarPage + 1),
-							mobile.actionCluster.pageToggle
 						);
 					}
 				} else if ( compact ) {

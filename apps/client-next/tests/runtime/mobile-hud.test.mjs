@@ -331,12 +331,19 @@ test("M3: actionCluster buttons stay inside safe bounds, below minimap, and neve
 	const [sx, sy, sw, sh] = layout.safe.bounds;
 	const cluster = layout.actionCluster;
 	assert.equal( cluster.skills.length, 10 );
+	assert.equal( cluster.pageTabs.length, 4 );
+	// F1..F4 and Target align with the 5 skill columns above the top skill row.
+	const topRow = [ ...cluster.pageTabs, cluster.targetCycle ];
+	for ( let col = 0; col < 5; col++ ) {
+		assert.equal( topRow[col][0], cluster.skills[col][0], `column ${col} X aligns with skill slot ${col + 1}` );
+		assert.equal( topRow[col][2], cluster.skills[col][2], `column ${col} width matches skill slot ${col + 1}` );
+	}
 	const all = [
 		cluster.attack,
 		...cluster.skills,
+		...cluster.pageTabs,
 		cluster.targetCycle,
-		cluster.pickup,
-		cluster.pageToggle
+		cluster.pickup
 	];
 	for ( const r of all ) {
 		assert.ok( r[0] >= sx && r[1] >= sy, `rect ${r} inside top-left safe bounds` );
@@ -581,15 +588,18 @@ test("M3: UI action cluster dispatches attack, target-cycle, pickup, page-toggle
 	let output;
 	for ( let i = 0; i < 6; i++ ) output = draw();
 
-	// 1. Action cluster controls and all 10 skill slots (1..9, 0) are present; legacy 11-slot bar is absent.
+	// 1. Action cluster controls, F1..F4 page tabs, Target, and all 10 skill slots (1..9, 0) are present; legacy 11-slot bar is absent.
 	for (
 		const id of [
 			"hud-menu",
 			"compact-chat",
 			"mobile-attack",
+			"hotbar-page:0",
+			"hotbar-page:1",
+			"hotbar-page:2",
+			"hotbar-page:3",
 			"mobile-target-cycle",
 			"mobile-pickup",
-			"hotbar-next",
 			"hotbar:1",
 			"hotbar:2",
 			"hotbar:3",
@@ -604,6 +614,8 @@ test("M3: UI action cluster dispatches attack, target-cycle, pickup, page-toggle
 	) {
 		assert.ok( output.controls.some( c => c.id === id ), `expected M3 control ${id}` );
 	}
+	assert.equal( defined( output.controls.find( c => c.id === "hotbar-page:0" ) ).selected, true );
+	assert.equal( defined( output.controls.find( c => c.id === "hotbar-page:1" ) ).selected, undefined );
 	assert.ok(
 		defined( output.controls.find( c => c.id === "hotbar:10" ) ).label.startsWith( "0:" ),
 		"10th quickslot displays key label 0"
@@ -611,9 +623,37 @@ test("M3: UI action cluster dispatches attack, target-cycle, pickup, page-toggle
 	assert.ok( !output.controls.some( c => c.id === "hotbar:0" ), "legacy slot 0 is not rendered in Mobile HUD" );
 	assert.ok( !output.controls.some( c => c.id === "compact-map" ), "legacy toolbar is replaced by Mobile HUD" );
 
-	// 2. Center of the viewport and joystick zone are unobstructed in ui.blocks( x, y ).
+	// 2. Center of the viewport and joystick zone are unobstructed in ui.blocks( x, y ),
+	// while the entire skill/action cluster region (including gaps between skill slots) blocks world clicks.
 	assert.equal( fixture.ui.blocks( 426, 200 ), false, "center of world is unobstructed" );
 	assert.equal( fixture.ui.blocks( 140, 260 ), false, "joystick zone does not block world clicks" );
+	const layout = mobileHudLayout( 852, 393, {
+		safeArea: { top: 0, right: 59, bottom: 21, left: 59 }
+	} );
+	const slot1 = layout.actionCluster.skills[0];
+	const slot2 = layout.actionCluster.skills[1];
+	const slot6 = layout.actionCluster.skills[5];
+	const f1 = layout.actionCluster.pageTabs[0];
+	assert.equal(
+		fixture.ui.blocks( slot1[0] + slot1[2] + 2, slot1[1] + 22 ),
+		true,
+		"horizontal gap between skill slot 1 and 2 blocks world walking"
+	);
+	assert.equal(
+		fixture.ui.blocks( slot1[0] + 22, slot1[1] + slot1[3] + 2 ),
+		true,
+		"vertical gap between top and bottom skill rows blocks world walking"
+	);
+	assert.equal(
+		fixture.ui.blocks( slot2[0] + 22, f1[1] + f1[3] + 2 ),
+		true,
+		"gap between F1..F4 row and top skill row blocks world walking"
+	);
+	assert.equal(
+		fixture.ui.blocks( slot6[0] + 22, slot6[1] + slot6[3] + 2 ),
+		true,
+		"gap below bottom skill row blocks world walking"
+	);
 
 	// 3. Mobile joystick event updates visual state without adding blocking rects.
 	fixture.ui.event( {
@@ -649,12 +689,24 @@ test("M3: UI action cluster dispatches attack, target-cycle, pickup, page-toggle
 		{ kind: "gameplay", command: { kind: "pickup-nearest" } }
 	] );
 
-	// 7. hotbar-next cycles quickslot page F1 -> F2 (slots 11..20).
-	fixture.ui.event( { kind: "activate", id: "hotbar-next" } );
+	// 7. hotbar-page:0..3 switch directly between F1..F4 quickslot pages.
+	fixture.ui.event( { kind: "activate", id: "hotbar-page:1" } );
 	output = draw();
-	assert.ok( output.controls.some( c => c.id === "hotbar:11" ), "page 2 maps slot 1 to hotbar:11" );
-	assert.ok( output.controls.some( c => c.id === "hotbar:16" ), "page 2 maps slot 6 to hotbar:16" );
-	assert.ok( output.controls.some( c => c.id === "hotbar:20" ), "page 2 maps slot 10 (key 0) to hotbar:20" );
+	assert.equal( defined( output.controls.find( c => c.id === "hotbar-page:1" ) ).selected, true );
+	assert.ok( output.controls.some( c => c.id === "hotbar:11" ), "F2 maps slot 1 to hotbar:11" );
+	assert.ok( output.controls.some( c => c.id === "hotbar:16" ), "F2 maps slot 6 to hotbar:16" );
+	assert.ok( output.controls.some( c => c.id === "hotbar:20" ), "F2 maps slot 10 (key 0) to hotbar:20" );
+
+	fixture.ui.event( { kind: "activate", id: "hotbar-page:3" } );
+	output = draw();
+	assert.equal( defined( output.controls.find( c => c.id === "hotbar-page:3" ) ).selected, true );
+	assert.ok( output.controls.some( c => c.id === "hotbar:31" ), "F4 maps slot 1 to hotbar:31" );
+	assert.ok( output.controls.some( c => c.id === "hotbar:40" ), "F4 maps slot 10 (key 0) to hotbar:40" );
+
+	fixture.ui.event( { kind: "activate", id: "hotbar-page:0" } );
+	output = draw();
+	assert.equal( defined( output.controls.find( c => c.id === "hotbar-page:0" ) ).selected, true );
+	assert.ok( output.controls.some( c => c.id === "hotbar:1" ), "F1 maps slot 1 back to hotbar:1" );
 
 	fixture.dispose();
 });
@@ -679,8 +731,8 @@ test("M4: mobileMenuGridLayout and mobileDrawerBounds compute touch-sized 4x2 me
 	assert.ok( scale >= 0.9, `expected mainPopup drawer scale >= 0.9, got ${scale}` );
 	assert.equal( drawer[0], layout.panelDrawer[0], "docked flush left" );
 	assert.ok(
-		drawer[0] + drawer[2] <= Math.min( layout.actionCluster.pageToggle[0], layout.actionCluster.skills[0][0] ) - 8,
-		"left-docked drawer stays clear of right-hand quickslot skills and page toggle"
+		drawer[0] + drawer[2] <= Math.min( layout.actionCluster.pageTabs[0][0], layout.actionCluster.skills[0][0] ) - 8,
+		"left-docked drawer stays clear of right-hand quickslot skills and F1..F4 page tabs"
 	);
 });
 

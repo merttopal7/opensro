@@ -110,11 +110,12 @@ MobileActionCluster
 ================
 */
 export interface MobileActionCluster {
+	readonly bounds: UiRect;
 	readonly attack: UiRect;
 	readonly skills: readonly UiRect[];
+	readonly pageTabs: readonly UiRect[];
 	readonly targetCycle: UiRect;
 	readonly pickup: UiRect;
-	readonly pageToggle: UiRect;
 }
 
 /*
@@ -340,22 +341,29 @@ export function mobileHudLayout(
 		[ rightSkillX, bottomRowY, SKILL_SLOT_SIZE, SKILL_SLOT_SIZE ]
 	];
 	const auxY = topRowY - SECTION_GAP - AUX_BUTTON_SIZE;
-	const targetCycleX = rightSkillX + Math.floor( (SKILL_SLOT_SIZE - AUX_BUTTON_SIZE) / 2 );
-	const pageToggleX = farLeftSkillX + 3 * skillPitchX + Math.floor( (SKILL_SLOT_SIZE - AUX_BUTTON_SIZE) / 2 );
+	const pageTabs: UiRect[] = [
+		[ farLeftSkillX, auxY, SKILL_SLOT_SIZE, AUX_BUTTON_SIZE ],
+		[ farLeftSkillX + skillPitchX, auxY, SKILL_SLOT_SIZE, AUX_BUTTON_SIZE ],
+		[ farLeftSkillX + 2 * skillPitchX, auxY, SKILL_SLOT_SIZE, AUX_BUTTON_SIZE ],
+		[ farLeftSkillX + 3 * skillPitchX, auxY, SKILL_SLOT_SIZE, AUX_BUTTON_SIZE ]
+	];
 	const pickupX = attackX + Math.floor( (ATTACK_BUTTON_SIZE - AUX_BUTTON_SIZE) / 2 );
 	const pickupY = attackY - SECTION_GAP - AUX_BUTTON_SIZE;
+	const clusterLeft = farLeftSkillX - SECTION_GAP;
+	const clusterTop = Math.min( auxY, pickupY ) - SECTION_GAP;
 	const actionCluster: MobileActionCluster = {
+		bounds: [ clusterLeft, clusterTop, width - clusterLeft, height - clusterTop ],
 		attack: [ attackX, attackY, ATTACK_BUTTON_SIZE, ATTACK_BUTTON_SIZE ],
 		skills,
-		targetCycle: [ targetCycleX, auxY, AUX_BUTTON_SIZE, AUX_BUTTON_SIZE ],
-		pickup: [ pickupX, pickupY, AUX_BUTTON_SIZE, AUX_BUTTON_SIZE ],
-		pageToggle: [ pageToggleX, auxY, AUX_BUTTON_SIZE, AUX_BUTTON_SIZE ]
+		pageTabs,
+		targetCycle: [ rightSkillX, auxY, SKILL_SLOT_SIZE, AUX_BUTTON_SIZE ],
+		pickup: [ pickupX, pickupY, AUX_BUTTON_SIZE, AUX_BUTTON_SIZE ]
 	};
 
 	const drawerX = safe.left;
 	const drawerMaxRight = Math.max(
 		drawerX + 200,
-		Math.min( farLeftSkillX, actionCluster.pageToggle[0] ) - SECTION_GAP
+		Math.min( farLeftSkillX, actionCluster.pageTabs[0]![0] ) - SECTION_GAP
 	);
 	const drawerWidth = Math.min(
 		PANEL_DRAWER_MAX_WIDTH,
