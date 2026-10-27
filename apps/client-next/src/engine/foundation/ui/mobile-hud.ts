@@ -14,6 +14,19 @@ stack cleanly on the left.
 import type { SafeAreaInsets, UiRect } from "@/engine/contracts/ui";
 import type { EntityState } from "@/engine/contracts/world";
 import { worldDelta } from "@/engine/foundation/world/world-space";
+import { JOYSTICK_BASE_RADIUS } from "./mobile-joystick";
+export {
+	createMobileJoystick,
+	JOYSTICK_BASE_RADIUS,
+	JOYSTICK_DEADZONE,
+	JOYSTICK_KNOB_RADIUS,
+	type MobileJoystickArrows,
+	mobileJoystickHeading,
+	type MobileJoystickKeyOutput,
+	mobileJoystickQuads,
+	type MobileJoystickStep,
+	mobileJoystickStep
+} from "./mobile-joystick";
 
 const DESKTOP_WIDTH = 800;
 const DESKTOP_HEIGHT = 600;
@@ -75,19 +88,9 @@ const MENU_GRID_HEADER_HEIGHT = 40;
 const MENU_GRID_PADDING = 12;
 const MENU_GRID_GAP = 8;
 const MENU_CLOSE_SIZE = 40;
-export const JOYSTICK_BASE_RADIUS = 42;
-export const JOYSTICK_KNOB_RADIUS = 18;
-export const JOYSTICK_DEADZONE = 8;
-const JOYSTICK_STEER_DEADZONE = 10;
-const JOYSTICK_FORWARD_MAX_DY = 14;
-const HEADING_WORDS = 65535;
+const JOYSTICK_ORIGIN_LEFT_OFFSET = 38;
+const JOYSTICK_ORIGIN_BOTTOM_GAP = 22;
 const MONSTER_DEAD_STATE = 2;
-
-const ARROW_KEY_CODES = [
-	[ "up", "ArrowUp" ],
-	[ "left", "ArrowLeft" ],
-	[ "right", "ArrowRight" ]
-] as const;
 
 /*
 ================
@@ -326,7 +329,7 @@ export function mobileHudLayout(
 
 	const joystickTop = Math.floor( safe.top + safeHeight * 0.45 );
 	const joystickRight = Math.max(
-		safe.left + JOYSTICK_BASE_RADIUS * 2 + 16,
+		safe.left + JOYSTICK_BASE_RADIUS * 2 + JOYSTICK_ORIGIN_LEFT_OFFSET + 16,
 		Math.min( safe.left + Math.floor( safeWidth * 0.36 ), Math.floor( width * 0.4 ) )
 	);
 	const joystickZone: UiRect = [
@@ -336,8 +339,8 @@ export function mobileHudLayout(
 		Math.max( 1, expBar[1] - joystickTop - SECTION_GAP )
 	];
 	const joystickOrigin = [
-		joystickZone[0] + JOYSTICK_BASE_RADIUS + 16,
-		chatPreview[1] - JOYSTICK_BASE_RADIUS - 12
+		joystickZone[0] + JOYSTICK_BASE_RADIUS + JOYSTICK_ORIGIN_LEFT_OFFSET,
+		chatPreview[1] - JOYSTICK_BASE_RADIUS - JOYSTICK_ORIGIN_BOTTOM_GAP
 	] as const;
 
 	const clusterBottom = expBar[1] - SECTION_GAP;
@@ -510,256 +513,6 @@ export function mobilePartyLayout<
 			}) )
 		};
 	} );
-}
-
-/*
-================
-MobileJoystickArrows
-================
-*/
-export interface MobileJoystickArrows {
-	readonly up: boolean;
-	readonly left: boolean;
-	readonly right: boolean;
-}
-
-/*
-================
-MobileJoystickStep
-================
-*/
-export interface MobileJoystickStep {
-	readonly active: boolean;
-	readonly dragged: boolean;
-	readonly origin: readonly [number, number];
-	readonly knob: readonly [number, number];
-	readonly vector: readonly [number, number] | null;
-	readonly arrows: MobileJoystickArrows;
-}
-
-/*
-================
-MobileJoystickKeyOutput
-================
-*/
-export interface MobileJoystickKeyOutput {
-	readonly kind: "key";
-	readonly code: "ArrowUp" | "ArrowLeft" | "ArrowRight";
-	readonly down: boolean;
-}
-
-/*
-================
-mobileJoystickHeading
-
-Maps a screen-space joystick deflection (dx right, dy down) and the follow
-camera's yaw (radians) to a 360-degree native Silkroad heading word (0..65534).
-In world.ts (updateCamera) and world-math.ts (cameraBasis), the horizontal
-camera forward vector (screen up, dy < 0) is (-sin(yaw), -cos(yaw)) and the
-horizontal camera right vector (screen right, dx > 0) is (-cos(yaw), +sin(yaw)).
-================
-*/
-export function mobileJoystickHeading( dx: number, dy: number, cameraYaw: number ): number {
-	const twoPi = Math.PI * 2;
-	const wx = dy * Math.sin( cameraYaw ) - dx * Math.cos( cameraYaw );
-	const wz = dy * Math.cos( cameraYaw ) + dx * Math.sin( cameraYaw );
-	const bearing = (Math.atan2( wz, wx ) + twoPi) % twoPi;
-	return Math.trunc( bearing / twoPi * HEADING_WORDS ) % HEADING_WORDS;
-}
-
-/*
-================
-mobileJoystickStep
-
-Pure deflection math for the floating bottom-left virtual joystick.
-Maps thumb displacement to clamped knob coordinates, a continuous 2D deflection
-vector for 360-degree camera-relative movement, and legacy arrow transitions.
-================
-*/
-export function mobileJoystickStep(
-	originX: number,
-	originY: number,
-	currentX: number,
-	currentY: number
-): MobileJoystickStep {
-	const ox = Math.round( originX );
-	const oy = Math.round( originY );
-	const dx = currentX - originX;
-	const dy = currentY - originY;
-	const dist = Math.hypot( dx, dy );
-	if ( dist <= JOYSTICK_DEADZONE ) {
-		return {
-			active: true,
-			dragged: false,
-			origin: [ ox, oy ],
-			knob: [ ox, oy ],
-			vector: null,
-			arrows: { up: false, left: false, right: false }
-		};
-	}
-	const scale = dist > JOYSTICK_BASE_RADIUS ? JOYSTICK_BASE_RADIUS / dist : 1;
-	const clampedDx = dx * scale;
-	const clampedDy = dy * scale;
-	const knob: readonly [number, number] = [
-		Math.round( originX + clampedDx ),
-		Math.round( originY + clampedDy )
-	];
-	const up = dy <= JOYSTICK_FORWARD_MAX_DY;
-	const left = dx < -JOYSTICK_STEER_DEADZONE ||
-		(dy > JOYSTICK_FORWARD_MAX_DY && Math.abs( dx ) <= JOYSTICK_STEER_DEADZONE);
-	const right = dx > JOYSTICK_STEER_DEADZONE;
-	return {
-		active: true,
-		dragged: true,
-		origin: [ ox, oy ],
-		knob,
-		vector: [ clampedDx, clampedDy ],
-		arrows: { up, left, right }
-	};
-}
-
-/*
-================
-createMobileJoystick
-
-Tracks the bottom-left thumb touch that drives 360-degree camera-relative
-direction walking while preserving tap-to-walk when released within the deadzone.
-When touched anywhere in the left zone, the joystick frame appears at that touch
-point and its frame origin remains fixed there for the duration of the drag.
-================
-*/
-export function createMobileJoystick() {
-	let activeId: number | null = null;
-	let originX = 0;
-	let originY = 0;
-	let knobX = 0;
-	let knobY = 0;
-	let dragged = false;
-	let vector: readonly [number, number] | null = null;
-	let held: MobileJoystickArrows = { up: false, left: false, right: false };
-
-	/*
-	================
-	transitionOutputs
-	================
-	*/
-	function transitionOutputs( next: MobileJoystickArrows ): MobileJoystickKeyOutput[] {
-		const outputs: MobileJoystickKeyOutput[] = [];
-		for ( const [field, code] of ARROW_KEY_CODES ) {
-			if ( held[field] !== next[field] ) {
-				outputs.push( { kind: "key", code, down: next[field] } );
-			}
-		}
-		held = next;
-		return outputs;
-	}
-
-	return {
-		/*
-		================
-		owns
-		================
-		*/
-		owns( pointerId: number ): boolean {
-			return activeId === pointerId;
-		},
-		/*
-		================
-		ownsAny
-		================
-		*/
-		ownsAny(): boolean {
-			return activeId !== null;
-		},
-		/*
-		================
-		state
-		================
-		*/
-		state() {
-			return {
-				active: activeId !== null,
-				dragged,
-				origin: [ Math.round( originX ), Math.round( originY ) ] as const,
-				knob: [ Math.round( knobX ), Math.round( knobY ) ] as const,
-				vector: activeId !== null ? vector : null
-			};
-		},
-		/*
-		================
-		heldOutputs
-		================
-		*/
-		heldOutputs(): MobileJoystickKeyOutput[] {
-			const outputs: MobileJoystickKeyOutput[] = [];
-			for ( const [field, code] of ARROW_KEY_CODES ) {
-				if ( held[field] ) outputs.push( { kind: "key", code, down: true } );
-			}
-			return outputs;
-		},
-		/*
-		================
-		down
-		================
-		*/
-		down( pointerId: number, x: number, y: number ): MobileJoystickKeyOutput[] {
-			activeId = pointerId;
-			originX = x;
-			originY = y;
-			knobX = x;
-			knobY = y;
-			dragged = false;
-			vector = null;
-			return transitionOutputs( { up: false, left: false, right: false } );
-		},
-		/*
-		================
-		move
-		================
-		*/
-		move( pointerId: number, x: number, y: number ): MobileJoystickKeyOutput[] {
-			if ( activeId !== pointerId ) return [];
-			const step = mobileJoystickStep( originX, originY, x, y );
-			knobX = step.knob[0];
-			knobY = step.knob[1];
-			if ( step.dragged ) dragged = true;
-			vector = step.vector;
-			return transitionOutputs( step.arrows );
-		},
-		/*
-		================
-		up
-		================
-		*/
-		up( pointerId: number, x?: number, y?: number ): {
-			readonly outputs: readonly MobileJoystickKeyOutput[];
-			readonly tap: boolean;
-		} {
-			if ( activeId !== pointerId ) return { outputs: [], tap: false };
-			if ( x !== undefined && y !== undefined && Math.hypot( x - originX, y - originY ) > JOYSTICK_DEADZONE ) {
-				dragged = true;
-			}
-			const tap = !dragged;
-			activeId = null;
-			dragged = false;
-			vector = null;
-			return {
-				outputs: transitionOutputs( { up: false, left: false, right: false } ),
-				tap
-			};
-		},
-		/*
-		================
-		interrupt
-		================
-		*/
-		interrupt(): MobileJoystickKeyOutput[] {
-			activeId = null;
-			dragged = false;
-			vector = null;
-			return transitionOutputs( { up: false, left: false, right: false } );
-		}
-	};
 }
 
 /*

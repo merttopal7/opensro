@@ -31,6 +31,7 @@ const {
 	mobileBuffLayout,
 	mobilePartyLayout,
 	mobileJoystickHeading,
+	mobileJoystickQuads,
 	mobileJoystickStep,
 	createMobileJoystick,
 	mobileCycleTarget,
@@ -94,6 +95,7 @@ test("mobileHudLayout places pinned minimap, safe-area player offset and centere
 	assert.deepEqual( layout.minimap.toggleMap, [ 763, 47, 28, 28 ] );
 	assert.deepEqual( layout.targetBand, [ 279, 7, 381, 68 ] );
 	assert.deepEqual( mobileTargetOrigin( layout, 219 ), [ 360, 7 ] );
+	assert.deepEqual( layout.joystickOrigin, [ 139, 260 ] );
 });
 
 test("mobileBuffLayout and mobilePartyLayout reflow into the left column", () => {
@@ -416,17 +418,29 @@ test("M3: virtual joystick emits ArrowUp/ArrowLeft/ArrowRight transitions and pr
 	assert.equal( endTap.tap, true );
 	assert.deepEqual( endTap.outputs, [] );
 
-	// Touching anywhere in the left zone spawns the joystick frame at that point and keeps the frame origin fixed while dragging.
-	joy.down( 3, 180, 230 );
-	assert.deepEqual( joy.state().origin, [ 180, 230 ] );
-	assert.deepEqual( joy.state().knob, [ 180, 230 ] );
+	// Touching anywhere in the left zone keeps the joystick base anchored at the fixed HUD origin while dragging.
+	const fixedOrigin = /** @type {const} */ ([ 139, 260 ]);
+	joy.down( 3, 180, 230, fixedOrigin );
+	assert.deepEqual( joy.state().origin, [ 139, 260 ] );
+	assert.deepEqual( joy.state().knob, [ 139, 260 ] );
 	assert.equal( joy.state().vector, null );
 
-	joy.move( 3, 280, 230 );
-	assert.deepEqual( joy.state().origin, [ 180, 230 ], "joystick frame stays fixed at initial touch point" );
-	assert.deepEqual( joy.state().knob, [ 180 + JOYSTICK_BASE_RADIUS, 230 ], "knob clamps to base radius" );
+	joy.move( 3, 280, 260 );
+	assert.deepEqual( joy.state().origin, [ 139, 260 ], "joystick base stays fixed at HUD origin" );
+	assert.deepEqual(
+		joy.state().knob,
+		[ 139 + JOYSTICK_BASE_RADIUS, 260 ],
+		"knob clamps to base radius around fixed origin"
+	);
 	assert.deepEqual( joy.state().vector, [ JOYSTICK_BASE_RADIUS, 0 ] );
-	joy.up( 3, 280, 230 );
+	joy.up( 3, 280, 260 );
+
+	const radialQuads = mobileJoystickQuads( fixedOrigin, fixedOrigin, false, [ 0, 0, 852, 393 ] );
+	assert.ok( radialQuads.length > 20, "radial joystick emits circular scanline slices and directional ticks" );
+	assert.ok(
+		defined( radialQuads[0] ).rect[2] < JOYSTICK_BASE_RADIUS * 2,
+		"top radial slice is narrower than full diameter"
+	);
 });
 
 test("M3: mobileJoystickHeading maps screen-relative deflections and camera yaw to 360-degree native headings", () => {
@@ -978,7 +992,7 @@ test("M5: UI renders 2-line chat preview with unread badge and switches between 
 	assert.equal( chatBtn.label, "Chat (2 unread)" );
 	const hasJoystickBase = () =>
 		defined( fixture.scenes.at( -1 ) ).quads.some(
-			q => q.rect[2] === JOYSTICK_BASE_RADIUS * 2 && q.rect[3] === JOYSTICK_BASE_RADIUS * 2
+			q => q.rect[1] === 259 && q.rect[2] === (JOYSTICK_BASE_RADIUS - 1) * 2 && q.rect[3] === 2
 		);
 	assert.equal( hasJoystickBase(), true, "joystick is visible while Chat and Log are closed" );
 
