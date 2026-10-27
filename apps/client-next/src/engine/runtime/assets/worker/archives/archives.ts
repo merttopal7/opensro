@@ -59,6 +59,10 @@ const GIB = 1 << 30;
 // reload fails with NoModificationAllowedError). Opening waits this long, in
 // LOCK_RETRY_MS steps, before it calls the file taken.
 const LOCK_WAIT_MS = 15000;
+// The names a taken file's open fails with: Chromium's, and WebKit's
+// (iOS Safari 18 refuses a second access handle with InvalidStateError,
+// seen on an iPhone 13 relaunching the installed PWA, 2026-10-27).
+const LOCKED_ERRORS = new Set( [ "NoModificationAllowedError", "InvalidStateError" ] );
 const LOCK_RETRY_MS = 250;
 const MAX_READERS = 4;
 
@@ -327,7 +331,7 @@ export function createLocalArchives( io: ArchiveIo, origin: string, passphrase =
 				handles.push( handle );
 				return handle;
 			} catch ( error ) {
-				const locked = error instanceof Error && error.name === "NoModificationAllowedError";
+				const locked = error instanceof Error && LOCKED_ERRORS.has( error.name );
 				if ( !locked || waited >= LOCK_WAIT_MS ) throw error;
 				await io.wait( LOCK_RETRY_MS, signal );
 			}

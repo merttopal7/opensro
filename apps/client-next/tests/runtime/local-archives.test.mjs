@@ -314,6 +314,16 @@ test("a reloaded page waits for the old page's worker to let go of the files", a
 	archives.dispose();
 });
 
+test("a relaunched iOS PWA waits for WebKit's lock the same way", async () => {
+	// iOS Safari refuses an open on a file another worker holds with
+	// InvalidStateError, not Chromium's NoModificationAllowedError.
+	const storage = memoryStorage( { lockedOpens: 3, lockError: "InvalidStateError" } ), wait = countingWait();
+	const { archives } = await prepared( storage, updatesServer( release( BASE ) ), wait );
+	assert.equal( wait.waits, 3 );
+	assert.equal( await text( archives, MANIFEST_URL ), MANIFEST_TEXT );
+	archives.dispose();
+});
+
 test("a file that stays taken fails after the bounded wait", async () => {
 	const storage = memoryStorage( { lockedOpens: Infinity } ), wait = countingWait();
 	await assert.rejects( prepared( storage, updatesServer( release( BASE ) ), wait ), {

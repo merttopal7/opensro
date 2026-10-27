@@ -96,13 +96,20 @@ full origin's does, and it may be raised later (room freed). reported, when
 given, is the quota estimate() claims instead (Brave reports a made-up
 one). files maps every file's path ("dir/name") to its bytes. The first
 lockedOpens createSyncAccessHandle calls fail as a file another worker
-still holds does (NoModificationAllowedError). readOnly false is a browser
-without the read-only mode: such an open fails the same way, as the second
-read-write open of a file would.
+still holds does (lockError: Chromium's NoModificationAllowedError, or
+WebKit's InvalidStateError). readOnly false is a browser without the
+read-only mode: such an open fails the same way, as the second read-write
+open of a file would.
 ================
 */
 export function memoryStorage(
-	{ quota = 1 << 30, reported = /** @type {number | undefined} */ (undefined), lockedOpens = 0, readOnly = true } = {}
+	{
+		quota = 1 << 30,
+		reported = /** @type {number | undefined} */ (undefined),
+		lockedOpens = 0,
+		readOnly = true,
+		lockError = "NoModificationAllowedError"
+	} = {}
 ) {
 	let locked = lockedOpens;
 	/** @type {Map<string, ReturnType<typeof memoryFile>>} */
@@ -144,7 +151,7 @@ export function memoryStorage(
 						const error = new Error(
 							"Access Handles cannot be created if there is another open Access Handle"
 						);
-						error.name = "NoModificationAllowedError";
+						error.name = lockError;
 						throw error;
 					}
 					return memoryHandle( files.get( key ), grow );
