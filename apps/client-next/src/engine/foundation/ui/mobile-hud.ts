@@ -210,6 +210,26 @@ export function mobileHudActive(
 
 /*
 ================
+mobilePortraitBlocked
+
+Port-only, not native. True when a touch viewport smaller than the desktop
+HUD is held in portrait while the Experimental mobileHud preference is on,
+so the platform prompts the player to rotate the device to landscape.
+================
+*/
+export function mobilePortraitBlocked(
+	width: number,
+	height: number,
+	options?: { readonly enabled?: boolean; readonly mobileHud?: boolean; readonly touch?: boolean; }
+): boolean {
+	const enabled = options?.enabled ?? options?.mobileHud ?? true;
+	if ( !enabled || !options?.touch ) return false;
+	if ( width >= DESKTOP_WIDTH && height >= DESKTOP_HEIGHT ) return false;
+	return width > 0 && height > width;
+}
+
+/*
+================
 mobileHudLayout
 
 Pure geometry for every region of the landscape mobile HUD.

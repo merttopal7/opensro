@@ -25,6 +25,7 @@ const {
 	JOYSTICK_BASE_RADIUS,
 	normalizeSafeArea,
 	mobileHudActive,
+	mobilePortraitBlocked,
 	mobileHudLayout,
 	mobileTargetOrigin,
 	mobileBuffLayout,
@@ -65,6 +66,13 @@ test("mobileHudActive requires landscape touch viewport smaller than 800x600 and
 	// Disabled at desktop resolution (>= 800x600).
 	assert.equal( mobileHudActive( 800, 600, { touch: true, enabled: true } ), false );
 	assert.equal( mobileHudActive( 1280, 720, { touch: true, enabled: true } ), false );
+
+	// Portrait touch phone (393x852 or 375x667) is blocked by the rotate-to-landscape prompt while mobileHud is enabled.
+	assert.equal( mobilePortraitBlocked( 393, 852, { touch: true } ), true );
+	assert.equal( mobilePortraitBlocked( 375, 667, { touch: true, enabled: true } ), true );
+	assert.equal( mobilePortraitBlocked( 852, 393, { touch: true, enabled: true } ), false );
+	assert.equal( mobilePortraitBlocked( 393, 852, { touch: true, enabled: false } ), false );
+	assert.equal( mobilePortraitBlocked( 393, 852, { touch: false, enabled: true } ), false );
 });
 
 test("mobileHudLayout places pinned minimap, safe-area player offset and centered target band", () => {

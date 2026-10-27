@@ -32,7 +32,12 @@ import { initialAudioOptions, audioOptions, type AudioOptions } from "@/engine/f
 import { cameraWheelDelta } from "@/engine/foundation/rendering/camera-wheel";
 import { createTouchCamera, type TouchCameraOutput } from "@/engine/foundation/rendering/touch-camera";
 import { containsPoint } from "@/engine/foundation/ui/hit-test";
-import { createMobileJoystick, mobileHudActive, mobileHudLayout } from "@/engine/foundation/ui/mobile-hud";
+import {
+	createMobileJoystick,
+	mobileHudActive,
+	mobileHudLayout,
+	mobilePortraitBlocked
+} from "@/engine/foundation/ui/mobile-hud";
 import {
 	EXPERIMENTAL_STORAGE_KEY,
 	PREVIOUS_EXPERIMENTAL_STORAGE_KEY,
@@ -249,6 +254,26 @@ export function createPlatform(
 		lastSafeRight = -1,
 		lastSafeBottom = -1,
 		lastSafeLeft = -1;
+	const rotateNotice = document.getElementById( "rotate-notice" );
+	const installGate = document.getElementById( "install-gate" );
+	/*
+	================
+	syncOrientation
+
+	Shows #rotate-notice when a touch device with Mobile HUD enabled is held
+	in portrait outside the install gate.
+	================
+	*/
+	function syncOrientation( touch: boolean ): void {
+		if ( !rotateNotice ) return;
+		const gateVisible = installGate !== null && !installGate.hidden;
+		const portrait = !gateVisible &&
+			mobilePortraitBlocked( canvasBox.width, canvasBox.height, {
+				enabled: experimental.mobileHud,
+				touch
+			} );
+		rotateNotice.hidden = !portrait;
+	}
 	/*
 	================
 	publishViewportEnvironment
@@ -268,6 +293,7 @@ export function createPlatform(
 		const touch = (typeof navigator !== "undefined" && (navigator.maxTouchPoints ?? 0) > 0) ||
 			coarse ||
 			"ontouchstart" in window;
+		syncOrientation( touch );
 		if (
 			touch === lastTouch &&
 			top === lastSafeTop &&
@@ -534,7 +560,19 @@ export function createPlatform(
 		onUi( { kind: "experimental-preferences", value: experimental } );
 		publishViewportEnvironment();
 	}
-	window.addEventListener( "pointerdown", onGesture, { signal: lifetime.signal, capture: true } );
+	window.addEventListener(
+		"pointerdown",
+		() => {
+			onGesture();
+			if ( lastTouch && experimental.mobileHud && typeof screen !== "undefined" ) {
+				const orientation = (screen as Screen & {
+					orientation?: { lock?: ( mode: string ) => Promise<void>; };
+				}).orientation;
+				orientation?.lock?.( "landscape" )?.catch( () => {} );
+			}
+		},
+		{ signal: lifetime.signal, capture: true }
+	);
 	window.addEventListener( "pagehide", onClose, { signal: lifetime.signal } );
 	const mobileJoystick = createMobileJoystick();
 	const joystickHidden = () =>
@@ -694,6 +732,7 @@ export function createPlatform(
 			const size = canvasSize(), scale = Math.max( 0.0001, displayScale() );
 			const uiW = Math.max( 1, Math.round( size.width / scale ) );
 			const uiH = Math.max( 1, Math.round( size.height / scale ) );
+			if ( mobilePortraitBlocked( uiW, uiH, { enabled: experimental.mobileHud, touch: true } ) ) return;
 			if (
 				!mobileJoystick.ownsAny() &&
 				!joystickHidden() &&
