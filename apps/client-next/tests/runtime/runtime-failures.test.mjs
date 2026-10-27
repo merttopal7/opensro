@@ -675,3 +675,146 @@ dispose
 		runtime.dispose();
 	}
 });
+
+test("touch world clicks only select targets and never start an attack", async t => {
+	const keys = [
+		"__runtimeOwners",
+		"__runtimeCalls",
+		"requestAnimationFrame",
+		"cancelAnimationFrame",
+		"location",
+		"document"
+	];
+	const previous = new Map( keys.map( key => [ key, Object.getOwnPropertyDescriptor( globalThis, key ) ] ) );
+	t.after( () => {
+		for ( const [key, value] of previous ) {
+			if ( value ) Object.defineProperty( globalThis, key, value );
+			else delete globalThis[key];
+		}
+	} );
+	const entities = new Map( [
+		[ 1, { gid: 1, kind: "local-player", regionId: 0x61a8, x: 1000, y: 0, z: 1000 } ],
+		[ 50, { gid: 50, kind: "monster", regionId: 0x61a8, x: 1020, y: 0, z: 1000 } ],
+		[ 51, { gid: 51, kind: "player", regionId: 0x61a8, x: 1020, y: 0, z: 1000 } ],
+		[ 52, { gid: 52, kind: "cos", regionId: 0x61a8, x: 1020, y: 0, z: 1000 } ]
+	] );
+	let picked = 50, callback;
+	const sessionCommands = [];
+	const owners = frameOwners( "characters", [], [], [] );
+	owners.ui.event = () => {};
+	owners.characters.step = () => {};
+	owners.characters.cameraTarget = () => null;
+	owners.characters.drawnPose = () => undefined;
+	owners.characters.ownMover = () => {};
+	owners.characters.ready = () => false;
+	owners.characters.error = () => null;
+	owners.characters.damageText = () => [];
+	owners.characters.takeCameraScripts = () => [];
+	owners.presentation.gameplay = () => ({ localGid: 1, targetPending: false });
+	owners.presentation.read = gid => entities.get( gid );
+	owners.frontend.snapshot = () => ({ phase: "world" });
+	owners.frontend.isRace = () => false;
+	owners.frontend.isDock = () => false;
+	owners.frontend.pointer = () => {};
+	owners.frontend.select = () => {};
+	owners.navigation.view = () => null;
+	owners.simulation.session = command => {
+		sessionCommands.push( command );
+		return 1;
+	};
+	owners.simulation.pollSession = () => ({ phase: "world", characters: [] });
+	owners.renderer.experimentalVideo = () => {};
+	owners.renderer.characterStats = () => ({});
+	owners.renderer.worldStats = () => ({ visibleGroups: 0, pendingGroups: 0, pendingTextures: 0 });
+	owners.renderer.phase = () => "running";
+	owners.renderer.error = () => null;
+	owners.renderer.gpuTiming = () => null;
+	owners.renderer.frame = () => undefined;
+	owners.renderer.audioListener = () => null;
+	owners.renderer.setDamageText = () => {};
+	owners.renderer.setTeleportGates = () => {};
+	owners.renderer.pickEntity = () => picked;
+	owners.renderer.pickGround = () => null;
+	owners.world.ready = () => false;
+	owners.world.error = () => null;
+	owners.world.reconnecting = () => false;
+	owners.world.loadingRegion = () => null;
+	owners.world.progress = () => 0;
+	owners.world.retryTransient = () => {};
+	owners.navigation.phase = () => "pending";
+	owners.navigation.error = () => null;
+	owners.navigation.reconnecting = () => false;
+	owners.navigation.retryTransient = () => {};
+	owners.audio.music = () => {};
+	owners.audio.prepareUi = () => {};
+	owners.audio.prepareCombat = () => {};
+	owners.audio.ready = () => false;
+	owners.audio.error = () => null;
+	owners.audio.musicStatus = () => "idle";
+	owners.ui.cursor = () => null;
+	owners.ui.stats = () => ({ pending: 0, failed: [] });
+	owners.ui.resourceError = () => null;
+	owners.ui.skinPreview = () => null;
+	owners.platform.readUiViewport = () => ({ width: 852, height: 393 });
+	owners.platform.readViewport = () => ({ width: 852, height: 393 });
+	owners.platform.presentUi = () => {};
+	owners.platform.presentLoading = () => {};
+	owners.platform.presentWorldCursor = () => {};
+	owners.platform.presentTelemetry = () => {};
+	owners.platform.setKeepAwake = () => {};
+	owners.platform.diagnosticsActive = () => false;
+	owners.presentation.travel = () => null;
+	owners.presentation.count = () => 0;
+	owners["build-info"].readout = () => "";
+	owners.input.dropNamesHeld = () => false;
+	owners.input.blindHeld = () => false;
+	owners.input.altHeld = () => false;
+	owners.assets.progress = () => 0;
+	owners["bug-report"].movement = () => {};
+	globalThis.__runtimeOwners = owners;
+	globalThis.__runtimeCalls = [];
+	globalThis.location = { search: "", origin: "http://localhost" };
+	globalThis.document = { visibilityState: "visible" };
+	globalThis.requestAnimationFrame = fn => {
+		callback = fn;
+		return 1;
+	};
+	globalThis.cancelAnimationFrame = () => {};
+	const runtime = startRuntime( {}, {} );
+	try {
+		const calls = globalThis.__runtimeCalls ?? [];
+		const platformArgs = defined( calls.find( call => call.owner === "platform" ) ).args;
+		const worldClick = defined( platformArgs[7] );
+		defined( callback )( performance.now() );
+		for ( let i = 0; i < 32; i++ ) await Promise.resolve();
+
+		// Tapping a monster twice on touch only selects it both times.
+		picked = 50;
+		worldClick( 0.5, 0.5, { touch: true } );
+		worldClick( 0.5, 0.5, { touch: true } );
+		assert.deepEqual(
+			sessionCommands.map( c => c.command ),
+			[ { kind: "select", gid: 50 }, { kind: "select", gid: 50 } ]
+		);
+
+		// Tapping another player on touch only selects and never dispatches player-interact.
+		sessionCommands.length = 0;
+		picked = 51;
+		worldClick( 0.5, 0.5, { touch: true, alt: true } );
+		assert.deepEqual(
+			sessionCommands.map( c => c.command ),
+			[ { kind: "select", gid: 51 } ]
+		);
+
+		// Tapping a COS on touch only selects and never dispatches cos-interact.
+		sessionCommands.length = 0;
+		picked = 52;
+		worldClick( 0.5, 0.5, { touch: true, double: true, alt: true } );
+		assert.deepEqual(
+			sessionCommands.map( c => c.command ),
+			[ { kind: "select", gid: 52 } ]
+		);
+	} finally {
+		runtime.dispose();
+	}
+});

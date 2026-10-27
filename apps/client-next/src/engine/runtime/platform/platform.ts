@@ -551,24 +551,30 @@ export function createPlatform(
 	canvas.style.touchAction = "none";
 	const touchCamera = createTouchCamera();
 	const uiTouches = new Set<number>();
+	let lastTouchAt = -Infinity;
 	const touchInput = ( outputs: readonly TouchCameraOutput[] ) => {
 		for ( const output of outputs ) onInput( { ...output, timeMs: timeMs() } );
 	};
 	window.addEventListener( "pointerdown", event => {
 		if ( event.pointerType !== "touch" ) return;
+		lastTouchAt = timeMs();
 		if ( event.target !== canvas || blocksUi( ...uiPoint( event ) ) ) {
 			uiTouches.add( event.pointerId );
 			touchInput( touchCamera.interrupt() );
 		}
 	}, { capture: true, signal: lifetime.signal } );
 	for ( const name of [ "pointerup", "pointercancel" ] as const ) {
-		window.addEventListener( name, event => uiTouches.delete( event.pointerId ), {
+		window.addEventListener( name, event => {
+			if ( event.pointerType === "touch" ) lastTouchAt = timeMs();
+			uiTouches.delete( event.pointerId );
+		}, {
 			capture: true,
 			signal: lifetime.signal
 		} );
 	}
 	const pointer = ( event: PointerEvent ) => {
 		if ( event.pointerType === "touch" ) {
+			lastTouchAt = timeMs();
 			if ( mobileJoystick.owns( event.pointerId ) ) {
 				const [x, y] = uiPoint( event );
 				if ( event.type === "pointerup" ) {
@@ -578,7 +584,8 @@ export function createPlatform(
 					if ( tap && !blocksUi( x, y ) && box.width > 0 && box.height > 0 ) {
 						onWorldClick( (event.clientX - box.left) / box.width, (event.clientY - box.top) / box.height, {
 							shift: event.shiftKey,
-							alt: event.altKey
+							alt: event.altKey,
+							touch: true
 						} );
 					}
 				} else {
@@ -596,7 +603,8 @@ export function createPlatform(
 				if ( tap && !blocksUi( x, y ) && box.width > 0 && box.height > 0 ) {
 					onWorldClick( (event.clientX - box.left) / box.width, (event.clientY - box.top) / box.height, {
 						shift: event.shiftKey,
-						alt: event.altKey
+						alt: event.altKey,
+						touch: true
 					} );
 				}
 			} else touchInput( touchCamera.move( event.pointerId, x, y, cameraDragButtons( bindings.mouseMode ) ) );
@@ -675,11 +683,18 @@ export function createPlatform(
 	// an already issued command; button-up does not issue another one.
 	// Pointer Events emit pointerdown only for the first held mouse button.
 	// mousedown also reports LMB pressed during an existing RMB camera drag.
-	canvas.addEventListener( "mousedown", event => {
-		if (
+	// WebKit/iOS Safari lacks MouseEvent.sourceCapabilities, so recent touch
+	// activity also suppresses synthesized compatibility mouse events.
+	const isSynthesizedTouchMouse = ( event: MouseEvent ): boolean =>
+		Boolean(
 			(event as MouseEvent & { sourceCapabilities?: { firesTouchEvents: boolean; }; }).sourceCapabilities
 				?.firesTouchEvents
-		) return;
+		) ||
+		uiTouches.size > 0 ||
+		mobileJoystick.ownsAny() ||
+		timeMs() - lastTouchAt < 1000;
+	canvas.addEventListener( "mousedown", event => {
+		if ( isSynthesizedTouchMouse( event ) ) return;
 		const r = canvas.getBoundingClientRect(), x = event.clientX - r.left, y = event.clientY - r.top;
 		const blocked = blocksUi( ...uiPoint( event ) );
 		// 67CCA0: the mode's shortcut button uses quickslot 0 (CIFUnderBar
@@ -695,10 +710,7 @@ export function createPlatform(
 		}
 	}, { signal: lifetime.signal } );
 	canvas.addEventListener( "dblclick", event => {
-		if (
-			(event as MouseEvent & { sourceCapabilities?: { firesTouchEvents: boolean; }; }).sourceCapabilities
-				?.firesTouchEvents
-		) return;
+		if ( isSynthesizedTouchMouse( event ) ) return;
 		const r = canvas.getBoundingClientRect(), x = event.clientX - r.left, y = event.clientY - r.top;
 		if ( event.button === 0 && !blocksUi( ...uiPoint( event ) ) && r.width > 0 && r.height > 0 ) {
 			onWorldClick( x / r.width, y / r.height, { double: true, shift: event.shiftKey, alt: event.altKey } );

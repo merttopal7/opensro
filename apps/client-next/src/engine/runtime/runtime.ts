@@ -560,7 +560,7 @@ export function startRuntime(
 		================
 		*/
 		function worldClick( x: number, y: number, click: WorldClickInput = {} ) {
-			const doubleClick = click.double ?? false, shift = click.shift ?? false;
+			const doubleClick = click.double ?? false, shift = click.shift ?? false, touch = click.touch === true;
 			if ( doubleClick && frontend.snapshot().phase !== "world" ) return;
 			if ( frontend.isRace() ) {
 				const race = renderer.pickFrontendRace( x, y );
@@ -595,7 +595,10 @@ export function startRuntime(
 				attackable = entity?.kind === "monster" && entity.appearanceState?.[0] !== 2,
 				now = performance.now();
 			// A browser dblclick after a promoted pair would attack a second time.
-			const attack = doubleClick ?
+			// Touch taps only select targets; mobile attack uses its own button.
+			const attack = touch ?
+				false :
+				doubleClick ?
 				worldDoubleClick.double( attackable ? entity!.gid : null, now ) :
 				worldDoubleClick.press( attackable ? entity!.gid : null, now );
 			if ( entity ) {
@@ -606,7 +609,7 @@ export function startRuntime(
 				// 698740 -> 693E50: a press on another player may attack it; the
 				// worker decides against the selection this press is about to
 				// replace, so this precedes the select (player-attack.ts).
-				if ( entity.kind === "player" && !doubleClick ) {
+				if ( entity.kind === "player" && !doubleClick && !touch ) {
 					simulation.session( {
 						kind: "gameplay",
 						command: { kind: "player-interact", gid: entity.gid, alt: click.alt ?? false }
@@ -628,20 +631,20 @@ export function startRuntime(
 				}
 				// 67CCA0 -> 6935F0: a double click on another player's pet may
 				// attack it; the worker applies the pet's admission (player-attack.ts).
-				if ( doubleClick && entity.kind === "cos" && entity.appearanceState?.[0] !== 2 ) {
+				if ( doubleClick && !touch && entity.kind === "cos" && entity.appearanceState?.[0] !== 2 ) {
 					simulation.session( {
 						kind: "gameplay",
 						command: { kind: "cos-interact", gid: entity.gid, alt: click.alt ?? false }
 					} );
 				}
-				if ( doubleClick || attack ) {
+				if ( !touch && (doubleClick || attack) ) {
 					if ( attackable && attack ) {
 						simulation.session( {
 							kind: "gameplay",
 							command: { kind: local?.mountedOn ? "cos-attack" : "attack", gid: entity.gid }
 						} );
 					}
-				} else if ( entity.kind === "ground-item" ) {
+				} else if ( !doubleClick && entity.kind === "ground-item" ) {
 					const seq = simulation.session( {
 						kind: "gameplay",
 						command: { kind: "pickup", gid: entity.gid }

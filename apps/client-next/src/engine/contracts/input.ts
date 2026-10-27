@@ -80,11 +80,13 @@ export interface CameraInput {
 WorldClickInput
 
 A left press on the world: double is the browser's dblclick, shift and alt
-the modifiers held (698924 keeps Shift, 693E50 reads Alt).
+the modifiers held (698924 keeps Shift, 693E50 reads Alt), and touch marks a
+completed mobile tap (which selects targets without initiating an attack).
 ================
 */
 export interface WorldClickInput {
 	readonly double?: boolean;
 	readonly shift?: boolean;
 	readonly alt?: boolean;
+	readonly touch?: boolean;
 }
