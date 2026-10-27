@@ -1,5 +1,5 @@
 import type { PackDescriptor, PackEntry, PackDownload } from "./internal/pack-contract";
-import { currentArchiveDelivery } from "@/engine/foundation/assets/archive-delivery";
+import { currentArchiveDelivery, desktopReadBudgets } from "@/engine/foundation/assets/archive-delivery";
 // Transport pages have no asset names or scene lists. The admitted manifest
 // supplies the identity and bounds; consumers still verify each member digest.
 // Owner: one pack reader. Inputs: origin, pack digest, byte offset and length.
@@ -13,11 +13,12 @@ import { currentArchiveDelivery } from "@/engine/foundation/assets/archive-deliv
 const BLOCK_CACHE_BYTES = 16 << 20;
 
 export function createPackBlocks( download: PackDownload, signal: AbortSignal ) {
-	// Local archives (archive-delivery.ts) afford the desktop's larger cache.
-	const localArchives = currentArchiveDelivery() !== "network";
+	// The desktop shell affords a larger cache; the installed PWA runs on
+	// phones and keeps the web client's (archive-delivery.ts).
+	const desktop = desktopReadBudgets( currentArchiveDelivery() );
 	const blockBytes = 1 << 20,
-		budget = localArchives ? 128 << 20 : BLOCK_CACHE_BYTES,
-		capacity = localArchives ? 16 : 4;
+		budget = desktop ? 128 << 20 : BLOCK_CACHE_BYTES,
+		capacity = desktop ? 16 : 4;
 	const cache = new Map<string, Uint8Array<ArrayBuffer>>(),
 		pending = new Map<string, Promise<Uint8Array<ArrayBuffer>>>();
 	const plans = new Map<string, Map<string, { start: number; end: number; }>>();

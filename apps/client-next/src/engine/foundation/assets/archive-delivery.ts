@@ -61,6 +61,21 @@ export function currentArchiveDelivery(): ArchiveDelivery {
 
 /*
 ================
+desktopReadBudgets
+
+True for the delivery that gets the desktop's read budgets: twelve asset
+requests in flight, a 256 MiB resident pack cache and a 128 MiB block
+cache. Only the shell: the installed PWA reads local archives too, but it
+runs on phones, and iOS killed an iPhone 13's (4 GB) page at character
+start under these budgets while the web client's play there (2026-10-27).
+================
+*/
+export function desktopReadBudgets( delivery: ArchiveDelivery ): boolean {
+	return delivery === "shell";
+}
+
+/*
+================
 updatesBaseUrl
 
 Where patches.json and the archives are published: SRO_UPDATES_URL from the

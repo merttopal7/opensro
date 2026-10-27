@@ -40,7 +40,7 @@ import { createBackgroundInstaller } from "./install";
 import { createLocalArchives, readerCount } from "./archives/archives";
 import { pageEntryBundle } from "@/engine/foundation/assets/page-entry";
 import { readBytes } from "@/engine/foundation/assets/read-bytes";
-import { currentArchiveDelivery } from "@/engine/foundation/assets/archive-delivery";
+import { currentArchiveDelivery, desktopReadBudgets } from "@/engine/foundation/assets/archive-delivery";
 import { assetFailure, transientAssetFailure } from "@/engine/foundation/assets/asset-recovery";
 import type { AssetRequest, AssetWorkerMessage } from "@/engine/contracts/assets";
 import { rgbaPickAlpha, bitmapPickAlpha } from "@/engine/foundation/rendering/pick-alpha";
@@ -68,7 +68,7 @@ const RELEASED_WORLD_BYTES = new Uint8Array( 0 );
 // downloads and reads them itself, from OPFS (archive-delivery.ts).
 const DELIVERY = currentArchiveDelivery();
 const LOCAL_ARCHIVES = DELIVERY !== "network";
-const REQUEST_CAPACITY = LOCAL_ARCHIVES ? 12 : 4;
+const REQUEST_CAPACITY = desktopReadBudgets( DELIVERY ) ? 12 : 4;
 /*
 ================
 listedFileGone

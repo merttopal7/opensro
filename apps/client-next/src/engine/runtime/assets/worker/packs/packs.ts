@@ -21,7 +21,7 @@ import { createPackIndex, PACK_MAGIC } from "./index/index";
 import type { PackDescriptor, PackEntry, PackDownload } from "./internal/pack-contract";
 import { gunzipBytes } from "@/engine/foundation/assets/read-bytes";
 import { createPackBlocks } from "./blocks";
-import { currentArchiveDelivery } from "@/engine/foundation/assets/archive-delivery";
+import { currentArchiveDelivery, desktopReadBudgets } from "@/engine/foundation/assets/archive-delivery";
 import { textureVariantPath, type TextureVariant } from "@/engine/foundation/assets/texture-variants";
 export type { PackRange } from "./internal/pack-contract";
 
@@ -97,7 +97,7 @@ export function createPacks(
 	// The desktop shell and the installed PWA read local, already verified
 	// archives: no Cache Storage, no per-member SHA-256 (archive-delivery.ts).
 	const localArchives = currentArchiveDelivery() !== "network";
-	const residentBudget = localArchives ? 256 << 20 : RESIDENT_PACK_BYTES;
+	const residentBudget = desktopReadBudgets( currentArchiveDelivery() ) ? 256 << 20 : RESIDENT_PACK_BYTES;
 	const blocks = createPackBlocks( download, lifetime.signal );
 	type Index = ReturnType<typeof parser.manifest>;
 	type Loaded = { bytes: Uint8Array<ArrayBuffer>; start: number; };

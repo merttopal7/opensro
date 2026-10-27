@@ -25,11 +25,11 @@ import type { AssetOwner, AssetRequest, AssetResult, AssetWorkerMessage } from "
 import type { Degradation } from "@/engine/contracts/network";
 import { storedExperimentalOptions } from "@/engine/foundation/ui/experimental-options";
 import { chooseTextureVariant } from "@/engine/foundation/assets/texture-variants";
-import { currentArchiveDelivery } from "@/engine/foundation/assets/archive-delivery";
-// The desktop shell and the installed PWA read local archives (archive-delivery.ts).
+import { currentArchiveDelivery, desktopReadBudgets } from "@/engine/foundation/assets/archive-delivery";
+// Where game files come from; only the shell gets the desktop's request
+// capacity (archive-delivery.ts).
 const DELIVERY = currentArchiveDelivery();
-const LOCAL_ARCHIVES = DELIVERY !== "network";
-const REQUEST_CAPACITY = LOCAL_ARCHIVES ? 12 : 4;
+const REQUEST_CAPACITY = desktopReadBudgets( DELIVERY ) ? 12 : 4;
 // A load's watchdog is a stall window, not a total budget: the worker notes
 // the bytes it reads per job (job-progress), and a job that keeps moving
 // bytes may run past any fixed total on a slow link (a trickling route to
