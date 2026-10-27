@@ -149,12 +149,13 @@ readers is { count, spawn } for reader workers; none by default.
  * @param {{ request: (url: string) => Promise<Response>, requests: string[] }} server
  * @param {() => Promise<void>} [wait]
  * @param {{ count: number, spawn?: () => any }} [readers]
+ * @param {boolean} [parallelReads]
  */
-async function prepared( storage, server, wait = countingWait(), readers = { count: 0 } ) {
+async function prepared( storage, server, wait = countingWait(), readers = { count: 0 }, parallelReads = true ) {
 	const io = { request: server.request, storage, wait, readers: readers.count, spawnReader: readers.spawn };
 	const archives = createLocalArchives( io, ORIGIN, PASSPHRASE );
 	const steps = [];
-	for await ( const step of archives.prepare( new AbortController().signal ) ) steps.push( step );
+	for await ( const step of archives.prepare( new AbortController().signal, parallelReads ) ) steps.push( step );
 	return { archives, steps };
 }
 
@@ -514,4 +515,14 @@ test("a read that throws in the reader is answered as failed", async () => {
 		start: 0
 	} );
 	assert.deepEqual( replies[1], { kind: "read-failed", id: 7, error: "RangeError: Out of memory" } );
+});
+
+test("with parallel reads off, no reader starts and the asset worker reads alone", async () => {
+	// The Experimental row's default (owner 2026-10-27).
+	const storage = memoryStorage(), readers = inProcessReaders( storage, 4 );
+	const { archives } = await prepared( storage, updatesServer( release( BASE ) ), countingWait(), readers, false );
+	assert.equal( readers.ports.length, 0 );
+	assert.equal( await text( archives, MANIFEST_URL ), MANIFEST_TEXT );
+	assert.deepEqual( await archives.read( MAP_URL, 1 << 20 ), PATTERN );
+	archives.dispose();
 });

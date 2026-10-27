@@ -346,15 +346,17 @@ export function createAssets(): AssetOwner {
 	// starts before the platform; native texture reads wait for the answer,
 	// so with the switch off it is given at once, else when the device knows
 	// its features (textureFeatures).
-	let compressedTextures = false, variantSent = false;
+	let compressedTextures = false, parallelReads = false, variantSent = false;
 	try {
-		compressedTextures = storedExperimentalOptions( globalThis.localStorage ).options.compressedTextures;
+		const stored = storedExperimentalOptions( globalThis.localStorage ).options;
+		compressedTextures = stored.compressedTextures;
+		parallelReads = stored.parallelArchiveReads;
 	} catch {}
 	if ( !compressedTextures ) {
 		send( { kind: "texture-variant", variant: null } );
 		variantSent = true;
 	}
-	if ( !archivesReady ) send( { kind: "prepare-archives" } );
+	if ( !archivesReady ) send( { kind: "prepare-archives", parallelReads } );
 	return {
 		/*
 		================

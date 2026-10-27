@@ -123,12 +123,6 @@ export const EXPERIMENTAL_TABS: readonly {
 				description: "Lighting follows the time of day."
 			},
 			{
-				key: "compressedTextures",
-				id: "experimental-compressed-textures",
-				label: "Compressed textures",
-				description: "Phones and tablets: less memory. After reload."
-			},
-			{
 				key: "sharedActorRoom",
 				id: "experimental-shared-actor-room",
 				label: "Effects in crowds",
@@ -379,6 +373,23 @@ export const EXPERIMENTAL_TABS: readonly {
 			id: "experimental-mobile-hud",
 			label: "Mobile HUD",
 			description: "On phones, keep the minimap open and free the view."
+		} ]
+	},
+	{
+		// Memory against loading speed on phones and the installed app; both
+		// rows apply after a reload. Last, so the other tabs keep their indices.
+		title: "Device",
+		section: "Memory and loading",
+		rows: [ {
+			key: "compressedTextures",
+			id: "experimental-compressed-textures",
+			label: "Compressed textures",
+			description: "Phones and tablets: less memory. After reload."
+		}, {
+			key: "parallelArchiveReads",
+			id: "experimental-parallel-archive-reads",
+			label: "Parallel file reading",
+			description: "Installed app: faster loading, more memory. After reload."
 		} ]
 	}
 ];

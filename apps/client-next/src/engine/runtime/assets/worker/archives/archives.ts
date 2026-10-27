@@ -501,9 +501,12 @@ export function createLocalArchives( io: ArchiveIo, origin: string, passphrase =
 	again from last_version, the bases are downloaded instead, and no patch
 	is needed. Progress records stay open until the end, so a base can
 	still be downloaded after that decision.
+
+	parallelReads starts the reader workers once the archives are open
+	(startReaders); without it this worker reads them alone.
 	================
 	*/
-	async function* prepare( signal: AbortSignal ): AsyncGenerator<PrepareProgress, void> {
+	async function* prepare( signal: AbortSignal, parallelReads = true ): AsyncGenerator<PrepareProgress, void> {
 		const base = updatesBaseUrl( origin );
 		const dir = await (await io.storage.getDirectory()).getDirectoryHandle( DIRECTORY, { create: true } );
 		const { text, unreachable } = await loadManifest( dir, base, signal );
@@ -580,7 +583,7 @@ export function createLocalArchives( io: ArchiveIo, origin: string, passphrase =
 		for ( const f of [ ...bases, ...wanted ] ) close( f.progress );
 		// The manifest a later start falls back to when /updates/ is out of reach.
 		if ( !unreachable ) await saveManifest( dir, text, signal );
-		await startReaders( dir, [ ...mounted, ...patchMounts ], signal );
+		if ( parallelReads ) await startReaders( dir, [ ...mounted, ...patchMounts ], signal );
 		ready = !disposed;
 	}
 

@@ -106,7 +106,9 @@ export type AssetRequest = {
 	// Port-only: the installed PWA downloads (or resumes) and opens its .temir
 	// archives before any load is sent (docs/PWA-OPFS-MIGRATION.md A3b).
 	// Sent once, first; answered by archives-ready or archives-failed.
+	// parallelReads is the Experimental "Parallel file reading" row.
 	kind: "prepare-archives";
+	parallelReads: boolean;
 };
 /*
 ================

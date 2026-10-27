@@ -58,6 +58,8 @@ const OFF = Object.freeze( {
 	enchantSparks: true,
 	// On by default (owner 2026-10-14); it changes only devices without BC.
 	compressedTextures: true,
+	// Off by default (owner 2026-10-27): the PWA reads its archives on one worker.
+	parallelArchiveReads: false,
 	// On by default (owner 2026-10-14): near effects outrank far characters.
 	sharedActorRoom: true,
 	// On by default (owner 2026-10-25): the own walk is stepped on the main thread.
@@ -323,7 +325,7 @@ Tabs
 test("the window's tabs cover every preference once and Open returns to Image", () => {
 	assert.deepEqual(
 		EXPERIMENTAL_TABS.map( tab => tab.title ),
-		[ "Image", "World", "Lighting", "Game", "Notices", "Other", "Pets", "Pickup" ]
+		[ "Image", "World", "Lighting", "Game", "Notices", "Other", "Pets", "Pickup", "Device" ]
 	);
 	// Lighting keeps the direct-light stages; render scale joins Image without
 	// changing the indices used to reopen the existing tabs.
@@ -643,6 +645,13 @@ test("compressed textures are on unless explicitly false, and the stored reader 
 	assert.equal( storedExperimentalOptions( storage ).options.compressedTextures, false );
 	assert.equal( storedExperimentalOptions( { getItem: () => null } ).options.compressedTextures, true );
 	assert.equal( storedExperimentalOptions( undefined ).options.compressedTextures, true );
+});
+
+test("parallel archive reads stay off unless turned on", () => {
+	for ( const value of [ undefined, null, {}, { parallelArchiveReads: 1 }, { parallelArchiveReads: "true" } ] ) {
+		assert.equal( experimentalOptions( value ).parallelArchiveReads, false );
+	}
+	assert.equal( experimentalOptions( { parallelArchiveReads: true } ).parallelArchiveReads, true );
 	assert.throws( () => storedExperimentalOptions( { getItem: () => "{" } ) );
 });
 

@@ -467,10 +467,10 @@ export function createLoader( send: ( result: AssetWorkerMessage, transfer: Tran
 	Bytes a resumed download already had are not counted again.
 	================
 	*/
-	async function prepareArchives( owner: NonNullable<typeof archives> ) {
+	async function prepareArchives( owner: NonNullable<typeof archives>, parallelReads: boolean ) {
 		const seen = new Map<string, number>();
 		try {
-			for await ( const step of owner.prepare( archiveLifetime.signal ) ) {
+			for await ( const step of owner.prepare( archiveLifetime.signal, parallelReads ) ) {
 				const fresh = step.received - (seen.get( step.name ) ?? step.received);
 				seen.set( step.name, step.received );
 				received += fresh;
@@ -953,7 +953,7 @@ export function createLoader( send: ( result: AssetWorkerMessage, transfer: Tran
 			if ( request.kind === "prepare-archives" ) {
 				// Only the installed PWA has archives to prepare; elsewhere
 				// the files are already where the reads go.
-				if ( archives ) void prepareArchives( archives );
+				if ( archives ) void prepareArchives( archives, request.parallelReads );
 				else send( { kind: "archives-ready" }, [] );
 				return;
 			}

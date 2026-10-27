@@ -75,6 +75,14 @@ export interface ExperimentalOptions {
 	// without BC are affected, where RGBA ends the tab; off is the native
 	// texture content.
 	readonly compressedTextures: boolean;
+	// Port-only, not native: the installed PWA reads and decrypts its OPFS
+	// archives on reader workers in parallel (worker/archives/reader.ts)
+	// instead of on the asset worker alone. Faster, but every reader is one
+	// more worker in memory: an iPhone 13 (4 GB) was killed at character
+	// start with them and plays without. Off unless turned on (the owner's
+	// choice, 2026-10-27). Read when the asset worker prepares the archives,
+	// so it applies after a reload; other deliveries have no readers.
+	readonly parallelArchiveReads: boolean;
 	// Port-only, not native: characters and effects share one nearest-first
 	// order under the renderer's CHARACTER_ACTORS (the original keeps every
 	// decoration, 85C020), so a far character gives way to a near effect.
@@ -410,6 +418,7 @@ export function experimentalOptions( value: unknown = null ): ExperimentalOption
 		smoothCamera: record.smoothCamera !== false,
 		enchantSparks: record.enchantSparks !== false,
 		compressedTextures: record.compressedTextures !== false,
+		parallelArchiveReads: enabled( "parallelArchiveReads" ),
 		sharedActorRoom: record.sharedActorRoom !== false,
 		mainThreadOwnWalk: record.mainThreadOwnWalk !== false,
 		greyDisabledTabs: record.greyDisabledTabs !== false,
