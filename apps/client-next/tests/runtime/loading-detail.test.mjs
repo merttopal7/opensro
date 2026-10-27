@@ -102,3 +102,21 @@ test("unfinished streamed files visibly advance without inventing a total percen
 	assert.match( after, /3 files ready/ );
 	assert.doesNotMatch( after, /%/ );
 });
+
+test("archive and patch downloads with a known total show percentage and megabytes", () => {
+	const line = loadingDetailText(
+		"Loading scene description",
+		progress( {
+			currentFile: "Patch028.temir",
+			bytesRead: 900_000,
+			bytesTotal: 2_000_000,
+			filesReady: 0,
+			bytesPerSecond: 1_500_000
+		} ),
+		0
+	);
+	assert.equal(
+		line,
+		"Loading scene description · game files (Patch028) · 45% (0.9 / 2.0 MB) · 1.5 MB/s"
+	);
+});

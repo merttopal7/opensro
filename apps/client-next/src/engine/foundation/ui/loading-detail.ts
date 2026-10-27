@@ -164,7 +164,13 @@ export function loadingDetailText( step: string, progress: AssetProgress | null 
 	const parts = [ step.replace( /\s*(?:\.{3}|…)$/u, "" ) ];
 	const what = loadingFileLabel( progress.currentFile );
 	if ( what ) parts.push( what );
-	if ( progress.bytesRead !== undefined ) {
+	if ( progress.bytesTotal !== undefined && progress.bytesTotal > 0 ) {
+		const done = Math.max( 0, Math.min( progress.bytesRead ?? progress.bytesReceived, progress.bytesTotal ) );
+		const pct = Math.floor( (done / progress.bytesTotal) * 100 );
+		parts.push(
+			`${pct}% (${(done / BYTES_PER_MB).toFixed( 1 )} / ${(progress.bytesTotal / BYTES_PER_MB).toFixed( 1 )} MB)`
+		);
+	} else if ( progress.bytesRead !== undefined ) {
 		parts.push( `${(progress.bytesRead / BYTES_PER_MB).toFixed( 1 )} MB read` );
 		parts.push( `${progress.filesReady} files ready` );
 	}

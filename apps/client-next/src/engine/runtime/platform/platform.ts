@@ -430,7 +430,40 @@ export function createPlatform(
 	// The detail line's view of the downloads: the latest progress and when the
 	// byte count last grew, so a stalled transfer reads as waiting, not hung.
 	let assetProgress: AssetProgress | null = null, bytesSeen = -1, bytesGrewAt = 0, detailAt = 0;
-	let loadingState = { active: false, error: null as string | null, step: "Starting Silkroad Online" };
+	let uiLoadingProgress: number | undefined, archiveFloor = 0;
+	let loadingState = {
+		active: false,
+		startup: true,
+		error: null as string | null,
+		step: "Starting Silkroad Online"
+	};
+	/*
+	================
+	syncLoadingProgress
+
+	Writes --loading-progress on #startup-loading from the UI's scene
+	progress and any active archive/patch download (prepareArchives), so the
+	startup bar advances continuously during installation and updates
+	without rewinding when scene admission begins.
+	================
+	*/
+	function syncLoadingProgress() {
+		if ( !(loading instanceof HTMLElement) ) return;
+		if ( assetProgress?.bytesTotal && assetProgress.bytesTotal > 0 ) {
+			const done = Math.max(
+				0,
+				Math.min( assetProgress.bytesRead ?? assetProgress.bytesReceived, assetProgress.bytesTotal )
+			);
+			archiveFloor = Math.max( archiveFloor, (done / assetProgress.bytesTotal) * 0.9 );
+		}
+		if ( uiLoadingProgress === undefined && archiveFloor <= 0 ) return;
+		const base = uiLoadingProgress ?? 0;
+		const value = loadingState.startup ? Math.max( base, archiveFloor ) : base;
+		const progress = String( Math.max( 0, Math.min( 1, value ) ) );
+		if ( loading.style.getPropertyValue( "--loading-progress" ) !== progress ) {
+			loading.style.setProperty( "--loading-progress", progress );
+		}
+	}
 	/*
 	================
 	refreshLoadingDetail
@@ -995,11 +1028,8 @@ export function createPlatform(
 				if ( loading.dataset.error !== error ) loading.dataset.error = error;
 				if ( loading.getAttribute( "aria-hidden" ) !== hidden ) loading.setAttribute( "aria-hidden", hidden );
 			}
-			if ( loading instanceof HTMLElement && state.loadingProgress !== undefined ) {
-				const progress = String( Math.max( 0, Math.min( 1, state.loadingProgress ) ) );
-				if ( loading.style.getPropertyValue( "--loading-progress" ) !== progress ) {
-					loading.style.setProperty( "--loading-progress", progress );
-				}
+			if ( state.loadingProgress !== undefined ) {
+				uiLoadingProgress = Math.max( 0, Math.min( 1, state.loadingProgress ) );
 			}
 			if ( loadingLabel && (state.loading || state.loadingVisible || state.loadingError) ) {
 				const label = state.loadingError ? "Unable to finish loading" : "Preparing your journey";
@@ -1007,9 +1037,12 @@ export function createPlatform(
 			}
 			loadingState = {
 				active: !!(state.loading || state.loadingVisible),
+				startup: Boolean( state.loading ),
 				error: state.loadingError ?? null,
 				step: state.loadingStatus ?? "Starting Silkroad Online"
 			};
+			if ( !loadingState.active ) archiveFloor = 0;
+			syncLoadingProgress();
 			refreshLoadingDetail( performance.now(), true );
 		},
 		/*
@@ -1027,6 +1060,7 @@ export function createPlatform(
 				bytesGrewAt = now;
 			}
 			assetProgress = progress;
+			syncLoadingProgress();
 			refreshLoadingDetail( now );
 			if ( !transfer ) return;
 			const changed = transfer.hidden === state.visible;

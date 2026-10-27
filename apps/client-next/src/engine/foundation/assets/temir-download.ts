@@ -502,7 +502,7 @@ async function openRest( job: ArchiveDownload, state: DownloadState ) {
 receive
 
 Writes the response into the archive and checkpoints every
-checkpointBytes, yielding progress at the start and at each checkpoint.
+checkpointBytes, yielding progress as chunks arrive.
 A body longer than the release is an integrity error.
 ================
 */
@@ -514,6 +514,7 @@ async function* receive( job: ArchiveDownload, state: DownloadState, checkpoint:
 		for ( ;; ) {
 			const { done, value } = await reader.read();
 			if ( done ) return;
+			if ( value.length === 0 ) continue;
 			if ( state.offset + value.length > release.size ) {
 				forget( job, state );
 				throw integrityError( `${release.name}: longer than ${release.size} bytes` );
@@ -526,8 +527,8 @@ async function* receive( job: ArchiveDownload, state: DownloadState, checkpoint:
 				job.file.flush();
 				writeProgress( job.progress, savedRecord( release, state, false ) );
 				unsaved = 0;
-				yield { received: state.offset, total: release.size };
 			}
+			yield { received: state.offset, total: release.size };
 		}
 	} finally {
 		reader.releaseLock();

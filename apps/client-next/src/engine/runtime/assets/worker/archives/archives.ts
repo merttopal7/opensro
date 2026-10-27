@@ -238,6 +238,7 @@ export function createLocalArchives( io: ArchiveIo, origin: string, passphrase =
 		reject: ( error: Error ) => void;
 	}>();
 	let ready = false, disposed = false, nextRead = 0;
+	let batchProgress: { received: number; total: number; } | null = null;
 
 	/*
 	================
@@ -505,6 +506,8 @@ export function createLocalArchives( io: ArchiveIo, origin: string, passphrase =
 		const manifest = parsePatchManifest( text );
 		const live = livePatchEntries( manifest );
 		const patches = manifest.files.filter( f => live.has( f.name ) );
+		let doneBytes = 0, plannedBytes = 0;
+		batchProgress = null;
 		/*
 		================
 		obtain
@@ -516,10 +519,16 @@ export function createLocalArchives( io: ArchiveIo, origin: string, passphrase =
 		================
 		*/
 		const obtain = async function*( list: OpenedRelease[] ): AsyncGenerator<PrepareProgress, void> {
+			if ( list.length === 0 ) return;
+			if ( unreachable ) throw unreachable;
+			plannedBytes += list.reduce( ( sum, f ) => sum + f.release.size, 0 );
 			for ( let i = 0; i < list.length; i++ ) {
-				if ( unreachable ) throw unreachable;
 				try {
-					yield* download( base, list[i]!, signal );
+					for await ( const step of download( base, list[i]!, signal ) ) {
+						batchProgress = { received: doneBytes + step.received, total: plannedBytes };
+						yield step;
+					}
+					doneBytes += list[i]!.release.size;
 				} catch ( error ) {
 					if ( error instanceof Error && error.name === "QuotaExceededError" ) {
 						throw storageFull( missingBytes( list.slice( i ) ) );
@@ -721,6 +730,7 @@ export function createLocalArchives( io: ArchiveIo, origin: string, passphrase =
 
 	return {
 		prepare,
+		progress: () => batchProgress,
 		read,
 		/*
 		================

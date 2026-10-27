@@ -24,6 +24,8 @@ export interface AssetProgress {
 	// activity, not network usage; bytesReceived retains wire accounting.
 	readonly bytesRead?: number;
 	readonly bytesReceived: number;
+	// Total bytes of the archive or patch batch during prepareArchives.
+	readonly bytesTotal?: number;
 	readonly bytesPerSecond: number;
 	readonly filesReady: number;
 	readonly filesActive: number;

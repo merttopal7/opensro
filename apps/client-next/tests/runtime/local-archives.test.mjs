@@ -184,6 +184,10 @@ test("a first start downloads all three archives, then reads come from them", as
 		} );
 		assert.deepEqual( storage.files.get( `temir/${name}` )?.bytes, BASE );
 	}
+	assert.deepEqual( archives.progress(), {
+		received: BASE.length * NAMES.length,
+		total: BASE.length * NAMES.length
+	} );
 	assert.equal( await text( archives, MANIFEST_URL ), MANIFEST_TEXT );
 	const block = await archives.read( MAP_URL, 1 << 20, { start: 100, end: 432, total: PATTERN.length } );
 	assert.deepEqual( block, PATTERN.subarray( 100, 433 ) );

@@ -134,6 +134,7 @@ export function createLoader( send: ( result: AssetWorkerMessage, transfer: Tran
 	// to drain: while a download can still deliver, a load is fetching.
 	let activeDownloads = 0;
 	let received = 0, lastReceived = 0, lastProgress = performance.now(), speed = 0;
+	let archiveProgress: { received: number; total: number; } | null = null;
 	let progressTimer: ReturnType<typeof setTimeout> | null = null;
 	/*
 	================
@@ -170,8 +171,9 @@ export function createLoader( send: ( result: AssetWorkerMessage, transfer: Tran
 			send( {
 				kind: "progress",
 				progress: {
-					bytesRead,
+					bytesRead: archiveProgress ? archiveProgress.received : bytesRead,
 					bytesReceived: received,
+					...(archiveProgress && archiveProgress.total > 0 ? { bytesTotal: archiveProgress.total } : {}),
 					bytesPerSecond: speed,
 					filesReady: readyFiles.size,
 					filesActive: files.size,
@@ -473,12 +475,20 @@ export function createLoader( send: ( result: AssetWorkerMessage, transfer: Tran
 				seen.set( step.name, step.received );
 				received += fresh;
 				bytesRead += fresh;
-				if ( step.received < step.total ) files.set( step.name, 1 );
-				else files.delete( step.name );
+				archiveProgress = owner.progress() ?? { received: step.received, total: step.total };
+				for ( const name of seen.keys() ) {
+					if ( name !== step.name ) files.delete( name );
+				}
+				files.set( step.name, 1 );
 				progress();
 			}
+			for ( const name of seen.keys() ) files.delete( name );
+			archiveProgress = null;
+			if ( seen.size > 0 ) publishProgress();
 			if ( !disposed ) send( { kind: "archives-ready" }, [] );
 		} catch ( error ) {
+			for ( const name of seen.keys() ) files.delete( name );
+			archiveProgress = null;
 			if ( !disposed ) send( { kind: "archives-failed", error: String( error ) }, [] );
 		}
 	}

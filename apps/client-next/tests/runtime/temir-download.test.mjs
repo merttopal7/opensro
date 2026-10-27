@@ -312,3 +312,13 @@ test("bytes past the last checkpoint are never trusted", async () => {
 	assert.equal( origin.requests[1].range, "bytes=555-" );
 	assert.deepEqual( files.file.bytes(), ARCHIVE );
 });
+
+test("a patch smaller than the checkpoint interval still yields chunk progress", async () => {
+	const files = { file: memoryHandle(), progress: memoryHandle() };
+	const origin = server( serverState( ARCHIVE, '"v1"' ) );
+	const events = await run( job( files, origin, { checkpointBytes: 8 * 1024 * 1024 } ) );
+	assert.ok( events.length > 2, "stream chunks yield progress before the 8 MiB checkpoint" );
+	assert.equal( events[0].received, 0 );
+	assert.equal( events[1].received, CHUNK );
+	assert.deepEqual( events.at( -1 ), { received: ARCHIVE.length, total: ARCHIVE.length } );
+});
