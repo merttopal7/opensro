@@ -4774,9 +4774,34 @@ export function createUi(
 		} else if ( id.startsWith( "hotbar:" ) ) {
 			const slot = Number( id.slice( 7 ) ), game = view.gameplay;
 			if ( !Number.isInteger( slot ) || slot < 0 || slot >= 51 ) return;
+			const isMobile = !!compactHud.layout( view.width, view.height, {
+				mobileHud: experimental.state().saved.mobileHud,
+				touch: view.touch,
+				safeArea: view.safeArea
+			} )?.mobile;
 			if ( clearHotbar ) {
 				if ( slot >= 41 && extSlotLock ) return;
 				sendGameplay( { kind: "quickslot-bind", slot, skillId: 0 } );
+			} else if (
+				isMobile &&
+				panel === "Skills" &&
+				selectedSkill > 0 &&
+				controls.some( c => c.id === "skill:" + selectedSkill && c.draggable && !c.disabled ) &&
+				game
+			) {
+				for ( const binding of quickSlotDrop( "skill:" + selectedSkill, slot, game ) ) {
+					sendGameplay( { kind: "quickslot-set", binding } );
+				}
+			} else if (
+				isMobile &&
+				panel === "Actions" &&
+				selectedAction > 0 &&
+				controls.some( c => c.id === "action:" + selectedAction && c.draggable && !c.disabled ) &&
+				game
+			) {
+				for ( const binding of quickSlotDrop( "action:" + selectedAction, slot, game ) ) {
+					sendGameplay( { kind: "quickslot-set", binding } );
+				}
 			} else {
 				const binding = game?.quickSlots?.find( row => row.slot === slot );
 				if ( binding?.kind === 0x4e ) {
@@ -9648,6 +9673,14 @@ export function createUi(
 			} );
 			const mobile = compact?.mobile ?? null;
 			if ( !mobile && mobileMenuOpen ) mobileMenuOpen = false;
+			const mobileCompanionOpen = (panel !== "Inventory" && INVENTORY_POPUP_PANELS.includes( panel )) ||
+				withdrawal.active() ||
+				questDetails;
+			const mobileFullWindowOpen = !!mobile &&
+				!windowWarm.active() &&
+				(panel === "Map" || itemMall.read().visible || (panel !== "" && mobileCompanionOpen));
+			const mobileLeftDrawerOpen = !!mobile && !windowWarm.active() && panel !== "" && !mobileFullWindowOpen;
+			const mobileDrawerOpen = mobileLeftDrawerOpen || mobileFullWindowOpen;
 			let targetBottom = 0, compactTelemetryTop = 4;
 			if ( berserkActor ) {
 				const alpha = berserkEntryFlash( now - berserkStarted );
@@ -9838,7 +9871,7 @@ export function createUi(
 								full :
 								compact.bounds;
 						if (
-							mobile && owner === "primary" && panel !== "Map" && !withdrawal.active() && !questDetails
+							mobile && owner === "primary" && !mobileCompanionOpen && panel !== "Map"
 						) {
 							let left = Infinity, top = Infinity, right = -Infinity, bottom = -Infinity;
 							if ( source ) {
@@ -11252,7 +11285,7 @@ export function createUi(
 					const player = hudData.root.GDR_PLAYER_MINI_INFO!.rect;
 					targetBottom = player[1] + playerOy + player[3] + 4;
 				}
-				if ( hudData ) {
+				if ( hudData && !mobileDrawerOpen ) {
 					const hpMax = game?.progression?.stats?.maxHp ?? local?.maxHp ?? character?.maxHp,
 						mpMax = game?.progression?.stats?.maxMp ?? local?.maxMp ?? character?.maxMp;
 					const protection = shieldGauge(
@@ -11568,7 +11601,7 @@ export function createUi(
 					) :
 					null;
 				const petPanel = hudData?.player.GDR_PMI_PET_MINI_INFO, petLayout = hudData?.windows.ifpetminiinfo;
-				if ( hudData && pet && petPanel && petLayout ) {
+				if ( hudData && !mobileDrawerOpen && pet && petPanel && petLayout ) {
 					const player = hudData.root.GDR_PLAYER_MINI_INFO!.rect,
 						px = player[0] + playerOx,
 						py = player[1] + playerOy;
@@ -11703,7 +11736,7 @@ export function createUi(
 					}
 				}
 				let leftColumnBottom = targetBottom;
-				if ( hudData && game && hudData.root.GDR_MAGICSTATEBOARD ) {
+				if ( hudData && !mobileDrawerOpen && game && hudData.root.GDR_MAGICSTATEBOARD ) {
 					const origin = authoredRect( hudData.root.GDR_MAGICSTATEBOARD, 0, 0 );
 					if ( game.buffSlots?.length ) paths.push( "/assets/images/Media_extracted/icon/buf_effect.png" );
 					const ownerPet = experimental.state().saved.attackPetTraining &&
@@ -11861,7 +11894,7 @@ export function createUi(
 						);
 					}
 				}
-				if ( hudData && game?.social?.leader ) {
+				if ( hudData && !mobileDrawerOpen && game?.social?.leader ) {
 					const origin = authoredRect( hudData.root.GDR_QUICKPARTYBOARD!, 0, 0 ),
 						slot = hudData.windows.ifquickpartyslot!,
 						localPose = partyLocalPose( game, next.entities );
@@ -11986,7 +12019,7 @@ export function createUi(
 						}
 					}
 				}
-				if ( hudData && panel !== "Chat" && (!compact || compact.overlay === "chat") ) {
+				if ( hudData && !mobileDrawerOpen && panel !== "Chat" && (!compact || compact.overlay === "chat") ) {
 					const lines = game?.chat?.lines ?? [],
 						chatBottom = mobile ? h - mobile.chatPreview[1] + 4 : compact?.bottom,
 						chatX = mobile ? mobile.chatPreview[0] : undefined,
@@ -12098,7 +12131,7 @@ export function createUi(
 						options.guide,
 						statusFilters
 					);
-					if ( !compact || compact.overlay === "status" ) {
+					if ( !mobileDrawerOpen && (!compact || compact.overlay === "status") ) {
 						const statusHeight = mobile ? mobile.chatPreview[1] + 86 : compact ? compact.top + 90 : h;
 						const statusX = mobile ? mobile.chatPreview[0] : undefined;
 						const output = statusLayoutCache.read(
@@ -12711,148 +12744,152 @@ export function createUi(
 					itemCount( item, r );
 				}
 				if ( mobile ) {
-					// 1. Top-left menu button inside the player panel's lower-left corner.
-					const menuRect = mobile.menuButton;
-					button(
-						"hud-menu",
-						"Menu",
-						menuRect[0],
-						menuRect[1],
-						menuRect[2],
-						false,
-						isMainPopupPage( panel )
-					);
-					controls[controls.length - 1] = { ...controls[controls.length - 1]!, rect: menuRect };
+					if ( !mobileDrawerOpen ) {
+						// 1. Top-left menu button inside the player panel's lower-left corner.
+						const menuRect = mobile.menuButton;
+						button(
+							"hud-menu",
+							"Menu",
+							menuRect[0],
+							menuRect[1],
+							menuRect[2],
+							false,
+							isMainPopupPage( panel )
+						);
+						controls[controls.length - 1] = { ...controls[controls.length - 1]!, rect: menuRect };
 
-					// 2. Bottom-left 2-line chat preview strip + unread badge + left-side Log switcher.
-					const chatRect = mobile.chatPreview;
-					const chatLines = game?.chat?.lines ?? [];
-					const chatOpen = !windowWarm.active() && (compact?.overlay === "chat" || panel === "Chat");
-					const unreadState = mobileUnreadCount( chatLines.length, mobileSeenChatCount, chatOpen );
-					mobileSeenChatCount = unreadState.nextSeen;
-					const previewRows = mobileChatPreviewLines( chatLines );
-					rect( chatRect, chatOpen ? [ 0.18, 0.16, 0.1, 0.88 ] : [ 0.05, 0.06, 0.08, 0.76 ] );
-					rect( [ chatRect[0], chatRect[1], chatRect[2], 1 ], [ 0.75, 0.65, 0.38, 0.55 ] );
-					rect( [ chatRect[0], chatRect[1] + chatRect[3] - 1, chatRect[2], 1 ], [ 0.75, 0.65, 0.38, 0.55 ] );
-					if ( chatOpen ) {
+						// 2. Bottom-left 2-line chat preview strip + unread badge + left-side Log switcher.
+						const chatRect = mobile.chatPreview;
+						const chatLines = game?.chat?.lines ?? [];
+						const chatOpen = !windowWarm.active() && (compact?.overlay === "chat" || panel === "Chat");
+						const unreadState = mobileUnreadCount( chatLines.length, mobileSeenChatCount, chatOpen );
+						mobileSeenChatCount = unreadState.nextSeen;
+						const previewRows = mobileChatPreviewLines( chatLines );
+						rect( chatRect, chatOpen ? [ 0.18, 0.16, 0.1, 0.88 ] : [ 0.05, 0.06, 0.08, 0.76 ] );
+						rect( [ chatRect[0], chatRect[1], chatRect[2], 1 ], [ 0.75, 0.65, 0.38, 0.55 ] );
+						rect(
+							[ chatRect[0], chatRect[1] + chatRect[3] - 1, chatRect[2], 1 ],
+							[ 0.75, 0.65, 0.38, 0.55 ]
+						);
+						if ( chatOpen ) {
+							quads.push(
+								...text.quads(
+									"Close Chat",
+									[ chatRect[0] + 8, chatRect[1] + 4, chatRect[2] - 16, chatRect[3] - 8 ],
+									chatRect,
+									[ 1, 0.92, 0.64, 1 ],
+									{ hAlign: 0, vAlign: 1, overflow: "ellipsis" }
+								)
+							);
+						} else {
+							const badgeWidth = unreadState.unread > 0 ? 28 : 0;
+							const textWidth = Math.max( 16, chatRect[2] - 16 - badgeWidth );
+							previewRows.forEach( ( row, rowIndex ) => {
+								const rowBox: UiRect = previewRows.length === 1 ?
+									[ chatRect[0] + 8, chatRect[1] + 4, textWidth, chatRect[3] - 8 ] :
+									[ chatRect[0] + 8, chatRect[1] + 4 + rowIndex * 16, textWidth, 16 ];
+								quads.push(
+									...text.quads( row.text, rowBox, chatRect, row.color, {
+										hAlign: 0,
+										vAlign: 1,
+										overflow: "ellipsis"
+									} )
+								);
+							} );
+							if ( unreadState.unread > 0 ) {
+								const badgeLabel = unreadState.unread > 99 ? "99+" : "+" + unreadState.unread;
+								const badgeRect: UiRect = [
+									chatRect[0] + chatRect[2] - 30,
+									chatRect[1] + 4,
+									26,
+									16
+								];
+								rect( badgeRect, [ 0.72, 0.18, 0.14, 0.92 ] );
+								quads.push(
+									...text.quads( badgeLabel, badgeRect, badgeRect, [ 1, 0.96, 0.88, 1 ], {
+										hAlign: 1,
+										vAlign: 1
+									} )
+								);
+							}
+						}
+						controls.push( {
+							id: "compact-chat",
+							label: unreadState.unread > 0 ? `Chat (${unreadState.unread} unread)` : "Chat",
+							kind: "button",
+							rect: chatRect,
+							selected: compact?.overlay === "chat"
+						} );
+						blocks.push( chatRect );
+
+						const statusRect = mobile.statusButton;
+						const statusOpen = compact?.overlay === "status";
+						rect( statusRect, statusOpen ? [ 0.18, 0.16, 0.1, 0.88 ] : [ 0.05, 0.06, 0.08, 0.76 ] );
+						rect( [ statusRect[0], statusRect[1], statusRect[2], 1 ], [ 0.75, 0.65, 0.38, 0.55 ] );
+						rect(
+							[ statusRect[0], statusRect[1] + statusRect[3] - 1, statusRect[2], 1 ],
+							[ 0.75, 0.65, 0.38, 0.55 ]
+						);
 						quads.push(
 							...text.quads(
-								"Close Chat",
-								[ chatRect[0] + 8, chatRect[1] + 4, chatRect[2] - 16, chatRect[3] - 8 ],
-								chatRect,
-								[ 1, 0.92, 0.64, 1 ],
-								{ hAlign: 0, vAlign: 1, overflow: "ellipsis" }
+								"Log",
+								[ statusRect[0] + 4, statusRect[1] + 4, statusRect[2] - 8, statusRect[3] - 8 ],
+								statusRect,
+								statusOpen ? [ 1, 0.92, 0.64, 1 ] : [ 0.92, 0.88, 0.76, 1 ],
+								{ hAlign: 1, vAlign: 1 }
 							)
 						);
-					} else {
-						const badgeWidth = unreadState.unread > 0 ? 28 : 0;
-						const textWidth = Math.max( 16, chatRect[2] - 16 - badgeWidth );
-						previewRows.forEach( ( row, rowIndex ) => {
-							const rowBox: UiRect = previewRows.length === 1 ?
-								[ chatRect[0] + 8, chatRect[1] + 4, textWidth, chatRect[3] - 8 ] :
-								[ chatRect[0] + 8, chatRect[1] + 4 + rowIndex * 16, textWidth, 16 ];
-							quads.push(
-								...text.quads( row.text, rowBox, chatRect, row.color, {
-									hAlign: 0,
-									vAlign: 1,
-									overflow: "ellipsis"
-								} )
-							);
+						controls.push( {
+							id: "compact-status",
+							label: "Log",
+							kind: "button",
+							rect: statusRect,
+							selected: statusOpen
 						} );
-						if ( unreadState.unread > 0 ) {
-							const badgeLabel = unreadState.unread > 99 ? "99+" : "+" + unreadState.unread;
-							const badgeRect: UiRect = [
-								chatRect[0] + chatRect[2] - 30,
-								chatRect[1] + 4,
-								26,
-								16
+						blocks.push( statusRect );
+
+						// 3. Bottom-left floating virtual joystick (hidden while Chat or Log is open; does not push to blocks so world taps pass through).
+						if ( !chatOpen && !statusOpen ) {
+							const joyOrigin = mobileJoystick.active ?
+								mobileJoystick.origin :
+								mobile.joystickOrigin;
+							const joyKnob = mobileJoystick.active ? mobileJoystick.knob : joyOrigin;
+							const baseAlpha = mobileJoystick.active ? 0.45 : 0.22;
+							const ringAlpha = mobileJoystick.active ? 0.75 : 0.38;
+							const knobAlpha = mobileJoystick.active ? 0.88 : 0.42;
+							const baseBox: UiRect = [
+								Math.round( joyOrigin[0] - JOYSTICK_BASE_RADIUS ),
+								Math.round( joyOrigin[1] - JOYSTICK_BASE_RADIUS ),
+								JOYSTICK_BASE_RADIUS * 2,
+								JOYSTICK_BASE_RADIUS * 2
 							];
-							rect( badgeRect, [ 0.72, 0.18, 0.14, 0.92 ] );
-							quads.push(
-								...text.quads( badgeLabel, badgeRect, badgeRect, [ 1, 0.96, 0.88, 1 ], {
-									hAlign: 1,
-									vAlign: 1
-								} )
+							rect( baseBox, [ 0.04, 0.06, 0.09, baseAlpha ] );
+							rect( [ baseBox[0], baseBox[1], baseBox[2], 1 ], [ 0.82, 0.7, 0.36, ringAlpha ] );
+							rect(
+								[ baseBox[0], baseBox[1] + baseBox[3] - 1, baseBox[2], 1 ],
+								[ 0.82, 0.7, 0.36, ringAlpha ]
+							);
+							rect( [ baseBox[0], baseBox[1], 1, baseBox[3] ], [ 0.82, 0.7, 0.36, ringAlpha ] );
+							rect(
+								[ baseBox[0] + baseBox[2] - 1, baseBox[1], 1, baseBox[3] ],
+								[ 0.82, 0.7, 0.36, ringAlpha ]
+							);
+							const knobBox: UiRect = [
+								Math.round( joyKnob[0] - JOYSTICK_KNOB_RADIUS ),
+								Math.round( joyKnob[1] - JOYSTICK_KNOB_RADIUS ),
+								JOYSTICK_KNOB_RADIUS * 2,
+								JOYSTICK_KNOB_RADIUS * 2
+							];
+							rect( knobBox, [ 0.88, 0.72, 0.28, knobAlpha ] );
+							rect(
+								[ Math.round( joyKnob[0] - 6 ), Math.round( joyKnob[1] - 6 ), 12, 12 ],
+								[ 1, 0.94, 0.72, knobAlpha ]
 							);
 						}
 					}
-					controls.push( {
-						id: "compact-chat",
-						label: unreadState.unread > 0 ? `Chat (${unreadState.unread} unread)` : "Chat",
-						kind: "button",
-						rect: chatRect,
-						selected: compact?.overlay === "chat"
-					} );
-					blocks.push( chatRect );
 
-					const statusRect = mobile.statusButton;
-					const statusOpen = compact?.overlay === "status";
-					rect( statusRect, statusOpen ? [ 0.18, 0.16, 0.1, 0.88 ] : [ 0.05, 0.06, 0.08, 0.76 ] );
-					rect( [ statusRect[0], statusRect[1], statusRect[2], 1 ], [ 0.75, 0.65, 0.38, 0.55 ] );
-					rect(
-						[ statusRect[0], statusRect[1] + statusRect[3] - 1, statusRect[2], 1 ],
-						[ 0.75, 0.65, 0.38, 0.55 ]
-					);
-					quads.push(
-						...text.quads(
-							"Log",
-							[ statusRect[0] + 4, statusRect[1] + 4, statusRect[2] - 8, statusRect[3] - 8 ],
-							statusRect,
-							statusOpen ? [ 1, 0.92, 0.64, 1 ] : [ 0.92, 0.88, 0.76, 1 ],
-							{ hAlign: 1, vAlign: 1 }
-						)
-					);
-					controls.push( {
-						id: "compact-status",
-						label: "Log",
-						kind: "button",
-						rect: statusRect,
-						selected: statusOpen
-					} );
-					blocks.push( statusRect );
-
-					// 3. Bottom-left floating virtual joystick (hidden while Chat or Log is open; does not push to blocks so world taps pass through).
-					if ( !chatOpen && !statusOpen ) {
-						const joyOrigin = mobileJoystick.active ?
-							mobileJoystick.origin :
-							mobile.joystickOrigin;
-						const joyKnob = mobileJoystick.active ? mobileJoystick.knob : joyOrigin;
-						const baseAlpha = mobileJoystick.active ? 0.45 : 0.22;
-						const ringAlpha = mobileJoystick.active ? 0.75 : 0.38;
-						const knobAlpha = mobileJoystick.active ? 0.88 : 0.42;
-						const baseBox: UiRect = [
-							Math.round( joyOrigin[0] - JOYSTICK_BASE_RADIUS ),
-							Math.round( joyOrigin[1] - JOYSTICK_BASE_RADIUS ),
-							JOYSTICK_BASE_RADIUS * 2,
-							JOYSTICK_BASE_RADIUS * 2
-						];
-						rect( baseBox, [ 0.04, 0.06, 0.09, baseAlpha ] );
-						rect( [ baseBox[0], baseBox[1], baseBox[2], 1 ], [ 0.82, 0.7, 0.36, ringAlpha ] );
-						rect(
-							[ baseBox[0], baseBox[1] + baseBox[3] - 1, baseBox[2], 1 ],
-							[ 0.82, 0.7, 0.36, ringAlpha ]
-						);
-						rect( [ baseBox[0], baseBox[1], 1, baseBox[3] ], [ 0.82, 0.7, 0.36, ringAlpha ] );
-						rect(
-							[ baseBox[0] + baseBox[2] - 1, baseBox[1], 1, baseBox[3] ],
-							[ 0.82, 0.7, 0.36, ringAlpha ]
-						);
-						const knobBox: UiRect = [
-							Math.round( joyKnob[0] - JOYSTICK_KNOB_RADIUS ),
-							Math.round( joyKnob[1] - JOYSTICK_KNOB_RADIUS ),
-							JOYSTICK_KNOB_RADIUS * 2,
-							JOYSTICK_KNOB_RADIUS * 2
-						];
-						rect( knobBox, [ 0.88, 0.72, 0.28, knobAlpha ] );
-						rect(
-							[ Math.round( joyKnob[0] - 6 ), Math.round( joyKnob[1] - 6 ), 12, 12 ],
-							[ 1, 0.94, 0.72, knobAlpha ]
-						);
-					}
-
-					// 4. Bottom-right 6 skill slots (slots 1..6 on the active quickslot page).
-					const mobileDrawerOpen = !windowWarm.active() && (panel !== "" || itemMall.read().visible);
-					if ( (!mobileDrawerOpen && !mobileMenuOpen) || carriedShortcut !== null ) {
+					// 4. Bottom-right 6 skill slots (slots 1..6 on the active quickslot page; stay visible alongside left-docked single-panel drawers).
+					if ( (!mobileFullWindowOpen && !mobileMenuOpen) || carriedShortcut !== null ) {
 						for ( let i = 0; i < mobile.actionCluster.skills.length; i++ ) {
 							const n = i + 1;
 							const r = mobile.actionCluster.skills[i]!;
@@ -12926,7 +12963,7 @@ export function createUi(
 						controls.push( { id, label: labelText, kind: "button", rect: r } );
 						blocks.push( r );
 					};
-					if ( !mobileDrawerOpen && !mobileMenuOpen ) {
+					if ( !mobileFullWindowOpen && !mobileMenuOpen ) {
 						mobileActionButton(
 							"mobile-attack",
 							"Attack",
@@ -13193,7 +13230,7 @@ export function createUi(
 				} );
 				if (
 					hudData &&
-					(!compact || (mobile && (panel === "" || windowWarm.active()) && !itemMall.read().visible) ||
+					(!compact || (mobile && (!mobileFullWindowOpen || windowWarm.active())) ||
 						compact.overlay === "map")
 				) {
 					const mapMark = [ quads.length, controls.length, blocks.length ] as const;

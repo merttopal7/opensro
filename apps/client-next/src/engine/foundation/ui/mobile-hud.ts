@@ -345,9 +345,17 @@ export function mobileHudLayout(
 		pageToggle: [ targetCycleX - AUX_BUTTON_SIZE - 6, auxY, AUX_BUTTON_SIZE, AUX_BUTTON_SIZE ]
 	};
 
-	const drawerWidth = Math.min( PANEL_DRAWER_MAX_WIDTH, Math.max( 200, safeWidth - PANEL_DRAWER_LEFT_MARGIN ) );
+	const drawerX = safe.left;
+	const drawerMaxRight = Math.max(
+		drawerX + 200,
+		Math.min( farLeftSkillX, actionCluster.pageToggle[0] ) - SECTION_GAP
+	);
+	const drawerWidth = Math.min(
+		PANEL_DRAWER_MAX_WIDTH,
+		Math.max( 200, Math.min( safeWidth - PANEL_DRAWER_LEFT_MARGIN, drawerMaxRight - drawerX ) )
+	);
 	const panelDrawer: UiRect = [
-		width - safe.right - drawerWidth,
+		drawerX,
 		safe.top,
 		drawerWidth,
 		Math.max( 1, expBar[1] - safe.top )
@@ -901,9 +909,10 @@ export function mobileMenuGridLayout( layout: MobileHudLayout ): MobileMenuGridL
 ================
 mobileDrawerBounds
 
-Computes the right-aligned target rectangle inside layout.panelDrawer so
-fitUiGroup docks single-panel windows flush against the right safe-area edge
-while preserving >= 0.9 scale on standard phone viewports.
+Computes the left-aligned target rectangle inside layout.panelDrawer so
+fitUiGroup docks single-panel windows flush against the left safe-area edge
+while keeping the right-hand quickslot skills and action cluster uncovered
+and preserving >= 0.9 scale on standard phone viewports.
 ================
 */
 export function mobileDrawerBounds(
@@ -919,7 +928,7 @@ export function mobileDrawerBounds(
 	);
 	const fittedWidth = Math.min( drawerWidth, Math.max( 1, Math.ceil( sourceWidth * scale ) ) );
 	return [
-		drawerX + drawerWidth - fittedWidth,
+		drawerX,
 		drawerY,
 		fittedWidth,
 		drawerHeight

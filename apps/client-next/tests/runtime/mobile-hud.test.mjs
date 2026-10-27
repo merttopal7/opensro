@@ -650,11 +650,11 @@ test("M3: UI action cluster dispatches attack, target-cycle, pickup, page-toggle
 	fixture.dispose();
 });
 
-test("M4: mobileMenuGridLayout and mobileDrawerBounds compute touch-sized 4x2 menu and right-docked >= 0.9 panel drawer", () => {
+test("M4: mobileMenuGridLayout and mobileDrawerBounds compute touch-sized 4x2 menu and left-docked >= 0.9 panel drawer", () => {
 	const layout = mobileHudLayout( 852, 393, {
 		safeArea: { top: 0, right: 59, bottom: 21, left: 59 }
 	} );
-	assert.deepEqual( layout.panelDrawer, [ 363, 0, 430, 368 ] );
+	assert.deepEqual( layout.panelDrawer, [ 59, 0, 430, 368 ] );
 
 	const grid = mobileMenuGridLayout( layout );
 	assert.equal( grid.cells.length, 8 );
@@ -664,14 +664,18 @@ test("M4: mobileMenuGridLayout and mobileDrawerBounds compute touch-sized 4x2 me
 	}
 
 	// Main popup with side tabs is 430x408; inside 430x368 drawer it scales by 368/408 = 0.902 (>= 0.90)
-	// and docks flush against the right edge of layout.panelDrawer (x + w = 363 + 430 = 793).
+	// and docks flush against the left edge of layout.panelDrawer while keeping the right-hand skills uncovered.
 	const drawer = mobileDrawerBounds( layout, 430, 408 );
 	const scale = Math.min( 1, drawer[2] / 430, drawer[3] / 408 );
 	assert.ok( scale >= 0.9, `expected mainPopup drawer scale >= 0.9, got ${scale}` );
-	assert.equal( drawer[0] + drawer[2], layout.panelDrawer[0] + layout.panelDrawer[2], "docked flush right" );
+	assert.equal( drawer[0], layout.panelDrawer[0], "docked flush left" );
+	assert.ok(
+		drawer[0] + drawer[2] <= layout.actionCluster.pageToggle[0] - 8,
+		"left-docked drawer stays clear of right-hand quickslot skills and page toggle"
+	);
 });
 
-test("M4: hud-menu opens 4x2 touch grid and opens right-hand panel drawers without action-cluster or minimap overlap", () => {
+test("M4: hud-menu opens 4x2 touch grid, docks panel drawers on the left, keeps right-hand quickslot skills uncovered, and binds skills", () => {
 	const sent = [];
 	const fixture = uiFixture( command => sent.push( command ) );
 	let time = 0, published;
@@ -690,7 +694,30 @@ test("M4: hud-menu opens 4x2 touch grid and opens right-hand panel drawers witho
 		width: 852,
 		height: 393,
 		touch: true,
-		safeArea: { top: 0, right: 59, bottom: 21, left: 59 }
+		safeArea: { top: 0, right: 59, bottom: 21, left: 59 },
+		gameplay: {
+			...fixture.state.gameplay,
+			progression: {
+				level: 10,
+				skillPoints: 500,
+				masteries: [ { id: 257, level: 5 } ]
+			},
+			skills: [ 3 ],
+			skillCatalog: [
+				{
+					id: 3,
+					group: 174,
+					level: 1,
+					name: "SN_SKILL_CH_SWORD_SMASH_A",
+					trainable: true,
+					targetRequired: true,
+					spCost: 10,
+					cooldownMs: 1000,
+					masteries: [ { ID: 257, Level: 1 }, { ID: 0, Level: 0 } ],
+					prerequisites: [ { ID: 0, Level: 0 }, { ID: 0, Level: 0 }, { ID: 0, Level: 0 } ]
+				}
+			]
+		}
 	} );
 
 	let output;
@@ -706,15 +733,35 @@ test("M4: hud-menu opens 4x2 touch grid and opens right-hand panel drawers witho
 	assert.deepEqual( menuClose.rect.slice( 2 ), [ 40, 40 ] );
 	assert.ok( !output.controls.some( c => c.id === "mobile-attack" ), "action cluster hidden while menu is open" );
 
-	// 2. Tapping mobile-menu:Inventory closes the menu and opens Inventory in the right-hand drawer.
+	// 2. Tapping mobile-menu:Inventory closes the menu and opens Inventory in the left-hand drawer while keeping right-hand skills visible.
 	fixture.ui.event( { kind: "activate", id: "mobile-menu:Inventory" } );
 	for ( let i = 0; i < 6; i++ ) output = draw();
 	assert.ok( !output.controls.some( c => c.id === "mobile-menu:Inventory" ), "menu closed after selection" );
 	const invClose = defined( output.controls.find( c => c.id === "close-window:Inventory" ) );
 	assert.deepEqual( invClose.rect.slice( 2 ), [ 40, 40 ], "drawer close control enlarged to 40x40" );
-	assert.ok( invClose.rect[0] >= 700, `Inventory drawer docked to right side (close x=${invClose.rect[0]})` );
-	assert.ok( !output.controls.some( c => c.id === "mobile-attack" ), "action cluster hidden while drawer is open" );
-	assert.ok( !output.controls.some( c => c.id === "minimap-in" ), "pinned minimap yields to right-hand drawer" );
+	const hotbar1 = defined( output.controls.find( c => c.id === "hotbar:1" ) );
+	assert.ok(
+		invClose.rect[0] + invClose.rect[2] < hotbar1.rect[0],
+		`Inventory drawer docked to left side clear of hotbar:1 (close right=${
+			invClose.rect[0] + invClose.rect[2]
+		}, hotbar:1 x=${hotbar1.rect[0]})`
+	);
+	assert.ok(
+		output.controls.some( c => c.id === "mobile-attack" ),
+		"action cluster stays visible alongside left drawer"
+	);
+	assert.ok(
+		output.controls.some( c => c.id === "minimap-in" ),
+		"pinned minimap stays visible alongside left drawer"
+	);
+	assert.ok(
+		!output.controls.some( c => c.id === "compact-chat" ),
+		"left-side chat preview hides under left drawer"
+	);
+	assert.ok(
+		!output.controls.some( c => c.id === "self-target" ),
+		"left-side player mini info hides under left drawer"
+	);
 
 	// Bag slot 13 is scaled at >= 0.90 (native 32x32 -> >= 28x28).
 	const slot13 = defined( output.controls.find( c => c.id === "slot:13" ) );
@@ -722,7 +769,7 @@ test("M4: hud-menu opens 4x2 touch grid and opens right-hand panel drawers witho
 	const goldBtn = defined( output.controls.find( c => c.id === "inventory-gold" ) );
 	assert.ok( goldBtn.rect[2] >= 28 && goldBtn.rect[3] >= 28, `gold button enlarged for touch (${goldBtn.rect})` );
 
-	// 3. Switching to Character via the enlarged side-tab keeps the right-hand drawer and enlarges stat buttons.
+	// 3. Switching to Character via the enlarged side-tab keeps the left-hand drawer and enlarges stat buttons.
 	const charTab = defined( output.controls.find( c => c.id === "select-window:Character" ) );
 	assert.ok( charTab.rect[2] >= 32 && charTab.rect[3] >= 32, `side-tab enlarged for touch (${charTab.rect})` );
 	fixture.ui.event( { kind: "activate", id: "select-window:Character" } );
@@ -730,11 +777,29 @@ test("M4: hud-menu opens 4x2 touch grid and opens right-hand panel drawers witho
 	const strBtn = defined( output.controls.find( c => c.id === "stat-str" ) );
 	assert.ok( strBtn.rect[2] >= 28 && strBtn.rect[3] >= 25, `stat-str enlarged for touch (${strBtn.rect})` );
 
-	// 4. Closing Character restores the pinned minimap and bottom-right action cluster.
-	fixture.ui.event( { kind: "activate", id: "close-window:Character" } );
+	// 4. Switching to Skills keeps hotbar:1..6 uncovered on the right and allows binding a skill by tap or drag.
+	fixture.ui.event( { kind: "activate", id: "select-window:Skills" } );
+	for ( let i = 0; i < 6; i++ ) output = draw();
+	const activeSkill = defined( output.controls.find( c => c.id.startsWith( "skill:" ) && c.draggable ) );
+	const skillId = Number( activeSkill.id.slice( 6 ) );
+	const hotbarSlot1 = defined( output.controls.find( c => c.id === "hotbar:1" ) );
+	assert.ok(
+		activeSkill.rect[0] + activeSkill.rect[2] < hotbarSlot1.rect[0],
+		"Skills window slot on the left does not overlap right-hand hotbar:1"
+	);
+	sent.length = 0;
+	fixture.ui.event( { kind: "activate", id: activeSkill.id } );
+	fixture.ui.event( { kind: "activate", id: "hotbar:1" } );
+	assert.deepEqual( sent, [
+		{ kind: "gameplay", command: { kind: "quickslot-set", binding: { slot: 1, kind: 0x49, payload: skillId } } }
+	] );
+
+	// 5. Closing Skills restores the left-side HUD (player mini info, chat preview, menu button).
+	fixture.ui.event( { kind: "activate", id: "close-window:Skills" } );
 	output = draw();
-	assert.ok( output.controls.some( c => c.id === "minimap-in" ), "minimap restored after drawer closes" );
-	assert.ok( output.controls.some( c => c.id === "mobile-attack" ), "action cluster restored after drawer closes" );
+	assert.ok( output.controls.some( c => c.id === "self-target" ), "player mini info restored after drawer closes" );
+	assert.ok( output.controls.some( c => c.id === "compact-chat" ), "chat preview restored after drawer closes" );
+	assert.ok( output.controls.some( c => c.id === "hud-menu" ), "menu button restored after drawer closes" );
 
 	fixture.dispose();
 });

@@ -503,7 +503,12 @@ export function createPlatform(
 	window.addEventListener( "pagehide", onClose, { signal: lifetime.signal } );
 	const mobileJoystick = createMobileJoystick();
 	const joystickHidden = () =>
-		lastUi?.controls.some( c => (c.id === "compact-chat" || c.id === "compact-status") && c.selected ) ?? false;
+		lastUi?.controls.some(
+			c => ((c.id === "compact-chat" || c.id === "compact-status") && c.selected) ||
+				c.id.startsWith( "close-window:" ) ||
+				c.id === "item-mall-close" ||
+				c.id === "mobile-menu-close"
+		) ?? false;
 	const publishJoystick = () => {
 		const state = mobileJoystick.state();
 		onUi( {
