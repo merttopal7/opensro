@@ -330,7 +330,7 @@ test("M3: actionCluster buttons stay inside safe bounds, below minimap, and neve
 	} );
 	const [sx, sy, sw, sh] = layout.safe.bounds;
 	const cluster = layout.actionCluster;
-	assert.equal( cluster.skills.length, 6 );
+	assert.equal( cluster.skills.length, 10 );
 	const all = [
 		cluster.attack,
 		...cluster.skills,
@@ -581,7 +581,7 @@ test("M3: UI action cluster dispatches attack, target-cycle, pickup, page-toggle
 	let output;
 	for ( let i = 0; i < 6; i++ ) output = draw();
 
-	// 1. Action cluster controls and 6 skill slots are present; legacy 11-slot bar is absent.
+	// 1. Action cluster controls and all 10 skill slots (1..9, 0) are present; legacy 11-slot bar is absent.
 	for (
 		const id of [
 			"hud-menu",
@@ -595,11 +595,19 @@ test("M3: UI action cluster dispatches attack, target-cycle, pickup, page-toggle
 			"hotbar:3",
 			"hotbar:4",
 			"hotbar:5",
-			"hotbar:6"
+			"hotbar:6",
+			"hotbar:7",
+			"hotbar:8",
+			"hotbar:9",
+			"hotbar:10"
 		]
 	) {
 		assert.ok( output.controls.some( c => c.id === id ), `expected M3 control ${id}` );
 	}
+	assert.ok(
+		defined( output.controls.find( c => c.id === "hotbar:10" ) ).label.startsWith( "0:" ),
+		"10th quickslot displays key label 0"
+	);
 	assert.ok( !output.controls.some( c => c.id === "hotbar:0" ), "legacy slot 0 is not rendered in Mobile HUD" );
 	assert.ok( !output.controls.some( c => c.id === "compact-map" ), "legacy toolbar is replaced by Mobile HUD" );
 
@@ -641,11 +649,12 @@ test("M3: UI action cluster dispatches attack, target-cycle, pickup, page-toggle
 		{ kind: "gameplay", command: { kind: "pickup-nearest" } }
 	] );
 
-	// 7. hotbar-next cycles quickslot page F1 -> F2 (slots 11..16).
+	// 7. hotbar-next cycles quickslot page F1 -> F2 (slots 11..20).
 	fixture.ui.event( { kind: "activate", id: "hotbar-next" } );
 	output = draw();
 	assert.ok( output.controls.some( c => c.id === "hotbar:11" ), "page 2 maps slot 1 to hotbar:11" );
 	assert.ok( output.controls.some( c => c.id === "hotbar:16" ), "page 2 maps slot 6 to hotbar:16" );
+	assert.ok( output.controls.some( c => c.id === "hotbar:20" ), "page 2 maps slot 10 (key 0) to hotbar:20" );
 
 	fixture.dispose();
 });
@@ -654,7 +663,7 @@ test("M4: mobileMenuGridLayout and mobileDrawerBounds compute touch-sized 4x2 me
 	const layout = mobileHudLayout( 852, 393, {
 		safeArea: { top: 0, right: 59, bottom: 21, left: 59 }
 	} );
-	assert.deepEqual( layout.panelDrawer, [ 59, 0, 430, 368 ] );
+	assert.deepEqual( layout.panelDrawer, [ 59, 0, 420, 368 ] );
 
 	const grid = mobileMenuGridLayout( layout );
 	assert.equal( grid.cells.length, 12 );
@@ -663,14 +672,14 @@ test("M4: mobileMenuGridLayout and mobileDrawerBounds compute touch-sized 4x2 me
 		assert.ok( cell.rect[2] >= 72 && cell.rect[3] >= 60, `menu cell ${cell.id} meets touch target size` );
 	}
 
-	// Main popup with side tabs is 430x408; inside 430x368 drawer it scales by 368/408 = 0.902 (>= 0.90)
+	// Main popup with side tabs is 430x408; inside 420x368 drawer it scales by 368/408 = 0.902 (>= 0.90)
 	// and docks flush against the left edge of layout.panelDrawer while keeping the right-hand skills uncovered.
 	const drawer = mobileDrawerBounds( layout, 430, 408 );
 	const scale = Math.min( 1, drawer[2] / 430, drawer[3] / 408 );
 	assert.ok( scale >= 0.9, `expected mainPopup drawer scale >= 0.9, got ${scale}` );
 	assert.equal( drawer[0], layout.panelDrawer[0], "docked flush left" );
 	assert.ok(
-		drawer[0] + drawer[2] <= layout.actionCluster.pageToggle[0] - 8,
+		drawer[0] + drawer[2] <= Math.min( layout.actionCluster.pageToggle[0], layout.actionCluster.skills[0][0] ) - 8,
 		"left-docked drawer stays clear of right-hand quickslot skills and page toggle"
 	);
 });

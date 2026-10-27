@@ -320,29 +320,36 @@ export function mobileHudLayout(
 	] as const;
 
 	const clusterBottom = expBar[1] - SECTION_GAP;
-	const rightColumnX = width - safe.right - SKILL_SLOT_SIZE - SECTION_GAP;
-	const attackX = rightColumnX - ATTACK_BUTTON_SIZE - 6;
+	const attackX = width - safe.right - ATTACK_BUTTON_SIZE - SECTION_GAP;
 	const attackY = clusterBottom - ATTACK_BUTTON_SIZE;
-	const midRowY = clusterBottom - AUX_BUTTON_SIZE - SECTION_GAP - SKILL_SLOT_SIZE;
-	const topRowY = midRowY - SECTION_GAP - SKILL_SLOT_SIZE;
-	const leftSkillX = attackX - SKILL_SLOT_SIZE - 6;
-	const farLeftSkillX = leftSkillX - SKILL_SLOT_SIZE - SECTION_GAP;
+	const bottomRowY = clusterBottom - SKILL_SLOT_SIZE;
+	const topRowY = bottomRowY - SECTION_GAP - SKILL_SLOT_SIZE;
+	const rightSkillX = attackX - 6 - SKILL_SLOT_SIZE;
+	const skillPitchX = SKILL_SLOT_SIZE + SECTION_GAP;
+	const farLeftSkillX = rightSkillX - 4 * skillPitchX;
 	const skills: UiRect[] = [
-		[ farLeftSkillX, midRowY, SKILL_SLOT_SIZE, SKILL_SLOT_SIZE ],
-		[ leftSkillX, topRowY, SKILL_SLOT_SIZE, SKILL_SLOT_SIZE ],
-		[ attackX + 10, attackY - SKILL_SLOT_SIZE - 6, SKILL_SLOT_SIZE, SKILL_SLOT_SIZE ],
-		[ leftSkillX, midRowY, SKILL_SLOT_SIZE, SKILL_SLOT_SIZE ],
-		[ rightColumnX, topRowY, SKILL_SLOT_SIZE, SKILL_SLOT_SIZE ],
-		[ rightColumnX, midRowY, SKILL_SLOT_SIZE, SKILL_SLOT_SIZE ]
+		[ farLeftSkillX, topRowY, SKILL_SLOT_SIZE, SKILL_SLOT_SIZE ],
+		[ farLeftSkillX + skillPitchX, topRowY, SKILL_SLOT_SIZE, SKILL_SLOT_SIZE ],
+		[ farLeftSkillX + 2 * skillPitchX, topRowY, SKILL_SLOT_SIZE, SKILL_SLOT_SIZE ],
+		[ farLeftSkillX + 3 * skillPitchX, topRowY, SKILL_SLOT_SIZE, SKILL_SLOT_SIZE ],
+		[ rightSkillX, topRowY, SKILL_SLOT_SIZE, SKILL_SLOT_SIZE ],
+		[ farLeftSkillX, bottomRowY, SKILL_SLOT_SIZE, SKILL_SLOT_SIZE ],
+		[ farLeftSkillX + skillPitchX, bottomRowY, SKILL_SLOT_SIZE, SKILL_SLOT_SIZE ],
+		[ farLeftSkillX + 2 * skillPitchX, bottomRowY, SKILL_SLOT_SIZE, SKILL_SLOT_SIZE ],
+		[ farLeftSkillX + 3 * skillPitchX, bottomRowY, SKILL_SLOT_SIZE, SKILL_SLOT_SIZE ],
+		[ rightSkillX, bottomRowY, SKILL_SLOT_SIZE, SKILL_SLOT_SIZE ]
 	];
-	const auxY = clusterBottom - AUX_BUTTON_SIZE;
-	const targetCycleX = attackX - AUX_BUTTON_SIZE - 6;
+	const auxY = topRowY - SECTION_GAP - AUX_BUTTON_SIZE;
+	const targetCycleX = rightSkillX + Math.floor( (SKILL_SLOT_SIZE - AUX_BUTTON_SIZE) / 2 );
+	const pageToggleX = farLeftSkillX + 3 * skillPitchX + Math.floor( (SKILL_SLOT_SIZE - AUX_BUTTON_SIZE) / 2 );
+	const pickupX = attackX + Math.floor( (ATTACK_BUTTON_SIZE - AUX_BUTTON_SIZE) / 2 );
+	const pickupY = attackY - SECTION_GAP - AUX_BUTTON_SIZE;
 	const actionCluster: MobileActionCluster = {
 		attack: [ attackX, attackY, ATTACK_BUTTON_SIZE, ATTACK_BUTTON_SIZE ],
 		skills,
 		targetCycle: [ targetCycleX, auxY, AUX_BUTTON_SIZE, AUX_BUTTON_SIZE ],
-		pickup: [ rightColumnX + 3, auxY, AUX_BUTTON_SIZE, AUX_BUTTON_SIZE ],
-		pageToggle: [ targetCycleX - AUX_BUTTON_SIZE - 6, auxY, AUX_BUTTON_SIZE, AUX_BUTTON_SIZE ]
+		pickup: [ pickupX, pickupY, AUX_BUTTON_SIZE, AUX_BUTTON_SIZE ],
+		pageToggle: [ pageToggleX, auxY, AUX_BUTTON_SIZE, AUX_BUTTON_SIZE ]
 	};
 
 	const drawerX = safe.left;

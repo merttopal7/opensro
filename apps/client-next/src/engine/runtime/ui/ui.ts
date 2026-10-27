@@ -13038,10 +13038,11 @@ export function createUi(
 						}
 					}
 
-					// 4. Bottom-right 6 skill slots (slots 1..6 on the active quickslot page; stay visible alongside left-docked single-panel drawers).
+					// 4. Bottom-right 10 skill slots (slots 1..9, 0 on the active quickslot page; stay visible alongside left-docked single-panel drawers).
 					if ( (!mobileFullWindowOpen && !mobileMenuOpen) || carriedShortcut !== null ) {
 						for ( let i = 0; i < mobile.actionCluster.skills.length; i++ ) {
 							const n = i + 1;
+							const keyLabel = String( n % 10 );
 							const r = mobile.actionCluster.skills[i]!;
 							const node = hudData?.bar["GDR_TMPQS_" + n];
 							if ( !node || !hudData ) continue;
@@ -13056,10 +13057,10 @@ export function createUi(
 							quickSlotCell(
 								hotbarSlot( hotbarPage, n ),
 								[ r[0] + 6, r[1] + 6, 32, 32 ],
-								String( n )
+								keyLabel
 							);
 							controls[controls.length - 1] = { ...controls[controls.length - 1]!, rect: r };
-							const number = hudData.bar["GDR_QS_NUMBER_" + n];
+							const number = hudData.bar["GDR_QS_NUMBER_" + keyLabel];
 							if ( number ) {
 								authoredImage( number, r[0] + 6 - node.rect[0], r[1] + 6 - node.rect[1] );
 							}
