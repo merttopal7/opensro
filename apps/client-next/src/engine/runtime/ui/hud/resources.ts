@@ -363,7 +363,12 @@ export function createHudResources(
 								states[i] = { kind: "ready", value: null };
 								continue;
 							}
-							if ( r.kind !== "bytes" ) throw Error( "HUD resource unavailable: " + paths[i] );
+							if ( r.kind !== "bytes" ) {
+								throw Error(
+									"HUD resource unavailable: " + paths[i] +
+										(r.kind === "error" ? " (" + r.error + ")" : "")
+								);
+							}
 							const raw = i === layouts.length + 4 || i === layouts.length + 16 ?
 								null :
 								JSON.parse( new TextDecoder( "utf-8", { fatal: true } ).decode( r.buffer ) );

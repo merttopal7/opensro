@@ -392,22 +392,29 @@ inProcessReaders
 
 Reader workers that run the real reader (reader.ts) in this process over
 storage: each port delivers messages on a later microtask, as a worker's
-would. A reader made with mute drops reads, so they stay owed. ports
-records every spawned port.
+would. A reader made with mute drops reads, so they stay owed; one made with
+crash raises a worker error on its first read instead. ports records every
+spawned port.
 ================
 */
-function inProcessReaders( storage, count, { mute = false } = {} ) {
+function inProcessReaders( storage, count, { mute = false, crash = false } = {} ) {
 	const ports = [];
 	const spawn = () => {
 		const port = {
 			/** @type {((event: { data: any }) => void) | null} */
 			onmessage: null,
+			/** @type {((event: { message: string }) => void) | null} */
+			onerror: null,
 			terminated: false,
 			reads: 0,
 			postMessage( request ) {
 				if ( request.kind === "read" ) {
 					port.reads++;
 					if ( mute ) return;
+					if ( crash ) {
+						queueMicrotask( () => port.onerror?.( { message: "Out of memory" } ) );
+						return;
+					}
 				}
 				queueMicrotask( () => reader.receive( request ) );
 			},
@@ -466,4 +473,45 @@ test("closing the archives fails the reads the readers still owe", async () => {
 	const owed = archives.read( MAP_URL, 1 << 20 );
 	archives.dispose();
 	await assert.rejects( owed, /Game archives closed/ );
+});
+
+test("a reader worker that fails answers the reads it owes with the reason", async () => {
+	// Unanswered, the read would wait for the load's watchdog and the HUD
+	// would report only "resource unavailable" (iPhone 13, 2026-10-27).
+	const storage = memoryStorage(), readers = inProcessReaders( storage, 2, { crash: true } );
+	const { archives } = await prepared( storage, updatesServer( release( BASE ) ), countingWait(), readers );
+	await assert.rejects( archives.read( MAP_URL, 1 << 20 ), /Archive reader failed: Out of memory/ );
+	archives.dispose();
+});
+
+test("a read that throws in the reader is answered as failed", async () => {
+	const replies = [];
+	const reader = createArchiveReader( reply => replies.push( reply ) );
+	const file = {
+		createSyncAccessHandle: async () => ({
+			read() {
+				throw new RangeError( "Out of memory" );
+			},
+			close() {}
+		})
+	};
+	const dir = { getFileHandle: async () => file };
+	Object.defineProperty( globalThis.navigator, "storage", {
+		value: { getDirectory: async () => ({ getDirectoryHandle: async () => dir }) },
+		configurable: true
+	} );
+	reader.receive( { kind: "open", directory: "temir", files: [ "Data.temir" ] } );
+	await new Promise( resolve => setTimeout( resolve, 0 ) );
+	assert.deepEqual( replies, [ { kind: "opened" } ] );
+	reader.receive( {
+		kind: "read",
+		id: 7,
+		file: "Data.temir",
+		at: 0,
+		length: 16,
+		key: new Uint32Array( 8 ),
+		nonce: new Uint8Array( 12 ),
+		start: 0
+	} );
+	assert.deepEqual( replies[1], { kind: "read-failed", id: 7, error: "RangeError: Out of memory" } );
 });

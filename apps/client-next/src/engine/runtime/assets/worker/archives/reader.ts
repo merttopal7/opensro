@@ -61,21 +61,27 @@ export function createArchiveReader( send: ( reply: ReaderReply, transfer: Trans
 	/*
 	================
 	read
+
+	Every request is answered. A read that throws (an allocation a
+	low-memory phone refuses, a handle the browser closed) answers
+	read-failed with the reason: unanswered, the owner's read would wait for
+	the load's watchdog and fail without one.
 	================
 	*/
 	function read( request: Extract<ReaderRequest, { kind: "read"; }> ) {
-		const handle = files.get( request.file );
-		const bytes = new Uint8Array( new ArrayBuffer( request.length ) );
-		const got = handle ? handle.read( bytes, { at: request.at } ) : -1;
-		if ( got !== request.length ) {
-			send( {
-				kind: "read-failed",
-				id: request.id,
-				error: `${request.file}: read ${got} of ${request.length} bytes at ${request.at}`
-			}, [] );
+		let bytes: Uint8Array<ArrayBuffer>;
+		try {
+			const handle = files.get( request.file );
+			bytes = new Uint8Array( new ArrayBuffer( request.length ) );
+			const got = handle ? handle.read( bytes, { at: request.at } ) : -1;
+			if ( got !== request.length ) {
+				throw new Error( `${request.file}: read ${got} of ${request.length} bytes at ${request.at}` );
+			}
+			chachaXorAt( request.key, request.nonce, request.start, bytes );
+		} catch ( error ) {
+			send( { kind: "read-failed", id: request.id, error: String( error ) }, [] );
 			return;
 		}
-		chachaXorAt( request.key, request.nonce, request.start, bytes );
 		send( { kind: "bytes", id: request.id, bytes }, [ bytes.buffer ] );
 	}
 

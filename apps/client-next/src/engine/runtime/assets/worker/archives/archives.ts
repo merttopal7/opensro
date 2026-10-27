@@ -604,6 +604,21 @@ export function createLocalArchives( io: ArchiveIo, origin: string, passphrase =
 
 	/*
 	================
+	failReader
+
+	A reader worker that raised an error it did not answer may never answer
+	the reads it owes: fail them with the reason now, rather than leave each
+	load to its watchdog.
+	================
+	*/
+	function failReader( reader: Reader, error: string ) {
+		for ( const [id, read] of owed ) {
+			if ( read.reader === reader ) answer( { kind: "read-failed", id, error } );
+		}
+	}
+
+	/*
+	================
 	startReaders
 
 	Hands the archive files to io.readers reader workers (K8). Read-write
@@ -631,6 +646,9 @@ export function createLocalArchives( io: ArchiveIo, origin: string, passphrase =
 		if ( opened.every( Boolean ) && !disposed ) {
 			for ( const reader of pool ) {
 				reader.port.onmessage = ( event: MessageEvent<ReaderReply> ) => answer( event.data );
+				reader.port.onerror = ( event: ErrorEvent ) => {
+					failReader( reader, "Archive reader failed: " + (event.message || "worker error") );
+				};
 			}
 			readers.push( ...pool );
 			return;
