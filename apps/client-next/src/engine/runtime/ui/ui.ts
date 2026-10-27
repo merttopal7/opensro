@@ -11989,6 +11989,7 @@ export function createUi(
 				if ( hudData && panel !== "Chat" && (!compact || compact.overlay === "chat") ) {
 					const lines = game?.chat?.lines ?? [],
 						chatBottom = mobile ? h - mobile.chatPreview[1] + 4 : compact?.bottom,
+						chatX = mobile ? mobile.chatPreview[0] : undefined,
 						key: unknown[] = [
 							hudData,
 							layoutResourcesRevision,
@@ -11996,6 +11997,7 @@ export function createUi(
 							h,
 							chatRows,
 							chatBottom,
+							chatX,
 							chatTab,
 							chatText,
 							hover,
@@ -12032,7 +12034,8 @@ export function createUi(
 										maxRows: Math.max(
 											1,
 											Math.floor( (h - (chatBottom ?? compact.bottom) - 100) / 56 )
-										)
+										),
+										x: chatX
 									} :
 									undefined,
 								layout: hudData.chat,
@@ -12498,8 +12501,10 @@ export function createUi(
 					}
 				}
 				if ( hudData && whispersOpen && (!compact || compact.overlay === "chat") ) {
-					const wx = 0,
-						wy = compact ?
+					const wx = mobile ? mobile.chatPreview[0] : 0,
+						wy = mobile ?
+							Math.max( mobile.safe.top + 4, mobile.chatPreview[1] - 204 ) :
+							compact ?
 							Math.max( 80, compact.top - 200 ) :
 							h - 52 - (chatRows ? 62 + chatRows * 56 : 20),
 						node = hudData.chat.GDR_WHISPERLIST!;

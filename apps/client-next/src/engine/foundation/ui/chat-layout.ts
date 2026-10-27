@@ -107,7 +107,7 @@ export interface ChatLayoutInput {
 	height: number;
 	// Port-only adaptive layout; omitted retains the native desktop geometry.
 	// bottom reserves pixels below chat; maxRows caps the native 56px row groups.
-	compact?: { bottom: number; maxRows: number; };
+	compact?: { bottom: number; maxRows: number; x?: number; };
 	rows: number;
 	tab: number;
 	input: string;
@@ -167,7 +167,8 @@ export function chatLayout( state: ChatLayoutInput ) {
 		gold = [ 219 / 255, 201 / 255, 155 / 255, 1 ] as const,
 		full: UiRect = [ 0, 0, width, height ];
 	// Only the displayed rows change: resizing must not overwrite the saved size.
-	const chatWidth = state.compact ? Math.max( 0, Math.min( 399, width ) ) : 399,
+	const x = state.compact?.x ?? 0,
+		chatWidth = state.compact ? Math.max( 0, Math.min( 399, width - x ) ) : 399,
 		bottom = state.compact ? Math.max( 0, Math.min( height - 20, state.compact.bottom ) ) : 52,
 		rows = state.compact ?
 			Math.max(
@@ -208,15 +209,15 @@ button
 	}
 	if ( rows ) {
 		const bg = layout.GDR_CHAT_BG_MID!.texture;
-		image( bg, [ 18, y + 21, backgroundWidth, 4 ], layout.GDR_CHAT_BG_UP!.uv );
-		image( bg, [ 18, y + 25, backgroundWidth, rows * 56 + 12 ], layout.GDR_CHAT_BG_MID!.uv );
-		image( bg, [ 18, y + 37 + rows * 56, backgroundWidth, 4 ], layout.GDR_CHAT_BG_DOWN!.uv );
-		button( "chat-whispers", "Whisper list", layout.GDR_BUTTON_WHISPERLIST!.texture, [ 15, y, 16, 20 ] );
-		button( "chat-hide", "See/hide chatting", layout.GDR_BUTTON_CHATTABHIDE!.texture, [ 30, y, 16, 20 ] );
+		image( bg, [ x + 18, y + 21, backgroundWidth, 4 ], layout.GDR_CHAT_BG_UP!.uv );
+		image( bg, [ x + 18, y + 25, backgroundWidth, rows * 56 + 12 ], layout.GDR_CHAT_BG_MID!.uv );
+		image( bg, [ x + 18, y + 37 + rows * 56, backgroundWidth, 4 ], layout.GDR_CHAT_BG_DOWN!.uv );
+		button( "chat-whispers", "Whisper list", layout.GDR_BUTTON_WHISPERLIST!.texture, [ x + 15, y, 16, 20 ] );
+		button( "chat-hide", "See/hide chatting", layout.GDR_BUTTON_CHATTABHIDE!.texture, [ x + 30, y, 16, 20 ] );
 		const keys = [ "UIIT_CTL_CHAT_ALL", "UIIT_CTL_PARTY", "UIIT_CTL_GUILD", "UIIT_STT_GUILD_RESPECT_ALLY" ];
 		if ( !hidden ) {
 			keys.forEach( ( key, i ) => {
-				const r: UiRect = [ 45 + i * tabPitch, y, tabPitch + 1, 20 ];
+				const r: UiRect = [ x + 45 + i * tabPitch, y, tabPitch + 1, 20 ];
 				image( "/assets/images/Media_extracted/interface/chattingwnd/chat_tab.png", r );
 				const caption: UiRect = [ r[0] + 5, r[1] + 4, Math.max( 0, r[2] - 5 ), 14 ];
 				quads.push(
@@ -246,7 +247,7 @@ button
 						][i]!
 					]!;
 					image( lamp.texture, [
-						lamp.rect[0] + i * (tabPitch - 51),
+						x + lamp.rect[0] + i * (tabPitch - 51),
 						y + lamp.rect[1],
 						lamp.rect[2],
 						lamp.rect[3]
@@ -254,7 +255,7 @@ button
 				}
 			} );
 		}
-		const clip: UiRect = [ 27, y + 28, textWidth, rows * 56 + 7 ], channel = [ 1, 4, 5, 11 ][tab];
+		const clip: UiRect = [ x + 27, y + 28, textWidth, rows * 56 + 7 ], channel = [ 1, 4, 5, 11 ][tab];
 		const all = [
 			...(tab === 0 && lines.length < 128 ?
 				textLines( welcome, textWidth, measure, true ).map( value => ({
@@ -294,7 +295,7 @@ button
 			display = hidden ? [] : all.slice( Math.max( 0, end - rows * 4 ), end );
 		const scroll = chatScrollbar(
 			"chat-scroll",
-			[ 0, y + 36, 16, rows * 56 - 28 ],
+			[ x, y + 36, 16, rows * 56 - 28 ],
 			all.length,
 			rows * 4,
 			offset,
@@ -303,11 +304,11 @@ button
 			hover,
 			pressed
 		);
-		scrolling = { range: scroll.range, travel: scroll.travel, bounds: [ 0, y, chatWidth, total - 20 ] };
+		scrolling = { range: scroll.range, travel: scroll.travel, bounds: [ x, y, chatWidth, total - 20 ] };
 		quads.push( ...scroll.quads );
 		paths.push( ...scroll.paths );
 		controls.push( ...scroll.controls );
-		blocks.push( [ 0, y + 20, 16, rows * 56 + 4 ] );
+		blocks.push( [ x, y + 20, 16, rows * 56 + 4 ] );
 		for ( let i = 0; i < display.length; i++ ) {
 			const line = display[i]!,
 				id = "chat-line:" + i,
@@ -362,12 +363,12 @@ button
 				}
 			}
 		}
-		blocks.push( [ 18, y + 21, backgroundWidth, rows * 56 + 20 ] );
+		blocks.push( [ x + 18, y + 21, backgroundWidth, rows * 56 + 20 ] );
 	}
 	const inputY = height - bottom - 20;
-	button( "chat-size", "Change chat size", layout.GDR_BTN_CHAT_SIZE!.texture, [ 0, inputY, 16, 20 ] );
-	image( layout.GDR_CHAT_INPUTBOX!.texture, [ 18, inputY, backgroundWidth, 20 ], layout.GDR_CHAT_INPUTBOX!.uv );
-	const edit: UiRect = [ 22, inputY + 3, Math.max( 0, chatWidth - 26 ), 14 ],
+	button( "chat-size", "Change chat size", layout.GDR_BTN_CHAT_SIZE!.texture, [ x, inputY, 16, 20 ] );
+	image( layout.GDR_CHAT_INPUTBOX!.texture, [ x + 18, inputY, backgroundWidth, 20 ], layout.GDR_CHAT_INPUTBOX!.uv );
+	const edit: UiRect = [ x + 22, inputY + 3, Math.max( 0, chatWidth - 26 ), 14 ],
 		start = Math.max( 0, Math.min( input.length, editState?.start ?? 0 ) ),
 		end = Math.max( start, Math.min( input.length, editState?.end ?? start ) );
 	const before = measure( input.slice( 0, start ) ),
@@ -390,6 +391,6 @@ button
 		}
 	}
 	controls.push( { id: "chat-text", label: "Chat", kind: "text", rect: edit, value: input, maxLength: 100 } );
-	blocks.push( [ 18, inputY, backgroundWidth, 20 ] );
+	blocks.push( [ x + 18, inputY, backgroundWidth, 20 ] );
 	return { quads, controls, paths, blocks, scrolling };
 }

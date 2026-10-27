@@ -812,10 +812,12 @@ test("M5: UI renders 2-line chat preview with unread badge and switches between 
 	assert.deepEqual( logBtn.rect, [ 319, 324, 44, 40 ] );
 	assert.equal( chatBtn.label, "Chat (2 unread)" );
 
-	// 2. Opening compact-chat clears the unread count; closing it keeps seenCount at 2 until a 3rd message arrives.
+	// 2. Opening compact-chat clears the unread count and opens Chat at the exact same left X as chatPreview (67).
 	fixture.ui.event( { kind: "activate", id: "compact-chat" } );
 	output = draw();
 	assert.equal( defined( output.controls.find( c => c.id === "compact-chat" ) ).label, "Chat" );
+	const chatSizeBtn = defined( output.controls.find( c => c.id === "chat-size" ) );
+	assert.equal( chatSizeBtn.rect[0], 67, "Chat UI starts at the same left X as chatPreview and Log" );
 	assert.ok( output.controls.some( c => c.id === "chat-text" ), "chat overlay opened on the left" );
 
 	// 3. Switching directly from Chat to Log via compact-status closes Chat and opens Log on the left side while keeping action cluster active.
