@@ -655,7 +655,7 @@ export function createPlatform(
 					bridge.releaseTouch?.( event.pointerId );
 					uiTouches.delete( event.pointerId );
 					canvas.setPointerCapture( event.pointerId );
-					mobileJoystick.down( event.pointerId, x, y, layout.joystickOrigin );
+					mobileJoystick.down( event.pointerId, x, y );
 					publishJoystick();
 					return;
 				}

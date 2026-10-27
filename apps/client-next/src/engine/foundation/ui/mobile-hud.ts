@@ -78,7 +78,6 @@ export const JOYSTICK_KNOB_RADIUS = 18;
 export const JOYSTICK_DEADZONE = 8;
 const JOYSTICK_STEER_DEADZONE = 10;
 const JOYSTICK_FORWARD_MAX_DY = 14;
-const JOYSTICK_REST_SNAP_RADIUS = 53;
 const HEADING_WORDS = 65535;
 const MONSTER_DEAD_STATE = 2;
 
@@ -568,9 +567,8 @@ createMobileJoystick
 
 Tracks the bottom-left thumb touch that drives 360-degree camera-relative
 direction walking while preserving tap-to-walk when released within the deadzone.
-Anchors to the visible resting pad when touched inside it so pressing its rim
-engages immediately, and pulls the base along when dragged past JOYSTICK_BASE_RADIUS
-so reversing thumb direction has zero dead travel.
+When touched anywhere in the left zone, the joystick frame appears at that touch
+point and its frame origin remains fixed there for the duration of the drag.
 ================
 */
 export function createMobileJoystick() {
@@ -647,34 +645,15 @@ export function createMobileJoystick() {
 		down
 		================
 		*/
-		down(
-			pointerId: number,
-			x: number,
-			y: number,
-			restOrigin?: readonly [number, number]
-		): MobileJoystickKeyOutput[] {
-			const released = transitionOutputs( { up: false, left: false, right: false } );
+		down( pointerId: number, x: number, y: number ): MobileJoystickKeyOutput[] {
 			activeId = pointerId;
-			if (
-				restOrigin &&
-				Math.hypot( x - restOrigin[0], y - restOrigin[1] ) <= JOYSTICK_REST_SNAP_RADIUS
-			) {
-				originX = restOrigin[0];
-				originY = restOrigin[1];
-				const step = mobileJoystickStep( originX, originY, x, y );
-				knobX = step.knob[0];
-				knobY = step.knob[1];
-				dragged = step.dragged;
-				vector = step.vector;
-				return [ ...released, ...transitionOutputs( step.arrows ) ];
-			}
 			originX = x;
 			originY = y;
 			knobX = x;
 			knobY = y;
 			dragged = false;
 			vector = null;
-			return released;
+			return transitionOutputs( { up: false, left: false, right: false } );
 		},
 		/*
 		================
@@ -683,14 +662,6 @@ export function createMobileJoystick() {
 		*/
 		move( pointerId: number, x: number, y: number ): MobileJoystickKeyOutput[] {
 			if ( activeId !== pointerId ) return [];
-			const dx = x - originX;
-			const dy = y - originY;
-			const dist = Math.hypot( dx, dy );
-			if ( dist > JOYSTICK_BASE_RADIUS ) {
-				const pull = (dist - JOYSTICK_BASE_RADIUS) / dist;
-				originX += dx * pull;
-				originY += dy * pull;
-			}
 			const step = mobileJoystickStep( originX, originY, x, y );
 			knobX = step.knob[0];
 			knobY = step.knob[1];

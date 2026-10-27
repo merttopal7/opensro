@@ -398,24 +398,17 @@ test("M3: virtual joystick emits ArrowUp/ArrowLeft/ArrowRight transitions and pr
 	assert.equal( endTap.tap, true );
 	assert.deepEqual( endTap.outputs, [] );
 
-	// Touching the rim of the visible resting pad anchors to restOrigin and engages immediately on pointerdown.
-	const restOrigin = /** @type {const} */ ([ 140, 260 ]);
-	joy.down( 3, 140, 224, restOrigin );
-	assert.deepEqual( joy.state().origin, [ 140, 260 ] );
-	assert.deepEqual( joy.state().knob, [ 140, 224 ] );
-	assert.deepEqual( joy.state().vector, [ 0, -36 ] );
+	// Touching anywhere in the left zone spawns the joystick frame at that point and keeps the frame origin fixed while dragging.
+	joy.down( 3, 180, 230 );
+	assert.deepEqual( joy.state().origin, [ 180, 230 ] );
+	assert.deepEqual( joy.state().knob, [ 180, 230 ] );
+	assert.equal( joy.state().vector, null );
 
-	// Dynamic base following: dragging beyond JOYSTICK_BASE_RADIUS pulls origin behind the thumb.
-	joy.move( 3, 240, 260 );
-	assert.deepEqual( joy.state().origin, [ 240 - JOYSTICK_BASE_RADIUS, 260 ] );
-	assert.deepEqual( joy.state().knob, [ 240, 260 ] );
-	// Reversing 55 px left from 240 -> 185 crosses the pulled origin (198) immediately!
-	joy.move( 3, 185, 260 );
-	assert.ok(
-		defined( joy.state().vector )[0] < 0,
-		"reversing thumb direction crosses pulled origin without dead travel"
-	);
-	joy.up( 3, 185, 260 );
+	joy.move( 3, 280, 230 );
+	assert.deepEqual( joy.state().origin, [ 180, 230 ], "joystick frame stays fixed at initial touch point" );
+	assert.deepEqual( joy.state().knob, [ 180 + JOYSTICK_BASE_RADIUS, 230 ], "knob clamps to base radius" );
+	assert.deepEqual( joy.state().vector, [ JOYSTICK_BASE_RADIUS, 0 ] );
+	joy.up( 3, 280, 230 );
 });
 
 test("M3: mobileJoystickHeading maps screen-relative deflections and camera yaw to 360-degree native headings", () => {
