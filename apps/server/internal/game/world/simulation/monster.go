@@ -29,7 +29,7 @@ import (
 //
 // The decoder layout and monster tidWord (0x00C6) are pinned directly to
 // the v1.150 client. The scalar fields line up with the shipped v1.150
-// characterdata columns and the independently labelled v1.188 server data.
+// characterdata columns and the independently labelled retail server data.
 // Per-instance rarity and AI inputs are resolved by monster from the
 // evidence-backed server population.
 /*
@@ -122,13 +122,7 @@ func BuildMonsterCreateRow(def MonsterDef, gid uint32, spawn Spawn) []byte {
 	if def.Structure {
 		return BuildStructureCreateRow(def, gid, spawn)
 	}
-	x := clampFloat(spawn.X, 0, 0xffff)
-	z := clampFloat(spawn.Z, 0, 0xffff)
-	// Indoor local coordinates are signed F32 values, not outdoor unsigned
-	// packed-movement coordinates. Scope creates must agree with movement.
-	if IsDungeonRegion(spawn.RegionID) {
-		x, z = spawn.X, spawn.Z
-	}
+	x, z := spawnFrameXZ(spawn)
 
 	w := wire.NewWriter(64)
 	w.U32(def.RefObjID).

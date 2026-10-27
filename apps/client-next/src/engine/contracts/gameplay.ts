@@ -446,6 +446,9 @@ export type GameplayCommand =
 		readonly reverseChoice?: number;
 		// The port-only map choice's point id (reverse-return-map.ts).
 		readonly reverseMapPoint?: number;
+		// The name-change scroll's new name (#1689, port-only): the entry
+		// window's text, carried raw in the use tail.
+		readonly renameName?: string;
 	}
 	| {
 		readonly kind: "navigation";
@@ -810,6 +813,10 @@ export interface GameplayState extends MoverPublication {
 	readonly homingProjectiles?: boolean;
 	// The server's port-only SRO_REVERSE_RETURN_MAP option is on (reverse-return-map.ts).
 	readonly reverseMapPoints?: readonly import("@/engine/foundation/gameplay/reverse-return-map").ReverseMapPoint[];
+	// The shard's configured character level cap, published at world entry
+	// (level-cap.ts): the party form and the quest guide bound their level
+	// windows by it. Absent means the native cap (foundation/gameplay/level-cap.ts).
+	readonly levelCap?: number;
 	readonly abnormalRecords?: readonly import("@/engine/foundation/gameplay/abnormal-snapshot").AbnormalRecord[];
 	readonly selectionDecal?: SelectionDecal | null;
 	readonly notices?: readonly import("@/engine/foundation/gameplay/system-notices").SystemNotice[];
@@ -834,7 +841,6 @@ export interface GameplayState extends MoverPublication {
 	readonly shopCompletionRevision?: number;
 	readonly shop?: import("@/engine/foundation/gameplay/commerce").ShopState;
 	readonly masteryTotalOverride?: number;
-	readonly levelCap?: number;
 	readonly trainingPending?: boolean;
 	readonly trainingError?: string | null;
 	// Included with the dynamic snapshot; omission does not retain an older fortress.

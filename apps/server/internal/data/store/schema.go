@@ -97,7 +97,13 @@ func isVersionMismatch(err error) bool {
 // rewrites no record.
 // Version 31 adds optional sequential pet cast capacity, charges and recharge period.
 // Existing cooldown deadlines and every saved record survive unchanged.
-const CurrentVersion = 31
+// Version 32 adds the optional item-break notice opt-in (domain.Character
+// BreakNotice, #1738); every saved record survives unchanged.
+// Version 33 adds the optional name-change scroll state (pendingRenameName,
+// pendingRenameQueuedMs, lastRenameMs; port-only, #1689,
+// SRO_NAME_CHANGE_SCROLL) and layout 11's name_reservations table. The
+// offline upgrade adds the empty table and rewrites no record.
+const CurrentVersion = 33
 
 // SkillSeedFunc resolves the current racial base-skill set while preserving
 // any already learned skill identifiers.

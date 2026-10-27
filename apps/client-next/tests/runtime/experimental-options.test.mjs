@@ -16,14 +16,25 @@ import assert from "node:assert/strict";
 const experimentalModule = await import(
 	"../../src/engine/foundation/ui/experimental-options.ts"
 );
-const { experimentalGameplay, experimentalOptions, experimentalVideo, renderScales, uiScaleFactor } =
-	experimentalModule;
+const {
+	experimentalGameplay,
+	experimentalOptions,
+	experimentalVideo,
+	phoneDisplay,
+	PHONE_SCENE_PIXEL_BUDGET,
+	renderScales,
+	sceneRenderScale,
+	uiScaleFactor
+} = experimentalModule;
 const { createExperimentalHud, EXPERIMENTAL_TABS } = await import(
 	"../../src/engine/runtime/ui/hud/experimental-hud.ts"
 );
 
 const OFF = Object.freeze( {
 	renderScale: 100,
+	// On by default (owner 2026-10-27, #1806): a phone caps the scene's pixels;
+	// every other display draws at full resolution.
+	phoneRenderCap: true,
 	// Native 1:1 interface size.
 	uiScale: 100,
 	chatTimestamps: false,
@@ -59,6 +70,8 @@ const OFF = Object.freeze( {
 	dropPlusNotices: true,
 	// On by default (owner 2026-10-19): the shard's +7 notices show.
 	plusSevenNotices: true,
+	// On by default: the shard's item break notices show (#1738).
+	breakNotices: true,
 	// Off by default: each player opts in to the unique damage ranking.
 	uniqueDamageRank: false,
 	// Off by default: V hides only monsters and players, as the original does.
@@ -102,8 +115,9 @@ const OFF = Object.freeze( {
 	petFilterOther: true,
 	// On by default (owner 2026-10-22, #1243): a touch tap keeps an item or skill tooltip up.
 	touchInspect: true,
-	// Off by default (#1448): the WebSocket stays the default transport until #1450.
-	webTransport: false,
+	// On by default (#1451 step 3): WebTransport is the
+	// default connect and the WebSocket the fallback; off is one setting.
+	webTransport: true,
 	// On by default: the M window shows published extra town pages (Alexandria) and wider overview.
 	expandedWorldMap: true,
 	// Off by default (#840): the maps mark the tracked quest's targets only.
@@ -218,6 +232,7 @@ test("every video stage defaults off and only an explicit true enables it", () =
 	assert.deepEqual( experimentalOptions(), OFF );
 	assert.deepEqual( experimentalVideo( experimentalOptions() ), {
 		renderScale: 100,
+		phoneRenderCap: true,
 		postProcessing: false,
 		anisotropicFiltering: false,
 		heightFog: false,
@@ -353,6 +368,58 @@ test("render scale accepts only explicit numeric selections and reaches the rend
 
 /*
 ================
+Phone resolution (#1806)
+================
+*/
+// The report's iPhone: a 2250 x 1206 backing store at device pixel ratio 3.
+const IPHONE_VIEWPORT = { width: 2250, height: 1206 };
+
+test("a phone is a coarse pointer on a short screen; touch laptops and tablets are not", () => {
+	assert.equal( phoneDisplay( { coarsePointer: true, shortSide: 402 } ), true );
+	assert.equal( phoneDisplay( { coarsePointer: true, shortSide: 360 } ), true );
+	assert.equal( phoneDisplay( { coarsePointer: true, shortSide: 768 } ), false, "tablet" );
+	assert.equal( phoneDisplay( { coarsePointer: false, shortSide: 402 } ), false, "fine pointer" );
+	assert.equal( phoneDisplay( { coarsePointer: true, shortSide: 0 } ), false, "no screen reported" );
+});
+
+test("phone resolution defaults on and only an explicit false turns it off", () => {
+	for ( const value of [ undefined, null, {}, { phoneRenderCap: "false" }, { phoneRenderCap: 0 } ] ) {
+		assert.equal( experimentalOptions( value ).phoneRenderCap, true, JSON.stringify( value ) );
+	}
+	const off = experimentalOptions( JSON.parse( JSON.stringify( { phoneRenderCap: false } ) ) );
+	assert.equal( off.phoneRenderCap, false );
+	assert.equal( experimentalVideo( off ).phoneRenderCap, false );
+});
+
+test("on a phone the cap picks the largest scale inside the pixel budget", () => {
+	const on = experimentalVideo( experimentalOptions() );
+	assert.equal( sceneRenderScale( on, IPHONE_VIEWPORT, true ), 50 );
+	// A smaller backing store keeps more of its resolution.
+	assert.equal( sceneRenderScale( on, { width: 1280, height: 720 }, true ), 100 );
+	assert.equal( sceneRenderScale( on, { width: 1600, height: 900 }, true ), 75 );
+	// Past the budget even at the smallest scale, the smallest scale stays.
+	assert.equal( sceneRenderScale( on, { width: 4000, height: 3000 }, true ), 50 );
+	for ( const viewport of [ IPHONE_VIEWPORT, { width: 1600, height: 900 } ] ) {
+		const scale = sceneRenderScale( on, viewport, true );
+		assert.ok( viewport.width * viewport.height * scale * scale / 10000 <= PHONE_SCENE_PIXEL_BUDGET );
+	}
+});
+
+test("the phone cap leaves desktops, the off switch and a picked scale alone", () => {
+	const on = experimentalVideo( experimentalOptions() );
+	// Not a phone: the native full resolution.
+	assert.equal( sceneRenderScale( on, IPHONE_VIEWPORT, false ), 100 );
+	// Switched off on a phone: full resolution.
+	const off = experimentalVideo( experimentalOptions( { phoneRenderCap: false } ) );
+	assert.equal( sceneRenderScale( off, IPHONE_VIEWPORT, true ), 100 );
+	// A scale the player picked below 100 wins, also above the cap's choice.
+	const picked = experimentalVideo( experimentalOptions( { renderScale: 75 } ) );
+	assert.equal( sceneRenderScale( picked, IPHONE_VIEWPORT, true ), 75 );
+	assert.equal( sceneRenderScale( picked, IPHONE_VIEWPORT, false ), 75 );
+});
+
+/*
+================
 UI size preferences
 ================
 */
@@ -477,10 +544,11 @@ test("the predicted run-up defaults on and reaches only the worker's slice", () 
 	// walks before the server answers, so the row remains the off switch.
 	assert.deepEqual( experimentalGameplay( experimentalOptions() ), {
 		predictedRunUp: true,
-		webTransport: false,
+		webTransport: true,
 		jobKillNotices: true,
 		dropPlusNotices: true,
 		plusSevenNotices: true,
+		breakNotices: true,
 		homingProjectiles: false,
 		smartPetPickup: true,
 		sunDropMarker: false,
@@ -493,16 +561,32 @@ test("the predicted run-up defaults on and reaches only the worker's slice", () 
 	const on = experimentalOptions( { predictedRunUp: true } );
 	assert.deepEqual( experimentalGameplay( on ), {
 		predictedRunUp: true,
-		webTransport: false,
+		webTransport: true,
 		jobKillNotices: true,
 		dropPlusNotices: true,
 		plusSevenNotices: true,
+		breakNotices: true,
 		homingProjectiles: false,
 		smartPetPickup: true,
 		sunDropMarker: false,
 		petPickupKinds: undefined
 	} );
 	assert.equal( "predictedRunUp" in experimentalVideo( on ), false );
+});
+
+test("the WebTransport connection defaults on and one setting turns it off", () => {
+	// #1451 step 3: WebTransport is the default connect; the WebSocket
+	// stays the connect-time fallback, and the row remains the switch
+	// back. Like the other default-on rows, only an explicit false
+	// turns it off.
+	assert.equal( experimentalOptions().webTransport, true );
+	assert.equal( experimentalGameplay( experimentalOptions() ).webTransport, true );
+	for ( const value of [ 1, "true", null, {}, "false", 0 ] ) {
+		assert.equal( experimentalOptions( { webTransport: value } ).webTransport, true, JSON.stringify( value ) );
+	}
+	const off = experimentalOptions( { webTransport: false } );
+	assert.equal( off.webTransport, false );
+	assert.equal( experimentalGameplay( off ).webTransport, false );
 });
 
 test("the pickup pet item filter is off by default and only narrows inside itself", () => {
@@ -562,6 +646,37 @@ test("compressed textures are on unless explicitly false, and the stored reader 
 	assert.throws( () => storedExperimentalOptions( { getItem: () => "{" } ) );
 });
 
+test("a profile saved before the flip loads with WebTransport on; a choice under the current key is kept", () => {
+	const { storedExperimentalOptions, EXPERIMENTAL_STORAGE_KEY, PREVIOUS_EXPERIMENTAL_STORAGE_KEY } =
+		experimentalModule;
+	const storageOf = entries => {
+		const saved = new Map( entries );
+		return { getItem: key => saved.get( key ) ?? null };
+	};
+	// Saved before the flip (platform.ts wrote the whole options object,
+	// so a Confirm under the old default stored webTransport: false):
+	// the flip reaches it, and its other choices carry over.
+	const before = storedExperimentalOptions( storageOf( [
+		[ PREVIOUS_EXPERIMENTAL_STORAGE_KEY, JSON.stringify( { webTransport: false, chatTimestamps: true } ) ]
+	] ) );
+	assert.equal( before.options.webTransport, true );
+	assert.equal( before.options.chatTimestamps, true );
+	assert.ok( before.raw && typeof before.raw === "object" && !("webTransport" in before.raw) );
+	// Stored under the current key after the flip: an explicit off stays off.
+	const after = storedExperimentalOptions( storageOf( [
+		[ PREVIOUS_EXPERIMENTAL_STORAGE_KEY, JSON.stringify( { chatTimestamps: true } ) ],
+		[ EXPERIMENTAL_STORAGE_KEY, JSON.stringify( { webTransport: false } ) ]
+	] ) );
+	assert.equal( after.options.webTransport, false );
+	// The current key wins even when the previous one is also present.
+	const both = storedExperimentalOptions( storageOf( [
+		[ PREVIOUS_EXPERIMENTAL_STORAGE_KEY, JSON.stringify( { webTransport: false, chatTimestamps: false } ) ],
+		[ EXPERIMENTAL_STORAGE_KEY, JSON.stringify( { webTransport: false, chatTimestamps: true } ) ]
+	] ) );
+	assert.equal( both.options.webTransport, false );
+	assert.equal( both.options.chatTimestamps, true );
+});
+
 test("the shared actor room is on unless explicitly false, and reaches the renderer's video options", () => {
 	for ( const value of [ undefined, null, {}, { sharedActorRoom: 1 }, { sharedActorRoom: "false" } ] ) {
 		assert.equal( experimentalOptions( value ).sharedActorRoom, true );
@@ -611,6 +726,20 @@ test("plus seven notices are on unless explicitly false, stay out of the video s
 	assert.equal( experimentalGameplay( off ).plusSevenNotices, false );
 	assert.equal( experimentalGameplay( experimentalOptions( { dropPlusNotices: false } ) ).plusSevenNotices, true );
 	assert.equal( "plusSevenNotices" in experimentalVideo( experimentalOptions( {} ) ), false );
+});
+
+test("item break notices are on unless explicitly false, stay out of the video slice, and never widen another notice row", () => {
+	for ( const value of [ undefined, null, {}, { breakNotices: 1 }, { breakNotices: "false" } ] ) {
+		assert.equal( experimentalOptions( value ).breakNotices, true );
+	}
+	const off = experimentalOptions( { breakNotices: false } );
+	assert.equal( off.breakNotices, false );
+	assert.equal( off.jobKillNotices, true );
+	assert.equal( off.dropPlusNotices, true );
+	assert.equal( off.plusSevenNotices, true );
+	assert.equal( experimentalGameplay( off ).breakNotices, false );
+	assert.equal( experimentalGameplay( experimentalOptions( { dropPlusNotices: false } ) ).breakNotices, true );
+	assert.equal( "breakNotices" in experimentalVideo( experimentalOptions( {} ) ), false );
 });
 
 test("V hides pets and transports only when explicitly on, and reaches the renderer's slice", () => {

@@ -133,6 +133,36 @@ func SamePlane(a, b uint16) bool {
 }
 
 /*
+================
+SameFloor
+
+Whether both regions are one walkable floor: any two outdoor regions (the
+sectors join), or one and the same cave region (each cave floor is its own
+region id with its own local frame).
+================
+*/
+func SameFloor(a, b uint16) bool {
+	return SamePlane(a, b) && (!IsDungeonRegion(a) || a == b)
+}
+
+/*
+================
+SectorOffset
+
+The world-unit offset from from's region frame to to's, for two regions on
+one plane: the outdoor sector delta times OutdoorRegionSize, and ok. The
+cave plane has no sectors (a cave's locals are already its frame), so it
+answers not ok and no offset.
+================
+*/
+func SectorOffset(from, to uint16) (dx, dz float64, ok bool) {
+	if IsDungeonRegion(from) {
+		return 0, 0, false
+	}
+	return float64(SectorX(to)-SectorX(from)) * OutdoorRegionSize, float64(SectorY(to)-SectorY(from)) * OutdoorRegionSize, true
+}
+
+/*
 ==================
 SamePlaneAdjacent
 
@@ -274,6 +304,85 @@ func Interpolate(from, to RegionXZ, t float64) RegionXZ {
 	})
 }
 
+// regionsAlongEndSlack is the chord fraction RegionsAlong treats as the end:
+// a seam reached within it is the end's own seam (float rounding of a chord
+// that ends exactly on a seam or corner), not one more crossing past it.
+const regionsAlongEndSlack = 1e-9
+
+/*
+================
+RegionsAlong
+
+Every region the straight walk from->to enters, in order, starting with
+from's own region (each region once per entry). Outdoors it walks the
+sector grid exactly (one grid traversal step per seam, so a chord that
+clips a sector corner still lists that sector); a chord through a corner
+point steps both axes at once, as one movement step past the corner does.
+The cave plane has no sectors, and a walk between planes is never one
+chord: both answer the two end regions. Callers use it to test each region
+change a walk makes, the way the reference server's per-step movement tests
+every step of a moving object.
+
+The traversal only crosses seams strictly before the end of the chord, and
+the end's canonical region (NormalizeOutdoor) closes the list: a chord that
+ends exactly on a seam or a corner, where float rounding puts the last seam
+a hair before or after the end, must not step past it.
+================
+*/
+func RegionsAlong(from, to RegionXZ) []uint16 {
+	if IsDungeonRegion(from.RegionID) || !SamePlane(from.RegionID, to.RegionID) {
+		if from.RegionID == to.RegionID {
+			return []uint16{from.RegionID}
+		}
+		return []uint16{from.RegionID, to.RegionID}
+	}
+	dx, dz := Delta(from, to)
+	sx, sz := SectorX(from.RegionID), SectorY(from.RegionID)
+	ix, iz := int(math.Floor(from.X/OutdoorRegionSize)), int(math.Floor(from.Z/OutdoorRegionSize))
+	regions := []uint16{RegionIDForSectors(sx+ix, sz+iz)}
+	stepX, nextX, deltaX := gridStep(from.X, dx, ix)
+	stepZ, nextZ, deltaZ := gridStep(from.Z, dz, iz)
+	for math.Min(nextX, nextZ) < 1-regionsAlongEndSlack {
+		switch {
+		case nextX < nextZ:
+			ix += stepX
+			nextX += deltaX
+		case nextZ < nextX:
+			iz += stepZ
+			nextZ += deltaZ
+		default:
+			ix += stepX
+			iz += stepZ
+			nextX += deltaX
+			nextZ += deltaZ
+		}
+		regions = append(regions, RegionIDForSectors(sx+ix, sz+iz))
+	}
+	if end := NormalizeOutdoor(to).RegionID; regions[len(regions)-1] != end {
+		regions = append(regions, end)
+	}
+	return regions
+}
+
+/*
+================
+gridStep
+
+One axis of the RegionsAlong traversal: the cell step direction, the chord
+fraction at which the walk reaches its first seam on this axis, and the
+fraction between seams. An axis the chord does not move along never steps.
+================
+*/
+func gridStep(start, delta float64, cell int) (step int, next, between float64) {
+	switch {
+	case delta > 0:
+		return 1, (float64(cell+1)*OutdoorRegionSize - start) / delta, OutdoorRegionSize / delta
+	case delta < 0:
+		return -1, (float64(cell)*OutdoorRegionSize - start) / delta, -OutdoorRegionSize / delta
+	}
+	return 0, math.Inf(1), math.Inf(1)
+}
+
 //============================================================================
 // Plane-keyed arithmetic moved here from the simulation (#1646): the
 // region bit decides a frame or a grid, which is this file's job.
@@ -346,4 +455,34 @@ func LocalCoordinateFloor(regionID uint16) float64 {
 		return -0x8000
 	}
 	return 0
+}
+
+/*
+================
+InterestBlockAt
+
+The message block containing position: the dungeon grid's own planar
+partition for dungeon regions (the whole region until the grid is
+installed or the point falls outside it), the expanded outdoor grid
+folded by InterestBlockSize otherwise. Moved verbatim from interest.go
+(#1646): the plane branch is this file's to own.
+================
+*/
+func InterestBlockAt(position RegionXZ) InterestBlock {
+	if IsDungeonRegion(position.RegionID) {
+		grid, ok := dungeonMessageGridFor(position.RegionID)
+		if !ok {
+			return InterestBlock{Dungeon: position.RegionID, Whole: true}
+		}
+		x, z, inside := grid.planarBlock(position.X, position.Z)
+		if !inside {
+			return InterestBlock{Dungeon: position.RegionID, Whole: true}
+		}
+		return InterestBlock{Dungeon: position.RegionID, X: x, Z: z}
+	}
+	grid := ExpandGrid(position)
+	return InterestBlock{
+		X: int(math.Floor(grid.X / InterestBlockSize)),
+		Z: int(math.Floor(grid.Z / InterestBlockSize)),
+	}
 }

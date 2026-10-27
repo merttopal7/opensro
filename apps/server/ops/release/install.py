@@ -29,8 +29,8 @@ ROOT = Path("/var/lib/opensro-release")
 CONFIG = Path("/etc/opensro-release/config.json")
 MODULES = ("release_state.py", "plan.py", "bundle.py", "client_bundle.py", "retention.py",
 	"client_deploy.py", "client_data.py", "server_data.py", "coordinated.py", "deploy.py", "rollback.py", "monitor.py",
-	"stalldump_watch.py", "receiver.py")
-CONTROL_FILES = (*MODULES, "install.py", "compatibility.json", "overview.html", "routes.caddy",
+	"stalldump_watch.py", "receiver.py", "quic_host.py")
+CONTROL_FILES = (*MODULES, "install.py", "compatibility.json", "shard-settings.json", "overview.html", "routes.caddy",
 	"opensro-monitor.service", "opensro-monitor.timer", "opensro-stalldump.service", "opensro-stalldump.timer",
 	"opensro-release-deadman.service", "opensro-release-deadman.timer")
 
@@ -191,6 +191,7 @@ def monitor(version, config):
 		stalldump_settings = {"dir": config["stall_dumps"], "state": str(stalldump / "watch.json"),
 			"webhook": str(webhook), "label": config["shard"]}
 		install_file("/etc/opensro-release/stalldump.json", (json.dumps(stalldump_settings, indent=2) + "\n").encode())
+		stalldump_access(config["stall_dumps"], name)
 	for name in ("opensro-monitor.service", "opensro-monitor.timer", "opensro-stalldump.service", "opensro-stalldump.timer"):
 		body = (version / name).read_text().replace("@RELEASE_MODULES@", str(version))
 		install_file(Path("/etc/systemd/system") / name, body.encode())
@@ -198,6 +199,35 @@ def monitor(version, config):
 	subprocess.run(["systemctl", "enable", "--now", "opensro-monitor.timer"], check=True)
 	if "stall_dumps" in config:
 		subprocess.run(["systemctl", "enable", "--now", "opensro-stalldump.timer"], check=True)
+
+
+# ================
+# stalldump_access
+#
+# The stall-dump watch runs as opensro-monitor and reads the dumps the
+# GameWorld (user sro) writes under the shard authority. The authority is
+# mode 700, so without an explicit grant the watch cannot even traverse
+# it and every timer run dies with PermissionError - the failure this
+# step exists to prevent (seen live 2026-10-27: a named ACL entry for
+# the watcher sat under a zeroed mask, which a chmod to 700 produces).
+# The grant is the minimum the watch needs: traverse-only on each
+# existing ancestor that is not world-traversable, read on the dumps
+# directory, and a default ACL so dumps written later inherit read
+# access. Rewriting the entry also restores its mask. A directory that
+# does not exist yet (the GameWorld creates it on first start) is
+# skipped; the next control install completes the grant.
+# ================
+def stalldump_access(directory, user, run=subprocess.run):
+	directory = Path(directory)
+	if not directory.exists():
+		return
+	for ancestor in directory.parents:
+		if ancestor.exists() and not ancestor.stat().st_mode & 0o001:
+			run(["setfacl", "-m", "u:" + user + ":--x", str(ancestor)], check=True)
+	run(["setfacl", "-m", "u:" + user + ":r-x", str(directory)], check=True)
+	run(["setfacl", "-d", "-m", "u:" + user + ":r--", str(directory)], check=True)
+	for dump in sorted(directory.glob("tick-stall-*.txt")):
+		run(["setfacl", "-m", "u:" + user + ":r--", str(dump)], check=True)
 
 
 # ================
@@ -229,6 +259,27 @@ def deadman(version):
 		install_file(Path("/etc/systemd/system") / name, body.encode())
 	subprocess.run(["systemctl", "daemon-reload"], check=True)
 	subprocess.run(["systemctl", "enable", "--now", "opensro-release-deadman.timer"], check=True)
+
+
+# ================
+# quic_sysctls
+#
+# The UDP socket buffers the public WebTransport (QUIC) listener performs
+# with, installed as a sysctl drop-in at control-install time so the
+# owner-gated flip needs no host step for buffers. Inert while the switch
+# is off: nothing listens differently until a public listener binds.
+# Removing the file and re-running sysctl --system restores the
+# distribution defaults.
+# ================
+QUIC_SYSCTL_PATH = Path("/etc/sysctl.d/60-opensro-quic.conf")
+QUIC_SYSCTL_BODY = ("# opensro: UDP buffers for the public WebTransport (QUIC) listener.\n"
+	"net.core.rmem_max = 7500000\n"
+	"net.core.wmem_max = 7500000\n")
+
+
+def quic_sysctls():
+	install_file(QUIC_SYSCTL_PATH, QUIC_SYSCTL_BODY.encode())
+	subprocess.run(["sysctl", "--system"], check=True)
 
 
 # ================
@@ -280,6 +331,7 @@ def main():
 	account("sro-release", "publish", Path(arguments.publish_key).read_text(), version)
 	monitor(version, config)
 	deadman(version)
+	quic_sysctls()
 	write_state(ROOT / "installed-controls.json", json.loads((version / "installed.json").read_text()))
 	print("Release controls installed; live client and server were not published.")
 

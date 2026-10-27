@@ -75,10 +75,11 @@ type Runtime struct {
 	CanEnterRegion func(character *enterworld.Character, regionID uint16) bool
 	// TownEntryBlocked is the thief's stolen-goods rule (#721): a thief in
 	// job mode with a summoned transport may not cross from a battlefield
-	// region into a protected one (v1.188 CGObjCOS_AdmitJobRegionTransition
-	// 4D2C20). It gets the region the move leaves and the one it reaches,
-	// checked at the same boundaries as CanEnterRegion; a refusal carries
-	// the native 0x3058 notice. Nil allows every entry.
+	// region into a protected one (the server's job-region transition rule
+	// for transports). It gets one region change, and movement asks it for
+	// every change a walk makes (thiefCargoCrossingBlocked): a refused
+	// destination move carries the native 0x3058 notice, a direction walk
+	// stops at the border. Nil allows every entry.
 	TownEntryBlocked func(character *enterworld.Character, fromRegion, toRegion uint16) bool
 	// ClearPendingPickup, when set, clears the character's pickup-approach
 	// latch before a ground move applies (the reference clears
@@ -89,20 +90,20 @@ type Runtime struct {
 	// A manual ground command supersedes auto-approach even when its body is
 	// malformed/refused, matching the native one-command interaction latch.
 	ClearCombatIntent func(divisionID, characterName string)
-	// MovementBlocked is the abnormal-state gate of 4B0EA0: a frozen, asleep,
+	// MovementBlocked is the move handler's abnormal-state gate: a frozen, asleep,
 	// rooted or stunned mover's command is dropped silently. Nil admits.
 	MovementBlocked func(divisionID, characterName string) bool
 	// RetireMoveEffects is the movement event of the same handler: an
 	// accepted move ends every effect whose skc event mask holds bit 1
-	// (CSkillManager_RetireEffectsForEventMask 5A16C0, called by 4B0EA0
-	// once SetMoveCommand accepts). It runs after the character lock is
+	// (the server retires those effects once the move command accepts).
+	// It runs after the character lock is
 	// released, keeping the action -> character lock order. Nil skips.
 	RetireMoveEffects func(divisionID, characterName string, nowMs int64)
-	// AttackLocked is 4EF880's attack lock in the same gate: while a skill
-	// action holds the casting instance (char+C08) the command is dropped,
+	// AttackLocked is the attack lock in the same gate: while a skill
+	// action holds the casting instance the command is dropped,
 	// not queued. Nil admits.
 	AttackLocked func(divisionID, characterName string) bool
-	// MotionLocked is 4B0EA0's motion gate: a knocked-down player (motion 8)
+	// MotionLocked is the move handler's motion gate: a knocked-down player (motion 8)
 	// drops its ground command. Nil admits.
 	MotionLocked func(divisionID, characterName string) bool
 	// AdvanceResidentRegion commits a crossed live region before this command
@@ -316,6 +317,33 @@ func thiefCargoTownRefusal() MoveOutcome {
 
 /*
 ==================
+thiefCargoCrossingBlocked
+
+Whether the walk from->to makes a region change TownEntryBlocked refuses.
+The reference server tests the transport's region on every movement step
+(its per-step movement asks the transport's job-region check), so a walk
+from a battlefield through a protected sector and back out is refused at
+its first protected entry, not only judged by its two ends (#721).
+==================
+*/
+func (rt *Runtime) thiefCargoCrossingBlocked(character *enterworld.Character, from, to simulation.Spawn) bool {
+	if rt.TownEntryBlocked == nil {
+		return false
+	}
+	regions := worldgeom.RegionsAlong(
+		worldgeom.RegionXZ{RegionID: from.RegionID, X: from.X, Z: from.Z},
+		worldgeom.RegionXZ{RegionID: to.RegionID, X: to.X, Z: to.Z},
+	)
+	for i := 1; i < len(regions); i++ {
+		if rt.TownEntryBlocked(character, regions[i-1], regions[i]) {
+			return true
+		}
+	}
+	return false
+}
+
+/*
+==================
 HandleMove
 
 HandleMove ports moveMissionCharacter over the native 0x7738 body:
@@ -492,7 +520,7 @@ func (rt *Runtime) handleMoveLocked(divisionID string, character *enterworld.Cha
 				Reason:          "areaAccessDenied",
 			})
 		}
-		if rt.TownEntryBlocked != nil && rt.TownEntryBlocked(character, live.RegionID, goal.RegionID) {
+		if rt.thiefCargoCrossingBlocked(character, live, goal) {
 			return thiefCargoTownRefusal()
 		}
 		committed, committedWalk, refusal := rt.AdmitGroundWalk(character.Name, live, state.LiveOwnerAt(nowMs), goal)
@@ -510,7 +538,7 @@ func (rt *Runtime) handleMoveLocked(divisionID string, character *enterworld.Cha
 				Reason:          "areaAccessDenied",
 			})
 		}
-		if rt.TownEntryBlocked != nil && rt.TownEntryBlocked(character, live.RegionID, committed.RegionID) {
+		if rt.thiefCargoCrossingBlocked(character, live, committed) {
 			return thiefCargoTownRefusal()
 		}
 		request.RegionID = committed.RegionID
@@ -545,13 +573,14 @@ func (rt *Runtime) handleMoveLocked(divisionID string, character *enterworld.Cha
 ==================
 moveAdmission
 
-What admitMove captured in one authority read: the character snapshot and
-the world whose LifeRevision fences the commit.
+What admitMove captured in one authority read: the world whose
+LifeRevision fences the commit. The character facts the gates weigh are
+read as values inside the same read (admitMove), so no detached record
+is built for them (#1820 part C).
 ==================
 */
 type moveAdmission struct {
 	worldKey string
-	snapshot *enterworld.Character
 	world    simulation.WorldState
 }
 
@@ -568,23 +597,26 @@ the action/death lane. The caller holds the character operation lock.
 */
 func (rt *Runtime) admitMove(divisionID string, character *enterworld.Character, cosGID uint32) (moveAdmission, *simulation.MoveError) {
 	admission := moveAdmission{worldKey: simulation.WorldKey(divisionID, character.Name)}
+	var riding, deletePending, teleportCasting, alive bool
 	rt.deps.Read(divisionID, func() {
-		admission.snapshot = character.Snapshot()
+		if cos := character.ActiveCOS; cos != nil && cos.GID == cosGID && cos.Mounted && cos.Summoned && cos.CurrentHP != 0 {
+			riding = true
+		}
+		deletePending = character.DeletePending
+		teleportCasting = character.NativeTeleportMode == 1
+		alive = enterworld.CharacterAlive(character)
 		admission.world = rt.Worlds.Snapshot(admission.worldKey, func() simulation.WorldState { return simulation.SeedWorldState(character) })
 	})
-	snapshot := admission.snapshot
-	riding := snapshot != nil && snapshot.ActiveCOS != nil && snapshot.ActiveCOS.GID == cosGID &&
-		snapshot.ActiveCOS.Mounted && snapshot.ActiveCOS.Summoned && snapshot.ActiveCOS.CurrentHP != 0
 	if cosGID != 0 && !riding {
 		return admission, &simulation.MoveError{NativeErrorCode: simulation.NativeErrorInvalidRequest, Reason: "invalidCosOwner"}
 	}
-	if snapshot == nil || snapshot.DeletePending {
+	if deletePending {
 		return admission, &simulation.MoveError{NativeErrorCode: simulation.NativeErrorInvalidRequest, Reason: "deletePending"}
 	}
-	if snapshot.NativeTeleportMode == 1 {
+	if teleportCasting {
 		return admission, &simulation.MoveError{NativeErrorCode: simulation.NativeErrorInvalidRequest, Reason: "teleportCasting"}
 	}
-	if !enterworld.CharacterAlive(snapshot) {
+	if !alive {
 		// Native never serializes 0x7738 while motion state 1 (death) is set.
 		// Mirror the same rule at authority so an older/stale client cannot
 		// move a persisted corpse before its LIFE-dead replay arrives.
@@ -661,12 +693,12 @@ func (rt *Runtime) ConstrainMovement(characterName string, from, to simulation.S
 	return committed, refusal
 }
 
-// maxLineOfSightLegs is 98D880's leg cap: the native test re-runs the
+// maxLineOfSightLegs is the line-of-sight leg cap: the native test re-runs the
 // move test from each reached point at most six times.
 const maxLineOfSightLegs = 6
 
-// lineOfSightSettleDistance is the within-5-units completion 98B300
-// breaks a continuation run on (see continuedReport): a leg that started
+// lineOfSightSettleDistance is the within-5-units completion the movement
+// query breaks a continuation run on (see continuedReport): a leg that started
 // this close to the target settles the run, clear of its contact bits.
 const lineOfSightSettleDistance = 5
 
@@ -688,10 +720,10 @@ func clipConstrained(requested, clipped simulation.Spawn, blocked bool) bool {
 ==================
 LineOfSight
 
-CRegionManagerBody_CheckLineOfSight (98D880), the region-manager vfunc
-+0x78 that Skill_ValidatePrerequisitesAndCost asks for every action target
-in phase 0x40. Verified in SR_GameServer.exe.trimmed.bndb: it runs the
-ground move test (vfunc +0x30) leg by leg toward the target, at most
+The server's line-of-sight test: the region-manager query the skill
+prerequisite check asks for every action target
+in phase 0x40. It runs the
+ground move test leg by leg toward the target, at most
 six legs; a leg whose result carries the linked bit (0x2) without the
 failure bit 0x10000000 is re-run from the point it reached, and the
 line is clear exactly when the final leg's result carries neither
@@ -734,7 +766,7 @@ func (rt *Runtime) LineOfSight(from simulation.Spawn, fromOwner simulation.NavOw
 			return report.NativeResult&monster.NavResultClipped == 0
 		}
 		// A continued leg is not a failure: when the leg started within
-		// the native completion distance of the target, 98B300 settles
+		// the native completion distance of the target, the movement query settles
 		// the run and clears the contact bits (continuedReport), so an
 		// open outline exit's Clipped bit must not refuse the line.
 		if lineOfSightSettles(legFrom, to) {
@@ -742,8 +774,8 @@ func (rt *Runtime) LineOfSight(from simulation.Spawn, fromOwner simulation.NavOw
 		}
 		legFrom, legOwner = report.Rest, report.RestOwner
 	}
-	// The leg cap ran out on a leg that still continues: 98D880 judges
-	// the final leg's result, and a continuing leg carries no failure.
+	// The leg cap ran out on a leg that still continues: the line-of-sight
+	// test judges the final leg's result, and a continuing leg carries no failure.
 	return true
 }
 
@@ -752,7 +784,7 @@ func (rt *Runtime) LineOfSight(from simulation.Spawn, fromOwner simulation.NavOw
 lineOfSightSettles
 
 lineOfSightSettles reports whether a continued leg started within the
-native completion distance of the target: 98B300 (98B5B2..98B5E9, the
+native completion distance of the target: the movement query (the
 same break ClipMovementPathFrom models) compares the squared 3D
 distance from the leg's start - not the point it reached - to the
 target against 25 and ends the continuation run there. Sector
@@ -827,26 +859,6 @@ func (rt *Runtime) walkOwners(from simulation.Spawn, fromOwner simulation.NavOwn
 		to.Y, walk.Rest = y, owner
 	}
 	return to, walk
-}
-
-/*
-==================
-characterSnapshot
-
-characterSnapshot copies mutable character fields while the authority read
-door is held. ID and Name are immutable identity; every other field used by
-movement must come from this detached view or an Update closure.
-==================
-*/
-func (rt *Runtime) characterSnapshot(divisionID string, character *enterworld.Character) *enterworld.Character {
-	if character == nil {
-		return nil
-	}
-	var snapshot *enterworld.Character
-	rt.deps.Read(divisionID, func() {
-		snapshot = character.Snapshot()
-	})
-	return snapshot
 }
 
 /*

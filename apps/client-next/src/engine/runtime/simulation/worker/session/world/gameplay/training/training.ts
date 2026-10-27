@@ -20,7 +20,6 @@ createTraining
 export function createTraining( send: ( frame: WireFrame ) => void ) {
 	let state: TrainingState = { phase: "idle" };
 	let masteryTotalOverride: number | undefined;
-	let levelCap: number | undefined;
 	return {
 		/*
 		================
@@ -35,11 +34,6 @@ export function createTraining( send: ( frame: WireFrame ) => void ) {
 				throw new Error( "Invalid mastery total override" );
 			}
 			masteryTotalOverride = limit as number | undefined;
-			const cap = (value as { levelCap?: unknown; }).levelCap;
-			if ( cap !== undefined && (typeof cap !== "number" || !Number.isSafeInteger( cap ) || cap <= 0) ) {
-				throw new Error( "Invalid level cap" );
-			}
-			levelCap = cap as number | undefined;
 		},
 		/*
 		================
@@ -92,7 +86,6 @@ export function createTraining( send: ( frame: WireFrame ) => void ) {
 		state() {
 			return {
 				masteryTotalOverride,
-				levelCap,
 				trainingPending: state.phase !== "idle",
 				trainingError: state.phase === "uncertain" ?
 					"Training result is unknown. Reconnect before trying again." :
@@ -106,7 +99,6 @@ export function createTraining( send: ( frame: WireFrame ) => void ) {
 		*/
 		reset() {
 			masteryTotalOverride = undefined;
-			levelCap = undefined;
 			state = trainingTransition( state, { type: "reset" } );
 		},
 		/*
@@ -116,7 +108,6 @@ export function createTraining( send: ( frame: WireFrame ) => void ) {
 		*/
 		dispose() {
 			masteryTotalOverride = undefined;
-			levelCap = undefined;
 			state = { phase: "idle" };
 		}
 	};

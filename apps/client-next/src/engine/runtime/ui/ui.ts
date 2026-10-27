@@ -253,6 +253,7 @@ import {
 import { createRepairHud } from "./hud/repair-hud";
 import { createSkinChangeHud } from "./hud/skin-change-hud";
 import { createGlobalChatHud } from "./hud/global-chat-hud";
+import { createNameChangeHud } from "./hud/name-change-hud";
 import { createReverseReturnHud } from "./hud/reverse-return-hud";
 import { createSpecialtyDealHud } from "./hud/specialty-deal-hud";
 import { socialQuestion } from "@/engine/foundation/ui/social-question";
@@ -288,6 +289,11 @@ import {
 	tradeTierScale
 } from "@/engine/foundation/gameplay/specialty-deal";
 import { GLOBAL_CHAT_MAX_LENGTH, isGlobalChatItem } from "@/engine/foundation/gameplay/global-chat";
+import {
+	isNameChangeScrollItem,
+	isValidRenameName,
+	NAME_CHANGE_MAX_LENGTH
+} from "@/engine/foundation/gameplay/name-change";
 import { createJobHud } from "./hud/job-hud";
 import { fortressMiniIndicators } from "@/engine/foundation/ui/fortress-mini-info";
 import {
@@ -501,6 +507,7 @@ import {
 	partyDefaultPurpose,
 	type PartyListing
 } from "@/engine/foundation/gameplay/party-matching";
+import { NATIVE_LEVEL_CAP } from "@/engine/foundation/gameplay/level-cap";
 import { createSkillGauge, createGaugePresentation } from "./hud/progression-bars";
 import { experienceBar, EXPERIENCE_BAR, gaugeFill } from "@/engine/foundation/ui/progression-bars";
 import { shieldGauge, shieldGaugeFill } from "@/engine/foundation/ui/shield-gauge";
@@ -603,7 +610,7 @@ import {
 	audioLevelText
 } from "@/engine/foundation/audio/volume-control";
 import { chatScrollbar } from "@/engine/foundation/ui/chat-scrollbar";
-import { companionOwnerNameplate, overheadLayout } from "@/engine/foundation/ui/overhead-layout";
+import { companionOwnerNameplate, overheadLayout, withoutBoardPass } from "@/engine/foundation/ui/overhead-layout";
 import { vitalWarning } from "@/engine/foundation/ui/vital-warning";
 import {
 	beginnerMarkShown,
@@ -727,6 +734,12 @@ import {
 	PARTY_OPTION
 } from "@/engine/foundation/ui/party-proposal";
 import {
+	cameraWaypointSaveText,
+	createCameraWaypointStore,
+	loadCameraDataKeyframes,
+	resetCameraWaypoints
+} from "@/engine/foundation/ui/camera-waypoints";
+import {
 	commandFloat,
 	commandInteger,
 	DEBUG_COMMAND_CAMERA_SPEED,
@@ -762,6 +775,11 @@ import {
 	DEBUG_COMMAND_TIME_SET,
 	DEBUG_COMMAND_UI_OFF,
 	DEBUG_COMMAND_UI_ON,
+	DEBUG_COMMAND_WAYPOINT_CLEAR,
+	DEBUG_COMMAND_WAYPOINT_GO,
+	DEBUG_COMMAND_WAYPOINT_POP,
+	DEBUG_COMMAND_WAYPOINT_SAVE,
+	DEBUG_COMMAND_WAYPOINT_STOP,
 	DEBUG_COMMAND_ZOOM,
 	DEBUG_COMMAND_WIRE_FRAME,
 	DEBUG_COMMAND_GROUND,
@@ -857,6 +875,10 @@ const SKIN_PANEL = "Skin change";
 // CIFWholeChat, the Global Chatting item's window, and its line's edit box.
 const GLOBAL_CHAT_PANEL = "Global chat";
 const GLOBAL_CHAT_TEXT = "wholechat-text";
+// The name-change scroll's entry window (#1689, port-only): the
+// CIFWholeChat frame under its own title and edit box.
+const RENAME_PANEL = "Name change";
+const RENAME_TEXT = "rename-text";
 // CIFSpecialtyDeal, the trade goods window, and its quantity edit (control 30).
 const SPECIALTY_DEAL_PANEL = "Specialty deal";
 const SPECIALTY_DEAL_COUNT = "specialty-deal-count";
@@ -997,7 +1019,15 @@ export interface UiExtensions {
 	setCameraZoomRail?: ( capped: boolean ) => void;
 	setFreeCamera?: ( free: boolean ) => void;
 	setCameraCollision?: ( collision: boolean ) => void;
+	setCameraWaypoints?: (
+		keyframes: readonly import("@/engine/foundation/ui/camera-waypoints").CameraWaypoint[]
+	) => void;
+	setCameraPlaying?: ( playing: boolean ) => void;
 	setCursorVisible?: ( visible: boolean ) => void;
+	// The /id byte for the character owner's hit damage numbers (8D5856).
+	setDamageNumbers?: ( shown: boolean ) => void;
+	saveCameraWaypoints?: ( text: string ) => void;
+	playSoundByName?: ( name: string ) => void;
 	saveExperimental?: ( value: ExperimentalOptions ) => void;
 	saveWindowPositions?: ( value: WindowPositions ) => void;
 }
@@ -1045,16 +1075,28 @@ export function createUi(
 	let debugZoomRail = true;
 	let debugFreeCamera = false;
 	let debugCursorVisible = true;
+	// The camera-waypoint family (690C40 ids 130-134, #1716): the
+	// interface's keyframe track (+0x3FC) and its play byte (+0x3CD).
+	// The store is this window's, as natively; the camera owner gets a
+	// copy of the records and the byte through the extensions, and the
+	// playback stepping is its own. The records arrive with the HUD's
+	// cameradata asset (cameraWaypointsLoaded below): nothing native
+	// ever loads the track, so the published rows are the port's
+	// content source (issue #1716).
+	const cameraWaypoints = createCameraWaypointStore();
+	let cameraWaypointsLoaded = false;
 	// The camera family's kept values: the free-camera move speed
 	// (+0x7B0, seeded 100, case 136), the snapped second speed (+0x7C0,
 	// seeded 50, case 111), the frame byte (engine global +0x4A, seeded
-	// clear, case 117), the id-plate byte (0xCCB5D8, seeded standing,
+	// clear, case 117), the /id byte (0xCCB5D8, seeded standing,
 	// case 137) and the local
 	// player's written speed (+0x658, case 600; 100 is the scale's
 	// neutral point, the value the word 10 writes). The port's camera
-	// does not translate freely, its boards take no id line and its
-	// movement is the server's, so these are kept as written for the
-	// consumers in #1717.
+	// does not translate freely and its movement is the server's, so
+	// those are kept as written for the consumers in #1717. The /id byte
+	// is read: while it is clear the overhead boards and their kind-4
+	// pass are skipped (85F5DC), and the character owner holds a copy
+	// for the hit damage numbers (8D5856, #1785).
 	let debugCameraSpeed = 100;
 	let debugFast = 50;
 	let debugFrameStats = false;
@@ -1323,6 +1365,7 @@ export function createUi(
 	const repairHud = createRepairHud();
 	const skinHud = createSkinChangeHud();
 	const globalChatHud = createGlobalChatHud();
+	const renameHud = createNameChangeHud();
 	const reverseScrollHud = createReverseReturnHud();
 	const specialtyDealHud = createSpecialtyDealHud();
 	let specialtyCombo = false;
@@ -2368,6 +2411,14 @@ export function createUi(
 				dirty = true;
 				return;
 			}
+			// #1689 (port-only): the name-change scroll asks for the new
+			// name first; its window's Use runs the use with the name.
+			if ( item && isNameChangeScrollItem( item.refObjId ) && command.renameName === undefined ) {
+				renameHud.open( item.slot );
+				focusAtEnd( RENAME_TEXT, "" );
+				dirty = true;
+				return;
+			}
 			// 6971B0 case 0x1E: the reverse return scroll asks for its point
 			// first; the row's pick runs the use with that byte.
 			if ( item && isReverseReturnScroll( item.typeFlags ) && command.reverseChoice === undefined ) {
@@ -2741,13 +2792,16 @@ export function createUi(
 	local debug clock the sampler reads through debugClockSeed. The camera
 	rows flip this window's debug bytes and hand each to its owner; the
 	shown byte (112/113) rides the gameplay lane to the entity owner, and
-	the mission window's visible flag (115/116) is this window's own. The
-	remaining camera rows (111/117/136/137) and the 600 family keep their
+	the mission window's visible flag (115/116) is this window's own. 137
+	gates this window's overhead boards and hands the byte to the
+	character owner for the damage numbers (#1785). The
+	remaining camera rows (111/117/136) and the 600 family keep their
 	values on this window for consumers the port does not have yet (#1717);
 	601 frames the named item as a packet the client hands itself (see
 	the case); the port builds nothing. 602 is the native table's shared exit.
-	The camera-waypoint rows (130-134) wait on the cameradata store
-	(#1716). Every row the table names is consumed here, as natively.
+	The camera-waypoint rows (130-134) drive this window's waypoint store
+	and forward the play byte to the camera owner (#1716). Every row the
+	table names is consumed here, as natively.
 	================
 	*/
 	function runDebugCommand( command: DebugCommand ) {
@@ -2905,6 +2959,42 @@ export function createUi(
 				// distance; the follow still tracks. Prints nothing.
 				extensions.setCameraCollision?.( false );
 				break;
+			case DEBUG_COMMAND_WAYPOINT_CLEAR:
+				// Case 130: the store reset (CRenderContext_Reset on
+				// the +0x3FC track), and the same block's next write
+				// clears the play byte (+0x3CD): the stop row (133)
+				// enters at that write, so clear and stop share it.
+				// The records, the clock and the byte all go. The
+				// native prints nothing.
+				resetCameraWaypoints( cameraWaypoints );
+				extensions.setCameraWaypoints?.( cameraWaypoints.keyframes );
+				extensions.setCameraPlaying?.( false );
+				break;
+			case DEBUG_COMMAND_WAYPOINT_POP:
+			case DEBUG_COMMAND_WAYPOINT_GO:
+				// Cases 131/132 are one native block: the free-camera
+				// byte (+0x3CE) must stand and the store be non-empty;
+				// then the play byte (+0x3CD) is written and the track
+				// clock zeroed. Either gate failing leaves the byte
+				// clear. The camera owner holds the byte's copy. The
+				// native prints nothing.
+				if ( debugFreeCamera && cameraWaypoints.keyframes.length > 0 ) {
+					cameraWaypoints.clockSeconds = 0;
+					extensions.setCameraPlaying?.( true );
+				}
+				break;
+			case DEBUG_COMMAND_WAYPOINT_STOP:
+				// Case 133: the play byte is cleared; the camera stays
+				// where playback left it until the free-camera byte
+				// also falls. The native prints nothing.
+				extensions.setCameraPlaying?.( false );
+				break;
+			case DEBUG_COMMAND_WAYPOINT_SAVE:
+				// Case 134: the whole store written in the native line
+				// form - natively to c:\cw.txt, here the downloaded
+				// cw.txt the platform writes (#1716). Prints nothing.
+				extensions.saveCameraWaypoints?.( cameraWaypointSaveText( cameraWaypoints ) );
+				break;
 			case DEBUG_COMMAND_CURSOR:
 				// Case 0x1E: SetVisible(![cursor+0x20]) - the pointer shows
 				// or goes away (A15A70), silently.
@@ -2921,10 +3011,14 @@ export function createUi(
 				break;
 			}
 			case DEBUG_COMMAND_ID:
-				// Case 137 flips the id-plate byte (0xCCB5D8): kept for
-				// the name boards, which take no id line yet (#1717).
-				// The native prints nothing.
+				// Case 137 flips the /id byte (0xCCB5D8, sete at 691678).
+				// Its readers draw while it stands: 85F5DC (the name
+				// board and the kind-4 overhead pass, read below in the
+				// overhead composition) and 8D5856 (a hit's damage
+				// number, the character owner's). The native prints
+				// nothing.
 				debugShowIds = !debugShowIds;
+				extensions.setDamageNumbers?.( debugShowIds );
 				break;
 			case DEBUG_COMMAND_WIRE_FRAME:
 				// 150 (691686) negates graphic option 0x12: while it stands
@@ -2996,10 +3090,15 @@ export function createUi(
 				break;
 			case DEBUG_COMMAND_SOUND:
 				// Case 603 hands its first word to the sound manager's
-				// play-by-name (with no word it calls through with an
-				// unset argument). The port's audio owners take cues,
-				// not names, so nothing plays yet (#1717); the line is
-				// consumed either way.
+				// play-by-name; the audio owner answers the name (a
+				// name with no authored row stays silent, as a native
+				// label-map miss does). Further words are not read.
+				// With no word the native still calls through, with an
+				// unset argument - whatever the stack held becomes the
+				// name - so there is no defined sound to reproduce;
+				// the port deliberately plays nothing for a wordless
+				// line instead of inventing one.
+				if ( command.args.length >= 1 ) extensions.playSoundByName?.( command.args[0]! );
 				break;
 		}
 	}
@@ -3058,6 +3157,31 @@ export function createUi(
 		}
 		globalChatHud.sent();
 		focusAtEnd( GLOBAL_CHAT_TEXT, "" );
+	}
+	/*
+	================
+	sendRenameUse
+
+	The name-change window's Use (#1689, port-only): an invalid name is
+	refused here with its line and the window keeps the text; a valid one
+	uses the scroll with the name and closes. The server judges the rest
+	(taken, reserved, cooldown, state) and answers its own byte.
+	================
+	*/
+	function sendRenameUse( slot: number, name: string ) {
+		const item = view?.gameplay?.inventory.find( row => row.slot === slot );
+		if ( !item || !isNameChangeScrollItem( item.refObjId ) || item.quantity === 0 ) {
+			renameHud.close();
+			focus = null;
+			return;
+		}
+		if ( !isValidRenameName( name ) ) {
+			hudMessages.append( "Names are 2 to 12 letters, digits or underscores." );
+			return;
+		}
+		sendGameplay( { kind: "item-use", slot, renameName: name } );
+		renameHud.close();
+		focus = null;
 	}
 	/*
 	================
@@ -4477,7 +4601,12 @@ export function createUi(
 			const job = partyActiveJob( view.gameplay?.inventory ?? [] );
 			partyForm = own ?
 				{ purpose: own.purpose, min: String( own.min ), max: String( own.max ), title: own.title } :
-				{ purpose: partyDefaultPurpose( job ), min: "1", max: "90", title: "" };
+				{
+					purpose: partyDefaultPurpose( job ),
+					min: "1",
+					max: String( view.gameplay?.levelCap ?? NATIVE_LEVEL_CAP ),
+					title: ""
+				};
 		} else if ( id === "party-match:20" ) partyDialog = "delete";
 		else if ( id === "party-match:17" ) partyDialog = "auto";
 		else if ( id === "party-auto-stop" ) sendGameplay( { kind: "party-match-auto-stop" } );
@@ -4522,7 +4651,10 @@ export function createUi(
 					!partyPurposeAllowed( partyActiveJob( view.gameplay?.inventory ?? [] ), partyForm.purpose )
 				) return;
 				const min = Number( partyForm.min ), max = Number( partyForm.max );
-				if ( min >= 1 && max <= 90 && min <= max && partyForm.title.length ) {
+				if (
+					min >= 1 && max <= (view.gameplay?.levelCap ?? NATIVE_LEVEL_CAP) && min <= max &&
+					partyForm.title.length
+				) {
 					sendGameplay( {
 						kind: partyDialog === "modify" ? "party-match-modify" : "party-match-register",
 						registration: {
@@ -6630,6 +6762,32 @@ export function createUi(
 					event.kind === "activate" && event.id === "wholechat-use"
 				) {
 					sendGlobalChat( wholeChat.slot, wholeChat.text );
+					dirty = true;
+					return;
+				}
+			}
+			const renameWindow = renameHud.state();
+			if ( renameWindow !== null ) {
+				// The name-change window (#1689): Enter uses, Esc closes.
+				if (
+					event.kind === "key" && event.code === "Escape" ||
+					event.kind === "activate" && (event.id === "rename-exit" || event.id === "rename-close")
+				) {
+					renameHud.close();
+					focus = null;
+					dirty = true;
+					return;
+				}
+				if ( event.kind === "edit" && event.id === RENAME_TEXT ) {
+					renameHud.type( event.value );
+					dirty = true;
+					return;
+				}
+				if (
+					event.kind === "key" && event.code === "Enter" && !composing && focus === RENAME_TEXT ||
+					event.kind === "activate" && event.id === "rename-use"
+				) {
+					sendRenameUse( renameWindow.slot, renameWindow.text );
 					dirty = true;
 					return;
 				}
@@ -9200,7 +9358,7 @@ export function createUi(
 				layoutResourcesRevision++;
 			}
 			const guideNeeded = next.session?.phase === "world";
-			if ( guideResources.step( guideNeeded ) ) dirty = true;
+			if ( guideResources.step( guideNeeded, next.gameplay?.levelCap ) ) dirty = true;
 			guildManagerHud.observeSoldiers(
 				next.session?.phase === "world" && next.gameplay?.npcConversation?.phase === "menu" ?
 					next.gameplay.npcConversation.gid :
@@ -9246,6 +9404,18 @@ export function createUi(
 			if ( hud.step( next.session?.phase === "world" || next.frontend?.phase === "dock" ) ) {
 				dirty = true;
 				layoutResourcesRevision++;
+			}
+			// The waypoint store's keyframes ride the HUD's cameradata
+			// asset: load them once, when the catalogue first settles
+			// (#1716). A /cwclear afterwards is permanent, as the native
+			// reset is: nothing reloads the track.
+			if ( !cameraWaypointsLoaded ) {
+				const cameraRows = hud.data()?.cameraDataRows;
+				if ( cameraRows ) {
+					cameraWaypointsLoaded = true;
+					loadCameraDataKeyframes( cameraWaypoints, cameraRows );
+					extensions.setCameraWaypoints?.( cameraWaypoints.keyframes );
+				}
 			}
 			// The stall prompts follow the stall: naming opens the title entry
 			// with the default title (5A1DF0 mode 1); a stall that moved on
@@ -17983,6 +18153,46 @@ export function createUi(
 					}
 					endWindow( admission, "service:" + GLOBAL_CHAT_PANEL );
 				}
+				const renameWindow = renameHud.state();
+				if ( renameWindow && hudData?.windows.ifwholechat && hudData.root.GDR_WHOLE_CHAT ) {
+					// #1689 (port-only): the name entry on CIFWholeChat's
+					// frame - its edit box, the scroll count, Use/Cancel -
+					// under the Name Change title. Use waits for a valid
+					// name and a scroll left, like the chat window's own
+					// send gating (6D1D90).
+					const admission = beginWindow(),
+						root = hudData.root.GDR_WHOLE_CHAT,
+						layout = hudData.windows.ifwholechat,
+						nodes = Object.values( layout ),
+						byName = ( name: string ) => nodes.find( n => n.name === name ),
+						[px, py] = windowOrigin( RENAME_PANEL, [
+							Math.max( 0, (w - root.rect[2]) / 2 ),
+							Math.max( 0, (h - root.rect[3]) / 2 ),
+							root.rect[2],
+							root.rect[3]
+						] ),
+						count = game?.inventory.find( row => row.slot === renameWindow.slot )?.quantity ?? 0;
+					nativeFrame( root, px, py, "Name Change", "rename-close" );
+					nativePage( layout, px, py, [ 31, 32, 35, 36 ] );
+					const edit = byName( "GDR_WHOLE_CHAT_EDITBOX_INPUT" ), odd = byName( "GDR_WHOLE_CHAT_ODDITEM" );
+					if ( edit ) partyEdit( edit, px, py, RENAME_TEXT, renameWindow.text, NAME_CHANGE_MAX_LENGTH );
+					if ( odd ) authoredText( odd, px, py, String( count ) );
+					for ( const [id, name] of [ [ "rename-use", "OK" ], [ "rename-exit", "CANCEL" ] ] as const ) {
+						const node = byName( "GDR_WHOLE_CHAT_BTN_" + name );
+						if ( node ) {
+							authoredLabeledButton(
+								node,
+								px,
+								py,
+								id,
+								hudCopy( node.text ),
+								id === "rename-use" &&
+									(count === 0 || !!game?.inventoryPending || !isValidRenameName( renameWindow.text ))
+							);
+						}
+					}
+					endWindow( admission, "service:" + RENAME_PANEL );
+				}
 				const specialtyDeal = specialtyDealHud.state();
 				if ( specialtyDeal && hudData?.windows.ifspecialtydeal && hudData.root.GDR_SPECIALTY_DEAL ) {
 					// CIFSpecialtyDeal (ginterface GDR_SPECIALTY_DEAL, resinfo ifspecialtydeal.txt).
@@ -21431,10 +21641,12 @@ export function createUi(
 				paths.push( ...combatGlyphPaths );
 				const path = ROOT + "icon/etc/icon_rudiment.png";
 				const local = next.entities.find( e => e.gid === game?.localGid );
+				// 85F5DC: with the /id byte clear the kind-4 pass draws no row.
 				const overheads = new Map(
-					next.entities.map(
-						entity => [ entity.gid, game ? overheadLayout( entity, local, game, options, hudCopy ) : null ]
-					)
+					next.entities.map( entity => {
+						const layout = game ? overheadLayout( entity, local, game, options, hudCopy ) : null;
+						return [ entity.gid, layout && !debugShowIds ? withoutBoardPass( layout ) : layout ] as const;
+					} )
 				);
 				// Characters whose guild line, fortress mark or quick status bars show;
 				// overheadBoardVisible shows their names with them.
@@ -21642,8 +21854,12 @@ export function createUi(
 					}
 					const hovered = entity.gid === next.hoveredEntity, selected = entity.gid === game?.target;
 					// One decision for the name and every overhead icon: an icon never
-					// shows without its name (name-visibility.ts header).
-					const named = !entity.debugHidden && !hiddenSilkCos( entity, options.hideSilkCos ) &&
+					// shows without its name (name-visibility.ts header). 85F5DC
+					// skips the name board and the icon pass while the /id byte
+					// (0xCCB5D8) is clear; the dress bar above is CICUser_Draw's
+					// (86AB90) and stays.
+					const named = debugShowIds && !entity.debugHidden &&
+						!hiddenSilkCos( entity, options.hideSilkCos ) &&
 						overheadBoardVisible(
 							boardAt( entity ),
 							local,

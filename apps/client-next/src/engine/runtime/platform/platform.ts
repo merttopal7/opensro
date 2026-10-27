@@ -35,6 +35,7 @@ import { containsPoint } from "@/engine/foundation/ui/hit-test";
 import { createMobileJoystick, mobileHudActive, mobileHudLayout } from "@/engine/foundation/ui/mobile-hud";
 import {
 	EXPERIMENTAL_STORAGE_KEY,
+	PREVIOUS_EXPERIMENTAL_STORAGE_KEY,
 	experimentalOptions,
 	storedExperimentalOptions,
 	uiScaleFactor,
@@ -520,6 +521,7 @@ export function createPlatform(
 		experimental = experimentalOptions( value );
 		try {
 			localStorage.setItem( experimentalKey, JSON.stringify( experimental ) );
+			localStorage.removeItem( PREVIOUS_EXPERIMENTAL_STORAGE_KEY );
 			localStorage.removeItem( "sro.developerDiagnostics" );
 		} catch ( error ) {
 			status.value = "Experimental options could not be saved: " + String( error );
@@ -860,6 +862,16 @@ export function createPlatform(
 	return {
 		displayScale,
 		saveExperimentalOptions,
+		/*
+		================
+		saveCameraWaypoints
+
+		The UI bridge owns the DOM write behind /cwsave's download (#1716).
+		================
+		*/
+		saveCameraWaypoints( text: string ) {
+			bridge.saveCameraWaypoints( text );
+		},
 		/*
 		================
 		saveVideoOptions

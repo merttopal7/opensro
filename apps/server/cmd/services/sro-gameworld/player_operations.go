@@ -179,6 +179,8 @@ func installPlayerOperations(api *agentapi.API, game *gameplayPlane, hub *transp
 				return nil, fmt.Errorf("invalid level cap")
 			}
 			progression.SetLevelCap(*request.MaxLevel)
+			game.matches.LevelLimit = *request.MaxLevel
+			game.deps.LevelCap = publishedLevelCap(*request.MaxLevel)
 			return map[string]any{"shard": shard, "levelCap": progression.CurrentLevelCap()}, nil
 		},
 		GrantItems: func(request agentapi.PlayerOperation) (any, error) {

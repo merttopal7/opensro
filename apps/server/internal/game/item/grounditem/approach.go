@@ -23,10 +23,6 @@ import (
 const (
 	// RegionSize is the edge length of one sector on the native region grid.
 	RegionSize = worldgeom.OutdoorRegionSize
-	// DungeonSectorBit marks a region id as belonging to a dungeon world. It
-	// stays out of the sector arithmetic; two positions must agree on it to be
-	// comparable at all.
-	DungeonSectorBit uint16 = worldgeom.DungeonRegionBit
 
 	// WalkSpeed and RunSpeed are the per-second speeds shipped on every spawn
 	// block (+0x24c and +0x250).
@@ -41,13 +37,13 @@ const (
 	// rather than trigger an approach.
 	//
 	// MEASURED (supersedes the provisional 50u): the retail-family
-	// SR_GameServer.exe pickup executor sub_526090 loads a single global
-	// float32 = 10.0 (.rdata:0x00b45b44 = 0x41200000), feeds it to the reach
-	// checker sub_4a9050, and compares it INCLUSIVELY (distance <= 10.0)
-	// against a LINEAR region-aware distance (post-fsqrt, 1920u/region). The
-	// client ships no player pickup range because the value is
-	// server-authoritative, and there is no too-far refusal in the item
-	// error family - retail always walks you there.
+	// server's pickup executor loads a single global float32 = 10.0
+	// (0x41200000), feeds it to its reach checker, and compares it
+	// INCLUSIVELY (distance <= 10.0) against a LINEAR region-aware
+	// distance (post-fsqrt, 1920u/region). The client ships no player
+	// pickup range because the value is server-authoritative, and there
+	// is no too-far refusal in the item error family - retail always
+	// walks you there.
 	ExecuteRange = 10.0
 )
 

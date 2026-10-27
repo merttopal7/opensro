@@ -135,7 +135,11 @@ type Runtime struct {
 	Pending         *grounditem.PendingTracker
 	Worlds          *simulation.WorldStore
 	// Steps names TickHook's slow sub-steps (wired to the transport metrics).
-	Steps             simulation.StepTimer
+	Steps simulation.StepTimer
+	// PublicationHold receives publication-gate holds at or above the
+	// slow threshold, labelled by their holder (wired to the transport
+	// metrics, transport.RecordPublicationHold).
+	PublicationHold   func(label string, elapsed time.Duration)
 	SkillObjects      skillobject.Registry
 	CanPlaceQuestTrap func(*enterworld.Character, string) ([]wire.Frame, bool)
 	CaptureQuestTrap  func(*enterworld.Character, string, string, func() bool) ([]wire.Frame, bool)
@@ -398,6 +402,12 @@ type Runtime struct {
 	// value is native: none.
 	Announce  Announcements
 	announcer announcer
+
+	// NameChangeScroll enables the port-only name-change scroll (#1689,
+	// SRO_NAME_CHANGE_SCROLL; namechange.go). The zero value is native:
+	// the donor item keeps its unsupported-use answer and the mall lists
+	// nothing extra.
+	NameChangeScroll bool
 
 	// SealDrops counts sealed drops for the weekly board (sealboard.go;
 	// port-only, not native). Nil, the default, counts nothing; the

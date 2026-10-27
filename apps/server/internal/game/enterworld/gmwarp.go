@@ -3,11 +3,9 @@
 
 gmwarp.go - GM /warp destination validation and height normalization
 
-Native GM /wp (0x0051DE90 CGObjPC_MsgHandler_SpecialCommand case 0xC at
-0x0051E440 -> vtable+0x378 0x004DF590 CGObjPC_TeleportToPosition_vf378 ->
-0x00485360 CGObj_EnterWorld at 0x004853CD / 0x00485740 CGObj_MoveTo at
-0x0048575F -> vtable+0x2C 0x0098B1D0 CRegionManagerBody_CheckPointValid ->
-0x0099FD90 CRTNavMeshTerrain_FindNavCell) admits a warp when the target
+Native GM /wp (the server's special-command handler, case 0xC, through
+its teleport-to-position, enter-world and move-to steps and the region
+manager's point-valid and nav-cell checks) admits a warp when the target
 resolves to a valid object-nav cell or walkable terrain tile and lifts
 below-terrain Y onto the resolved surface.
 
@@ -25,10 +23,11 @@ import (
 ResolveGMWarpDestination
 
 Validates and normalizes a GM /warp target position inside the character
-authority door without mutating the character. Lifts below-terrain Y onto
-the resolved surface via LiftSpawnAboveTerrain, verifies surface validity
-via SpawnSurfaceHeight (WalkableSpawnHeightAt / native CheckPointValid), and
-rejects points that RelocateStrandedSpawn would rewrite on re-entry.
+authority door without mutating the character. The entry checks (the GM
+privilege, finite coordinates, a nonzero region) live here; the
+validation itself is the position's plane's (gmwarp_plane.go): a cave
+destination by its dungeon spawn surface alone, an outdoor one by the
+region frame, the terrain height and the stranded check.
 ================
 */
 func (d *Deps) ResolveGMWarpDestination(c *Character, p simulation.Spawn) (simulation.Spawn, bool) {
@@ -43,39 +42,5 @@ func (d *Deps) ResolveGMWarpDestination(c *Character, p simulation.Spawn) (simul
 	if p.RegionID == 0 {
 		return p, false
 	}
-	if simulation.IsDungeonRegion(p.RegionID) {
-		if d.SpawnSurfaceHeight == nil {
-			return p, false
-		}
-		_, ok := d.SpawnSurfaceHeight(p.RegionID, p.X, p.Y, p.Z)
-		return p, ok
-	}
-	// Outdoor coordinates are local to one 1920-unit region. Reject malformed
-	// frames rather than normalizing an overflow into a different world/region.
-	if p.X < 0 || p.X >= 1920 || p.Z < 0 || p.Z >= 1920 || d.SpawnTerrainHeight == nil {
-		return p, false
-	}
-	h, ok := d.SpawnTerrainHeight(p.RegionID, p.X, p.Z)
-	if !ok || math.IsNaN(h) || math.IsInf(h, 0) {
-		return p, false
-	}
-	entry := LocalPlayerEntry{}
-	entry.StartProfile.RegionID = int64(p.RegionID)
-	entry.StartProfile.X = p.X
-	entry.StartProfile.Y = p.Y
-	entry.StartProfile.Z = p.Z
-	LiftSpawnAboveTerrain(&entry, d.SpawnTerrainHeight, d.SpawnSurfaceHeight)
-	p.Y = entry.StartProfile.Y
-	if d.SpawnSurfaceHeight != nil {
-		if _, ok := d.SpawnSurfaceHeight(p.RegionID, p.X, p.Y, p.Z); !ok {
-			return p, false
-		}
-	}
-	if d.RelocateStrandedSpawn != nil {
-		_, stranded, _ := d.RelocateStrandedSpawn(p)
-		if stranded {
-			return p, false
-		}
-	}
-	return p, true
+	return d.warpDestinationOnPlane(simulation.PlaneKindOf(p.RegionID), p)
 }

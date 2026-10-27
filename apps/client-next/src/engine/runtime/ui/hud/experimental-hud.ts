@@ -63,6 +63,12 @@ export const EXPERIMENTAL_TABS: readonly {
 				description: "100% is native; lower values soften the scene."
 			},
 			{
+				key: "phoneRenderCap",
+				id: "experimental-phone-render-cap",
+				label: "Phone resolution",
+				description: "Phones: lighter scene while Render scale is 100%."
+			},
+			{
 				key: "uiScale",
 				id: "experimental-ui-scale",
 				label: "UI size",
@@ -91,12 +97,6 @@ export const EXPERIMENTAL_TABS: readonly {
 				id: "experimental-hdr-tone-map",
 				label: "HDR tone map",
 				description: "Float frame with filmic highlight roll-off."
-			},
-			{
-				key: "safeLoadingScreen",
-				id: "experimental-safe-loading-screen",
-				label: "Safe loading screen",
-				description: "Hide inappropriate loading images."
 			}
 		]
 	},
@@ -212,10 +212,13 @@ export const EXPERIMENTAL_TABS: readonly {
 			label: "WebTransport connection",
 			description: "Connect over QUIC/UDP; falls back to WebSocket."
 		}, {
-			key: "spreadClothSteps",
-			id: "experimental-spread-cloth-steps",
-			label: "Spread cloth steps",
-			description: "Smoother frames: cloth and hair step in different frames."
+			// Moved from Notices (#1738): the window fits seven rows a tab
+			// and the break-notice row joins the shard notices; the option,
+			// its key and its default are unchanged.
+			key: "questTrackerMarkers",
+			id: "experimental-quest-tracker-markers",
+			label: "Quest target markers",
+			description: "Show every active quest's target on M and the minimap."
 		} ]
 	},
 	{
@@ -237,6 +240,11 @@ export const EXPERIMENTAL_TABS: readonly {
 			label: "Plus +7 notices",
 			description: "Show the shard's +7 alchemy announcements."
 		}, {
+			key: "breakNotices",
+			id: "experimental-break-notices",
+			label: "Item break notices",
+			description: "Show the shard's item break announcements."
+		}, {
 			key: "uniqueDamageRank",
 			id: "experimental-unique-damage-rank",
 			label: "Unique damage ranking",
@@ -251,11 +259,6 @@ export const EXPERIMENTAL_TABS: readonly {
 			id: "experimental-short-notices",
 			label: "Short notices",
 			description: "Show notices for up to the original 7 seconds."
-		}, {
-			key: "questTrackerMarkers",
-			id: "experimental-quest-tracker-markers",
-			label: "Quest target markers",
-			description: "Show every active quest's target on M and the minimap."
 		} ]
 	},
 	{
@@ -292,10 +295,10 @@ export const EXPERIMENTAL_TABS: readonly {
 			label: "Confirm guild ban",
 			description: "Ask before Withdraw bans a guild member."
 		}, {
-			key: "mobileHud",
-			id: "experimental-mobile-hud",
-			label: "Mobile HUD",
-			description: "On phones, keep the minimap open and free the view."
+			key: "safeLoadingScreen",
+			id: "experimental-safe-loading-screen",
+			label: "Safe loading screen",
+			description: "Hide inappropriate loading images."
 		} ]
 	},
 	{
@@ -331,6 +334,11 @@ export const EXPERIMENTAL_TABS: readonly {
 			id: "experimental-v-hides-companions",
 			label: "V hides pets and transports",
 			description: "Holding V also hides other players' pets and transports."
+		}, {
+			key: "spreadClothSteps",
+			id: "experimental-spread-cloth-steps",
+			label: "Spread cloth steps",
+			description: "Smoother frames: cloth and hair step in different frames."
 		} ]
 	},
 	{
@@ -366,6 +374,11 @@ export const EXPERIMENTAL_TABS: readonly {
 			id: "experimental-pet-filter-other",
 			label: "Other items",
 			description: "Scrolls, arrows and the rest; only with the filter."
+		}, {
+			key: "mobileHud",
+			id: "experimental-mobile-hud",
+			label: "Mobile HUD",
+			description: "On phones, keep the minimap open and free the view."
 		} ]
 	}
 ];

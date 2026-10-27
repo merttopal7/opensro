@@ -277,9 +277,24 @@ type Character struct {
 	// AccountID is the authoritative owner identity minted by title login.
 	// It is mandatory for every live record: character-select reads and
 	// writes are tenant-scoped by it, while names remain division-global.
-	AccountID     string `json:"accountId,omitempty"`
-	Name          string `json:"name"`
-	DeletePending bool   `json:"deletePending"`
+	AccountID string `json:"accountId,omitempty"`
+	Name      string `json:"name"`
+	// PendingRenameName is the name a name-change scroll queued for the
+	// next login (port-only, #1689, SRO_NAME_CHANGE_SCROLL). Empty means
+	// no rename is queued. The runtime rename door applies and clears it
+	// before the character list is answered; it never applies mid-session.
+	PendingRenameName string `json:"pendingRenameName,omitempty"`
+	// PendingRenameQueuedMs is the instant the pending rename was queued.
+	PendingRenameQueuedMs int64 `json:"pendingRenameQueuedMs,omitempty"`
+	// LastRenameMs is the instant the last queued rename was applied; the
+	// 30-day rename cooldown is measured from it. Zero: never renamed.
+	LastRenameMs int64 `json:"lastRenameMs,omitempty"`
+	// RenameNoticeFrom is the pre-rename name while the "X is now known
+	// as Y" notice still owes the character's friends and guild members
+	// (port-only, #1689). Applied with the rename; the world-bind fanout
+	// clears it once the notice has been sent. Empty: nothing owed.
+	RenameNoticeFrom string `json:"renameNoticeFrom,omitempty"`
+	DeletePending    bool   `json:"deletePending"`
 	// DeleteReservedAt is the ISO instant the deletion reservation was
 	// placed. The character-select screen renders the countdown from it and
 	// the deletion reaper archives matured reservations. Empty means no
@@ -346,6 +361,11 @@ type Character struct {
 	// profile itself stays visible (port-only, not native: the
 	// opensro.online "hide my gear" choice, schema 23).
 	PublicGearHidden bool `json:"publicGearHidden,omitempty"`
+	// BreakNotice is the character's opt-in to the shard's item-break
+	// notices (port-only, not native: SRO_ALCHEMY_BREAK_NOTICE, #1738,
+	// the opensro.online account-page choice, schema 32). Off: their
+	// alchemy breaks are never announced.
+	BreakNotice bool `json:"breakNotice,omitempty"`
 	// MostWanted is the character's job-kill streak (port-only, not native:
 	// SRO_MOST_WANTED, action/mostwanted.go; schema 24). Nil is no streak.
 	MostWanted *MostWanted `json:"mostWanted,omitempty"`

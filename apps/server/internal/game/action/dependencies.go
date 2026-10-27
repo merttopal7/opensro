@@ -39,7 +39,12 @@ type Dependencies interface {
 	LevelData() enterworld.LevelDataSource
 	SkillData() enterworld.SkillDataSource
 	MagicOptionDefinitions() enterworld.MagicOptionSource
+	SetCatalogue() enterworld.SetCatalogueSource
 	GuildAuthority() enterworld.GuildStore
+	// QueueCharacterRename queues a name-change scroll's rename for the
+	// next login (port-only, #1689). It takes the authority store's own
+	// lock, so it is called outside every character commit door.
+	QueueCharacterRename(divisionID string, character *domain.Character, name string, nowMs int64) (enterworld.RenameQueueOutcome, error)
 	ReentryPackets(divisionID, characterName string) ([]enterworld.Packet, bool)
 	PrepareReentry(divisionID string, character *domain.Character) (enterworld.PreparedReentry, bool)
 }

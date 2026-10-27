@@ -16,7 +16,8 @@ const monsterTestDivision = "DIV_A"
 
 // monsterTestRegion is the field the monster fixtures stand in: 0x60A8, a
 // battlefield just west of Jangan. It must not be a town: a monster whose
-// region is not a battlefield vanishes (vanishInSafeZone, 4C1270).
+// region is not a battlefield vanishes (the retail server's safe-zone
+// departure).
 const monsterTestRegion = 0x60a8
 
 func monsterInstanceByRef(t *testing.T, registry *MonsterState, refObjID uint32) monster.Instance {
@@ -68,7 +69,7 @@ func monsterLegFixtureIn(t *testing.T, tactics monster.Tactics, region uint16) (
 	mover.BehaviorDeadlineMs = 0
 	if tactics.Aggressive {
 		// Acquisition tests start in an unexpired IDLE state. An expired
-		// native state runs its decision before scanning (55A8B0).
+		// native state runs its decision before scanning.
 		mover.BehaviorDeadlineMs = math.MaxInt64
 	}
 	registry.CommitMover(monsterTestDivision, instance.Gid, mover)
@@ -172,14 +173,14 @@ func decodeGoalPayload(t *testing.T, payload []byte) (gid uint32, region uint16,
 
 func decodeGoalSource(t *testing.T, payload []byte) MovementSource {
 	t.Helper()
-	if len(payload) < 24 || payload[13] != 1 {
+	if len(payload) < 28 || payload[13] != 1 {
 		t.Fatalf("goal has no complete source block: % X", payload)
 	}
 	return MovementSource{
 		RegionID: binary.LittleEndian.Uint16(payload[14:16]),
-		X:        float64(binary.LittleEndian.Uint16(payload[16:18])) / 10,
-		Y:        float64(math.Float32frombits(binary.LittleEndian.Uint32(payload[18:22]))),
-		Z:        float64(binary.LittleEndian.Uint16(payload[22:24])) / 10,
+		X:        float64(math.Float32frombits(binary.LittleEndian.Uint32(payload[16:20]))),
+		Y:        float64(math.Float32frombits(binary.LittleEndian.Uint32(payload[20:24]))),
+		Z:        float64(math.Float32frombits(binary.LittleEndian.Uint32(payload[24:28]))),
 	}
 }
 

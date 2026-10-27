@@ -164,3 +164,21 @@ test("shard levelCap isolates 91-100 skill groups and caps existing groups at th
 	assert.equal( unlockedExisting.button.kind, "learn" );
 	assert.equal( unlockedExisting.button.skill.id, 102 );
 });
+
+test("cap 110: a rank past mastery 90 is offered once the mastery reaches it (7F1151 not ported, #1746)", () => {
+	const tier = [ meta( 41, 4, 1 ), meta( 42, 4, 2, none, 95 ) ];
+	const cells = [ cell( 41, 4, 1 ), cell( 42, 4, 2 ) ];
+	const at = level => {
+		const masteries = [ { id: 257, level } ];
+		return SkillSlot_Resolve( {
+			candidates: cells,
+			training: createSkillTrainingContext( [ 41 ], tier ),
+			masteries,
+			progression: { ...progression, masteries }
+		} );
+	};
+	assert.equal( at( 94 ).button.kind, "none", "mastery 94 cannot train a rank needing 95" );
+	const met = at( 95 );
+	assert.equal( met.button.kind, "learn" );
+	assert.equal( met.button.skill.id, 42 );
+});

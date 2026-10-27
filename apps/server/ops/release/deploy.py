@@ -31,9 +31,13 @@ from urllib.parse import urlsplit
 from bundle import FILES, MAX_ARCHIVE_BYTES, release_files, unpack
 from release_state import admit, begin, complete, identity, read_state, store_upgrade_required, write_state
 from retention import preserve
+import quic_host
 import server_data
 
 CONFIG = Path("/etc/opensro-release/config.json")
+# The GameWorld's Nomad task user (raw_exec): the deployer passes it as
+# -task-user, and the TLS pair must be readable by it.
+TASK_USER = "sro"
 # Every deployer command runs with only this environment (plus its own).
 CLEAN_ENV = {"PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", "HOME": "/root"}
 # validate -assume-stopped opens each line naming a credential variable that
@@ -64,6 +68,12 @@ BUG_REPORT_WEBHOOK = "/etc/opensro-release/bug-report-webhook"
 MAINTENANCE_GATE = ".state/cluster/maintenance-gate.json"
 # sro-authority-upgrade -commit names the backup it kept on this line.
 UPGRADE_BACKUP_PREFIX = "Upgrade backup path: "
+# This deployment's shard settings (shard_settings), installed beside this file.
+SHARD_SETTINGS = Path(__file__).with_name("shard-settings.json")
+SHARD_SETTING_NAME = re.compile(r"SRO_[A-Z0-9_]+")
+# The SRO_ variables deployer derives itself; a shard setting never names one.
+DEPLOYMENT_VARIABLES = frozenset({"SRO_SERVER_GAME_DATA_ROOT", "SRO_STACK_SIZES", "SRO_BUG_REPORT_DISCORD_WEBHOOK",
+	"SRO_WEBTRANSPORT_PUBLIC"})
 AUTHORITY_DB = "state.db"
 
 
@@ -119,6 +129,118 @@ def bug_report_environment(config):
 	except FileNotFoundError:
 		return {}
 	return {"SRO_BUG_REPORT_DISCORD_WEBHOOK": value} if value else {}
+
+
+# ================
+# shard_settings
+#
+# This deployment's own shard settings (#606). The public job file and the
+# settings table (internal/config/shardsettings) default to native, so the
+# beta values this shard runs are named here, shipped and hashed with the
+# controls, and reach sro-nomad as its environment, which it validates
+# against the table. A missing or malformed file refuses the release before
+# any token, backup or stop: a silent native fallback would change the live
+# economy.
+# ================
+def shard_settings(path=None):
+	settings = json.loads(Path(path or SHARD_SETTINGS).read_text(encoding="utf-8"))
+	if not isinstance(settings, dict):
+		raise ValueError("shard settings must be a JSON object")
+	for name, value in settings.items():
+		if not SHARD_SETTING_NAME.fullmatch(name) or not isinstance(value, str):
+			raise ValueError("shard setting " + repr(name) + " must be an SRO_ name with a string value")
+		if name in DEPLOYMENT_VARIABLES:
+			raise ValueError("shard setting " + name + " is derived by the deployment")
+	return settings
+
+
+# ================
+# webtransport_deployer
+#
+# The public WebTransport posture as release configuration (issue #1447):
+# the switch rides the deployer's environment, which sro-nomad captures
+# as the webtransport_public job variable, and the public UDP bind and
+# TLS pair ride its arguments. A config without the keys deploys exactly
+# as before. A switch of "on" with an incomplete posture is refused here,
+# before the deployer runs; sro-nomad refuses it again on its side, and
+# the GameWorld again at boot. The posture keys without the switch are a
+# half-posture and deploy nothing either.
+#
+# The GameWorld runs unprivileged (Nomad raw_exec as the sro user), and the
+# host only lets root bind ports below 1024, so a public bind on UDP 443
+# would fail and the GameWorld would refuse to start. The bind port must be
+# 1024 or above and the host redirects public UDP 443 to it (quic_host.py);
+# sro-nomad is told the public port, so the advertised 443 still checks.
+# ================
+def webtransport_deployer(config):
+	public = config.get("webtransport_public", "")
+	if public not in ("", "on", "off"):
+		raise ValueError("webtransport_public must be on, off or unset")
+	keys = ("transport_wt_addr", "transport_cert_file", "transport_key_file")
+	if public != "on":
+		for key in keys:
+			if config.get(key):
+				raise ValueError(key + " requires webtransport_public on; a half-posture deploys nothing")
+		return ({"SRO_WEBTRANSPORT_PUBLIC": public} if public else {}), []
+	arguments = []
+	for key, flag in zip(keys, ("-transport-wt-addr", "-transport-cert-file", "-transport-key-file")):
+		value = config.get(key, "")
+		if not isinstance(value, str) or not value.strip():
+			raise ValueError("webtransport_public is on but " + key + " is not configured")
+		arguments += [flag, value.strip()]
+	quic_host.require_bind(*wt_bind(config["transport_wt_addr"]))
+	arguments += ["-transport-wt-public-port", str(quic_host.PUBLIC_PORT)]
+	return {"SRO_WEBTRANSPORT_PUBLIC": "on"}, arguments
+
+
+# ================
+# require_quic_host
+#
+# A public WebTransport deploy goes ahead only when the host already
+# carries the redirect, firewall opening and buffers for its bind port
+# (quic_host.problems); otherwise the listener would bind and no player
+# would reach it. Checked before any token is issued.
+# ================
+def require_quic_host(config, wt_environment):
+	if wt_environment.get("SRO_WEBTRANSPORT_PUBLIC") != "on":
+		return
+	gaps = quic_host.problems(wt_bind(config["transport_wt_addr"])[1])
+	if gaps:
+		raise RuntimeError("public WebTransport host is not ready: " + "; ".join(gaps))
+
+
+# ================
+# require_pair_readable
+#
+# The deploy runs as root, so sro-nomad's own load of the TLS pair proves
+# only that root can read it. The GameWorld runs as TASK_USER, and a key
+# root can read but it cannot (a synced Let's Encrypt key left 0600 root)
+# would pass every deploy check and fail its boot. Each file is read as
+# that user before any token is issued. (At boot the GameWorld then serves
+# WebSocket without WebTransport rather than failing, #1447; this keeps the
+# release from shipping into that state.)
+# ================
+def require_pair_readable(config, wt_environment, run_as=subprocess.run):
+	if wt_environment.get("SRO_WEBTRANSPORT_PUBLIC") != "on":
+		return
+	for key in ("transport_cert_file", "transport_key_file"):
+		path = config[key].strip()
+		if run_as(["runuser", "-u", TASK_USER, "--", "test", "-r", path], check=False).returncode != 0:
+			raise RuntimeError(key + " " + path + " is not readable by " + TASK_USER +
+				", the GameWorld's user; it would boot without WebTransport (grant it, e.g. root:" + TASK_USER + " 0640)")
+
+
+# ================
+# wt_bind
+#
+# The host and port of a host:port WebTransport bind ("[::]:18443"); a
+# value without a host or a numeric port is refused.
+# ================
+def wt_bind(address):
+	host, separator, port = address.strip().rpartition(":")
+	if not separator or not host or not port.isdigit() or not 0 < int(port) < 65536:
+		raise ValueError("transport_wt_addr must be host:port, not " + repr(address))
+	return host, int(port)
 
 
 # ================
@@ -489,6 +611,10 @@ def check_nomad_version(config):
 # token (revoke) whatever happens.
 # ================
 def deployer(config, stack_sizes):
+	settings = shard_settings()
+	wt_environment, wt_arguments = webtransport_deployer(config)
+	require_quic_host(config, wt_environment)
+	require_pair_readable(config, wt_environment)
 	management = dict(CLEAN_ENV, NOMAD_ADDR="http://127.0.0.1:4646",
 		NOMAD_TOKEN=json.loads(Path(config["nomad_bootstrap"]).read_text())["SecretID"])
 	issued = run(["nomad", "acl", "token", "create", "-name", "github-server-release", "-type", "client",
@@ -497,9 +623,13 @@ def deployer(config, stack_sizes):
 	environment = dict(CLEAN_ENV, NOMAD_ADDR="http://127.0.0.1:4646", NOMAD_NAMESPACE="sro",
 		NOMAD_TOKEN=token["SecretID"], SRO_SERVER_GAME_DATA_ROOT=config["game_data"],
 		SRO_STACK_SIZES=stack_sizes,
-		**bug_report_environment(config))
-	arguments = ["-namespace", "sro", "-task-user", "sro", "-allowed-origins", config["origin"],
-		"-agent-memory-mb", str(config["agent_memory_mb"]), "-gameworld-memory-mb", str(config["gameworld_memory_mb"])]
+		**bug_report_environment(config), **wt_environment)
+	# The shard's own settings last; shard_settings refuses every name
+	# the deployment derives, so none of them can be overridden here.
+	environment.update(settings)
+	arguments = ["-namespace", "sro", "-task-user", TASK_USER, "-allowed-origins", config["origin"],
+		"-agent-memory-mb", str(config["agent_memory_mb"]), "-gameworld-memory-mb", str(config["gameworld_memory_mb"]),
+		*wt_arguments]
 	return management, token, environment, arguments
 
 

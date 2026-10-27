@@ -84,6 +84,14 @@ variable "webtransport_public" {
   default = "off"
 }
 
+# The public UDP host:port the WT listener binds when webtransport_public
+# is on. Empty (default) keeps the Nomad-allocated loopback bind; the
+# deployer refuses the public switch without it.
+variable "transport_wt_addr" {
+  type    = string
+  default = ""
+}
+
 variable "host_network" {
   type    = string
   default = "loopback"
@@ -143,12 +151,12 @@ variable "move_client_clip" {
 # entry); beta_player_map shows every online player on the world map (M).
 variable "beta_starter_kit" {
   type    = string
-  default = "on"
+  default = "off"
 }
 
 variable "beta_player_map" {
   type    = string
-  default = "on"
+  default = "off"
 }
 
 # Beta builds share the 5000 total mastery budget. Set off for native
@@ -160,10 +168,11 @@ variable "beta_mastery" {
 
 # Port-only, not native: 110 raises the stopping level on the installed
 # v1.150 curve. Off keeps cap 90; expansion content is enabled separately.
-# Owner, 2026-10-24: 110 for the next release.
+# Owner, 2026-10-27: the default is the native 90 (the non-native rule: the
+# off value is native); the cap-110 expansion names 110 when it ships (#1751).
 variable "level_cap" {
   type    = string
-  default = "110"
+  default = "90"
 }
 
 # Port-only, not native: optional database-authored Alexandria field content.
@@ -172,9 +181,44 @@ variable "cap110_monsters" {
   default = "off"
 }
 
+# Port-only, not native: the level-100 slice of that population, admitted
+# for hunting separately (#1741); switches on with the cap-110 catalogue.
+variable "cap110_level100" {
+  type    = string
+  default = "off"
+}
+
+# Port-only, not native: degree-10/11 equipment set bonuses (#1747). The
+# v1.150 client ships no set rows, so off is the native state.
+variable "cap110_set_bonuses" {
+  type    = string
+  default = "off"
+}
+
+# Port-only, not native: the degree-11 equipment and skill tiers (#1745),
+# consumed at build time by the variant build's import tools; the
+# GameWorld reads neither at runtime.
+variable "cap110_items" {
+  type    = string
+  default = "off"
+}
+
+variable "cap110_skills" {
+  type    = string
+  default = "off"
+}
+
 # Port-only, not native: the optional Pharaoh Tomb 1-3 population. It needs
 # cap110_monsters on as well; GameWorld refuses to start otherwise.
 variable "pharaoh_tomb" {
+  type    = string
+  default = "off"
+}
+
+# Port-only, not native: the name-change scroll (#1689) - the Item Mall
+# lists it for 500 silk and a use queues a rename for the next login.
+# "off" is native: names never change.
+variable "name_change_scroll" {
   type    = string
   default = "off"
 }
@@ -192,7 +236,7 @@ variable "pharaoh_tomb_gear_rate" {
 # new credits; a launch wipes or zeroes it. "on" is 50.
 variable "beta_silk" {
   type    = string
-  default = "50"
+  default = "off"
 }
 
 # beta_silk_active_only credits the beta silk hour only while the character
@@ -239,6 +283,33 @@ variable "fast_den_return" {
 variable "unique_damage_rank" {
   type    = string
   default = "off"
+}
+
+# cave_seam_step lets a monster on the native cave route step through a
+# doorway whose landing point a whole-unit step would stop short of
+# (port-only, not native; owner decision 2026-10-26). "off" is the
+# original step, which can leave the monster pacing at such a doorway.
+variable "cave_seam_step" {
+  type    = string
+  default = "on"
+}
+
+# cave_modern_chase sends a monster chasing through a cave along the port's
+# planner (A* over the cells, string-pulled) instead of the original's
+# region route (port-only, not native; owner decision 2026-10-26). "off" is
+# the original route, which can leave a monster pacing on a cell line.
+variable "cave_modern_chase" {
+  type    = string
+  default = "on"
+}
+
+# cave_obstacle_escape lets a mover whose step starts inside a cave
+# obstacle circle walk out of it (port-only, not native; owner decision
+# 2026-10-26). "off" is the original circle test, which stops every step
+# deeper into a circle that covers a ramp doorway.
+variable "cave_obstacle_escape" {
+  type    = string
+  default = "on"
 }
 
 # closed_object_rescue moves a character that logs in inside a closed object
@@ -494,6 +565,14 @@ variable "announce_plus" {
   default = "on"
 }
 
+# announce_plus_tiers leads a +10 plus notice with "Great success!" and
+# a +11 or higher one with "LEGENDARY!" (port-only, not native; owner
+# decision 2026-10-26, #1739). "off" is the plain plus line.
+variable "announce_plus_tiers" {
+  type    = string
+  default = "off"
+}
+
 variable "announce_job_kill" {
   type    = string
   default = "on"
@@ -513,6 +592,15 @@ variable "job_kill_notice_repeat" {
 variable "announce_most_wanted" {
   type    = string
   default = "on"
+}
+
+# alchemy_break_notice announces the destroyed reinforcement item of a
+# character who opted in on the account page, by job alias or "a player",
+# never a character name (port-only, not native; owner-approved vote
+# 2026-10-26, #1604 P7.2 / #1738). "off" is native: no notice.
+variable "alchemy_break_notice" {
+  type    = string
+  default = "off"
 }
 
 # thief_party_bonus gives a party +10% monster EXP and gold per member
@@ -651,7 +739,7 @@ variable "attack_pet_expansion" {
 
 variable "beta_growth" {
   type    = string
-  default = "on"
+  default = "off"
 }
 
 # beta_growth_bands gives level bands their own EXP/SP multiplier: "pace"
@@ -659,17 +747,17 @@ variable "beta_growth" {
 # (owner, 2026-10-24). Empty keeps every level at the pace.
 variable "beta_growth_bands" {
   type    = string
-  default = "1-59:pace,60-69:1639,70-79:1215,80-89:748,90-94:532,95-99:431,100-104:351,105-110:289"
+  default = ""
 }
 
 variable "beta_skill_exp_rate" {
   type    = string
-  default = "100"
+  default = "1"
 }
 
 variable "beta_drop_rate" {
   type    = string
-  default = "20"
+  default = "1"
 }
 
 # beta_drop_mix gives item families their own beta drop rate (port-only, not
@@ -681,7 +769,7 @@ variable "beta_drop_rate" {
 # GameWorld at boot.
 variable "beta_drop_mix" {
   type    = string
-  default = "on"
+  default = "off"
 }
 
 # shop_extra_goods adds NPC shop goods beyond the v1.150 stock (port-only,
@@ -775,7 +863,7 @@ variable "job_goods_teleport" {
 # keeps today's drops.
 variable "beta_shop_only_degree9" {
   type    = string
-  default = "on"
+  default = "off"
 }
 
 # elixir_drops_off keeps every elixir out of monster drops (port-only, not
@@ -799,7 +887,7 @@ variable "alchemy_material_drops_off" {
 
 variable "beta_drop_cap" {
   type    = string
-  default = "16"
+  default = "0"
 }
 
 # 100 keeps gold per kill near its level before #463 stopped multiplying the
@@ -807,7 +895,7 @@ variable "beta_drop_cap" {
 # owner 2026-10-19).
 variable "beta_gold_rate" {
   type    = string
-  default = "100"
+  default = "1"
 }
 
 # instant_inventory_expansion makes quest bag slots usable at the turn-in
@@ -820,7 +908,7 @@ variable "instant_inventory_expansion" {
 
 variable "beta_rare_rate" {
   type    = string
-  default = "5"
+  default = "1"
 }
 
 # beta_seal_rates multiplies each rare seal's chance on top of beta_rare_rate
@@ -829,7 +917,7 @@ variable "beta_rare_rate" {
 # Moon twice, Sun as it is. "off" keeps every seal at beta_rare_rate.
 variable "beta_seal_rates" {
   type    = string
-  default = "on"
+  default = "off"
 }
 
 # sun_event_only keeps degree-9 Seal of Sun gear out of non-unique monster
@@ -867,12 +955,32 @@ variable "unique_pop_ticket" {
   default = "on"
 }
 
+# unique_max_level_loot rolls a top-band unique's equipment at the shard's
+# highest installed level (degree 9 at cap 90, degree 11 at cap 110)
+# rather than the unique's own level; a unique counts as top-band within
+# ten levels of that level, and every other unique keeps its own level
+# (port-only, not native; owner decision 2026-10-25, narrowed 2026-10-26).
+# Opt-in: "off" is native.
+variable "unique_max_level_loot" {
+  type    = string
+  default = "off"
+}
+
+# unique_seal_drops guarantees one Seal of Star of the top degree per
+# unique kill and a Seal of Moon on a kill in ten; no Seal of Sun is
+# guaranteed (port-only, not native; owner decision 2026-10-25, narrowed
+# 2026-10-26). "off" is native and is the default.
+variable "unique_seal_drops" {
+  type    = string
+  default = "off"
+}
+
 # beta_unique_respawn draws respawning unique monster nests over 45-90 minutes
 # instead of the operator backup's 20-36 minute rows (port-only, not native;
 # owner decision 2026-10-18). "off" keeps the authored row.
 variable "beta_unique_respawn" {
   type    = string
-  default = "on"
+  default = "off"
 }
 
 # stack_sizes raises item stack caps per group (port-only, not native), e.g.
@@ -1064,7 +1172,12 @@ job "sro-gameworld-__SHARD_ID__" {
         SRO_BETA_MASTERY                        = var.beta_mastery
         SRO_LEVEL_CAP                      = var.level_cap
         SRO_CAP110_MONSTERS                = var.cap110_monsters
+        SRO_CAP110_LEVEL100                = var.cap110_level100
+        SRO_CAP110_SET_BONUSES             = var.cap110_set_bonuses
+        SRO_CAP110_ITEMS                   = var.cap110_items
+        SRO_CAP110_SKILLS                  = var.cap110_skills
         SRO_PHARAOH_TOMB                   = var.pharaoh_tomb
+        SRO_NAME_CHANGE_SCROLL             = var.name_change_scroll
         SRO_PHARAOH_TOMB_GEAR_RATE         = var.pharaoh_tomb_gear_rate
         SRO_BETA_SILK                           = var.beta_silk
         SRO_BETA_SILK_ACTIVE_ONLY               = var.beta_silk_active_only
@@ -1074,6 +1187,9 @@ job "sro-gameworld-__SHARD_ID__" {
         SRO_FAST_DEN_RETURN                     = var.fast_den_return
         SRO_UNIQUE_DAMAGE_RANK                  = var.unique_damage_rank
         SRO_CLOSED_OBJECT_RESCUE                = var.closed_object_rescue
+        SRO_CAVE_SEAM_STEP                      = var.cave_seam_step
+        SRO_CAVE_MODERN_CHASE                   = var.cave_modern_chase
+        SRO_CAVE_OBSTACLE_ESCAPE                = var.cave_obstacle_escape
         SRO_DEEP_WATER_REFUSAL                  = var.deep_water_refusal
         SRO_MOST_WANTED                         = var.most_wanted
         SRO_MOST_WANTED_TEST                    = var.most_wanted_test
@@ -1100,6 +1216,7 @@ job "sro-gameworld-__SHARD_ID__" {
         SRO_SEAL_BOARD                          = var.seal_board
         SRO_SEAL_CENSUS                         = var.seal_census
         SRO_ANNOUNCE_PLUS                       = var.announce_plus
+        SRO_ANNOUNCE_PLUS_TIERS                 = var.announce_plus_tiers
         SRO_ANNOUNCE_JOB_KILL                   = var.announce_job_kill
         SRO_JOB_KILL_NOTICE_REPEAT              = var.job_kill_notice_repeat
         SRO_JOB_KILL_NOTICES_PER_MINUTE         = var.job_kill_notices_per_minute
@@ -1110,6 +1227,7 @@ job "sro-gameworld-__SHARD_ID__" {
         SRO_SHORT_NOTICE_FADE_MS                = var.short_notice_fade_ms
         SRO_CHAT_ACK_TIMEOUT_MS                 = var.chat_ack_timeout_ms
         SRO_ANNOUNCE_MOST_WANTED                = var.announce_most_wanted
+        SRO_ALCHEMY_BREAK_NOTICE                = var.alchemy_break_notice
         SRO_THIEF_PARTY_BONUS                   = var.thief_party_bonus
         SRO_THIEF_PARTY_PERCENT_EACH            = var.thief_party_percent_each
         SRO_THIEF_PARTY_PERCENT_CAP             = var.thief_party_percent_cap
@@ -1139,6 +1257,8 @@ job "sro-gameworld-__SHARD_ID__" {
         SRO_SUN_DROP_RATE                       = var.sun_drop_rate
         SRO_UNIQUE_GAP_EXEMPT                   = var.unique_gap_exempt
         SRO_UNIQUE_POP_TICKET                   = var.unique_pop_ticket
+        SRO_UNIQUE_MAX_LEVEL_LOOT               = var.unique_max_level_loot
+        SRO_UNIQUE_SEAL_DROPS                   = var.unique_seal_drops
         SRO_BETA_UNIQUE_RESPAWN                 = var.beta_unique_respawn
         SRO_BETA_DROP_CAP                       = var.beta_drop_cap
         SRO_BETA_DROP_MIX                       = var.beta_drop_mix
@@ -1159,7 +1279,7 @@ job "sro-gameworld-__SHARD_ID__" {
         SRO_ALEXANDRIA                          = var.alexandria
         SRO_PUBLIC_API_ADDR                     = var.public_api_addr
         SRO_PUBLIC_API_TOKEN_PATH               = "${NOMAD_SECRETS_DIR}/public-api-token"
-        TRANSPORT_WT_ADDR                       = "${NOMAD_IP_transport}:${NOMAD_PORT_transport}"
+        TRANSPORT_WT_ADDR                       = var.transport_wt_addr != "" ? var.transport_wt_addr : "${NOMAD_IP_transport}:${NOMAD_PORT_transport}"
         TRANSPORT_WS_ADDR                       = "${NOMAD_IP_transport}:${NOMAD_PORT_transport}"
         TRANSPORT_CERT_DIR                      = var.cert_dir
         TRANSPORT_CERT_FILE                     = var.transport_cert_file

@@ -148,9 +148,19 @@ outdoorPlane.NextWaypoint
 The direction-gate detour (the outdoor pursuit's open-terrain search).
 ================
 */
-func (o outdoorPlane) NextWaypoint(from, goal monster.Pose) *monster.NavigationRoute {
+func (o outdoorPlane) NextWaypoint(from monster.Pose, _ simulation.NavOwner, goal monster.Pose) *monster.NavigationRoute {
 	return o.water.PlanMonsterRoute(from, goal)
 }
+
+/*
+================
+outdoorPlane.PureRoutes
+
+The outdoor search ignores the owner outright and walks geometry
+preloaded at boot (PreloadOutdoorNavigation), never invalidated.
+================
+*/
+func (outdoorPlane) PureRoutes() bool { return true }
 
 /*
 ================
@@ -220,15 +230,26 @@ func (c cavePlane) PlanPath(
 ================
 cavePlane.NextWaypoint
 
-The cave's region route (cave_route.go): straight at the goal inside
-the room it stands in, across the floor's portal cells toward any
-other room - the native two-stage steering, at the port's floor
-grain.
+The cave's region route (cave_route.go) from the mover's retained cell:
+straight at the goal when the line walks, otherwise the native route
+tables where the dungeon has them (cave_native_route.go), else the port's
+portal route.
 ================
 */
-func (c cavePlane) NextWaypoint(from, goal monster.Pose) *monster.NavigationRoute {
-	return c.water.planCaveRoute(from, goal)
+func (c cavePlane) NextWaypoint(from monster.Pose, fromOwner simulation.NavOwner, goal monster.Pose) *monster.NavigationRoute {
+	return c.water.planCaveRouteFrom(from, fromOwner, goal)
 }
+
+/*
+================
+cavePlane.PureRoutes
+
+The cave search starts from the mover's retained cell and walks the
+floor surfaces loaded once (dungeonSpawnOnce). The owner is an input,
+not a variable: the failed-route memo keys it exactly (#1820 part B).
+================
+*/
+func (cavePlane) PureRoutes() bool { return true }
 
 /*
 ================

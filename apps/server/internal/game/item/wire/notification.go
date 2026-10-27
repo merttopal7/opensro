@@ -19,6 +19,23 @@ const JobKillNoticeChannel = 0x80
 // (DropPlusNotificationFrame); a protocol-9 client drops the channel.
 const DropPlusNoticeChannel = 0x81
 
+// BreakNoticeChannel is the 0x3667 channel of the item-break announcement
+// (#1738, port-only, not native, like JobKillNoticeChannel): the browser
+// client shows it as channel 7 unless the Experimental "Item break notices"
+// row is off, and a client without the row drops it. The frame is the plain
+// channel-7 layout: a break notice links nothing, so the alias it names can
+// never lead to a character.
+const BreakNoticeChannel = 0x82
+
+// RenameNoticeChannel is the 0x3667 channel of the name-change notice
+// (#1689, port-only, not native, like JobKillNoticeChannel): "X is now
+// known as Y" goes to the renamed character's online friends and guild
+// members only - never a shard announcement - so the frame only ever
+// rides a targeted send. The browser client shows it as channel 7
+// unconditionally: it is the feature's own feedback, not a broadcast a
+// player opts out of. The frame is the plain channel-7 layout.
+const RenameNoticeChannel = 0x83
+
 // NoticeLink is what a drop or plus notice links: the player it names
 // (empty for none) and the item's CSOItem body as the inventory sends it,
 // ItemBody.Encode, which opens with the refObjID (empty for none).
@@ -40,6 +57,16 @@ func NotificationFrame(message string) Frame {
 // JobKillNotificationFrame is NotificationFrame on JobKillNoticeChannel.
 func JobKillNotificationFrame(message string) Frame {
 	return notificationFrameOn(JobKillNoticeChannel, message)
+}
+
+// BreakNotificationFrame is NotificationFrame on BreakNoticeChannel.
+func BreakNotificationFrame(message string) Frame {
+	return notificationFrameOn(BreakNoticeChannel, message)
+}
+
+// RenameNotificationFrame is NotificationFrame on RenameNoticeChannel.
+func RenameNotificationFrame(message string) Frame {
+	return notificationFrameOn(RenameNoticeChannel, message)
 }
 
 // DropPlusNotificationFrame is a notice on DropPlusNoticeChannel, always in

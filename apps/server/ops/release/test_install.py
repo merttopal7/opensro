@@ -41,6 +41,22 @@ class InstallTests(unittest.TestCase):
 			(self.source / name).write_text("fixture " + name, encoding="utf-8")
 
 	# ================
+	# test_quic_sysctls_install_the_udp_buffers
+	#
+	# The public WebTransport listener's socket buffers land as a sysctl
+	# drop-in and are applied; the exact values are the contract.
+	# ================
+	def test_quic_sysctls_install_the_udp_buffers(self):
+		with patch.object(install, "install_file") as installed, patch("install.subprocess.run") as applied:
+			install.quic_sysctls()
+		path, body = installed.call_args.args
+		self.assertEqual(path, install.QUIC_SYSCTL_PATH)
+		self.assertEqual(body.decode(), install.QUIC_SYSCTL_BODY)
+		self.assertIn("net.core.rmem_max = 7500000", install.QUIC_SYSCTL_BODY)
+		self.assertIn("net.core.wmem_max = 7500000", install.QUIC_SYSCTL_BODY)
+		applied.assert_called_once_with(["sysctl", "--system"], check=True)
+
+	# ================
 	# test_complete_version_and_identical_reinstall
 	# ================
 	def test_complete_version_and_identical_reinstall(self):
@@ -95,6 +111,60 @@ class InstallTests(unittest.TestCase):
 
 if __name__ == "__main__":
 	unittest.main()
+
+
+# ================
+# StalldumpAccessTests
+#
+# The watcher (opensro-monitor) must reach dumps inside the GameWorld's
+# mode-700 authority; install grants exactly the traversal, the
+# directory read and the inheritance that make that work.
+# ================
+@unittest.skipIf(os.name == "nt", "POSIX ACL grants are verified on Linux")
+class StalldumpAccessTests(unittest.TestCase):
+	# ================
+	# setUp
+	# ================
+	def setUp(self):
+		self.directory = tempfile.TemporaryDirectory()
+		self.addCleanup(self.directory.cleanup)
+		self.root = Path(self.directory.name)
+		self.calls = []
+
+	# ================
+	# record
+	# ================
+	def record(self, arguments, check=False):
+		self.calls.append(list(arguments))
+
+	# ================
+	# test_grants_traverse_read_and_inheritance
+	# ================
+	def test_grants_traverse_read_and_inheritance(self):
+		authority = self.root / "authority"
+		dumps = authority / "stall-dumps"
+		dumps.mkdir(parents=True)
+		authority.chmod(0o700)
+		dumps.chmod(0o750)
+		dump = dumps / "tick-stall-20261018T000000Z.txt"
+		dump.write_text("tick stall dump\n", encoding="utf-8")
+		install.stalldump_access(dumps, "opensro-monitor", run=self.record)
+		self.assertIn(["setfacl", "-m", "u:opensro-monitor:--x", str(authority)], self.calls)
+		self.assertIn(["setfacl", "-m", "u:opensro-monitor:r-x", str(dumps)], self.calls)
+		self.assertIn(["setfacl", "-d", "-m", "u:opensro-monitor:r--", str(dumps)], self.calls)
+		self.assertIn(["setfacl", "-m", "u:opensro-monitor:r--", str(dump)], self.calls)
+		for call in self.calls:
+			self.assertNotEqual(call[-1], str(self.root.parent), "world-traversable ancestors are left alone")
+
+	# ================
+	# test_missing_directory_is_skipped
+	#
+	# The GameWorld creates the directory on first start; an install
+	# before that must not fail or invent shard state.
+	# ================
+	def test_missing_directory_is_skipped(self):
+		install.stalldump_access(self.root / "authority" / "stall-dumps", "opensro-monitor", run=self.record)
+		self.assertEqual(self.calls, [])
 
 
 # ================

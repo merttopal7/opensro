@@ -12,6 +12,7 @@ identity rather than resolving characters while another owner holds a lock.
 package main
 
 import (
+	"errors"
 	"fmt"
 	log "github.com/sirupsen/logrus"
 	worldgeom "opensro.online/server/internal/game/world"
@@ -199,13 +200,16 @@ func newGameplayPlane(
 	if items.SunEventOnly.Enabled() {
 		log.Infof("loot: degree-9 Seal of Sun gear neither drops nor is sold (%s)", progression.EnvSunEventOnly)
 	}
-	// SRO_UNIQUE_GAP_EXEMPT / SRO_UNIQUE_POP_TICKET (port-only, not native):
-	// uniques ignore the level-gap admission; one Magic Pop ticket per kill.
+	// SRO_UNIQUE_GAP_EXEMPT / SRO_UNIQUE_POP_TICKET / SRO_UNIQUE_MAX_LEVEL_LOOT
+	// / SRO_UNIQUE_SEAL_DROPS (port-only, not native): uniques ignore the
+	// level-gap admission, one Magic Pop ticket per kill, a top-band unique's
+	// equipment rolls at the shard's highest installed level, and each kill
+	// guarantees its seal reward.
 	items.UniqueRules = progression.UniqueRulesFromEnv()
-	if items.UniqueRules.GapExempt || items.UniqueRules.PopTicket {
-		log.Infof("loot: unique rewards (port-only): gap exemption %t, pop ticket %t (%s, %s)",
-			items.UniqueRules.GapExempt, items.UniqueRules.PopTicket,
-			progression.EnvUniqueGapExempt, progression.EnvUniquePopTicket)
+	if items.UniqueRules.GapExempt || items.UniqueRules.PopTicket || items.UniqueRules.MaxLevelLoot || items.UniqueRules.SealDrops {
+		log.Infof("loot: unique rewards (port-only): gap exemption %t, pop ticket %t, max-level loot %t, seal drops %t (%s, %s, %s, %s)",
+			items.UniqueRules.GapExempt, items.UniqueRules.PopTicket, items.UniqueRules.MaxLevelLoot, items.UniqueRules.SealDrops,
+			progression.EnvUniqueGapExempt, progression.EnvUniquePopTicket, progression.EnvUniqueMaxLevelLoot, progression.EnvUniqueSealDrops)
 	}
 	// SRO_TRADE_TIERS (port-only, not native) prices the shops' trade goods
 	// as ConfigureCommerce loads them, so it is set first.
@@ -227,11 +231,43 @@ func newGameplayPlane(
 	if len(mallExtra) > 0 {
 		log.Infof("mall: %d extra Item Mall goods from %s", len(mallExtra), commerce.EnvMallExtraGoods)
 	}
+	// SRO_NAME_CHANGE_SCROLL (port-only, not native, #1689): the mall
+	// sells the name-change scroll and the action runtime serves its use.
+	items.NameChangeScroll = action.NameChangeScrollFromEnv()
+	if items.NameChangeScroll {
+		mallExtra = append(mallExtra, commerce.MallExtraGood{
+			Tab: action.NameChangeMallTab, Package: action.NameChangeMallPackage,
+			Item: action.NameChangeScrollItem, Silk: action.NameChangePriceSilk,
+		})
+		log.Infof("mall: name change scroll listed at %d silk (%s, port-only, not native)", action.NameChangePriceSilk, action.EnvNameChangeScroll)
+	}
 	if err := items.ConfigureMall(devPaths.TextdataDir, mallAuthority, mallExtra); err != nil {
 		return nil, fmt.Errorf("mall catalogue: %w", err)
 	}
 	items.StatRecallWindows = commerce.StatRecallListed(mallExtra)
 	deps.SceneReferenceFrames = items.CommerceReferenceSeed
+	// #1689 (port-only): the name-change scroll's queue door. The store's
+	// refusal vocabulary is translated at this boundary so the gameplay
+	// packages never import the store.
+	deps.QueueRename = func(divisionID string, character *enterworld.Character, name string, nowMs int64) (enterworld.RenameQueueOutcome, error) {
+		err := authorityStore.QueueCharacterRename(divisionID, character, name, nowMs)
+		switch {
+		case err == nil:
+			return enterworld.RenameQueued, nil
+		case errors.Is(err, store.ErrCharacterNameInvalid):
+			return enterworld.RenameRefusedInvalidName, nil
+		case errors.Is(err, store.ErrCharacterNameConflict):
+			return enterworld.RenameRefusedNameTaken, nil
+		case errors.Is(err, store.ErrNameReserved):
+			return enterworld.RenameRefusedNameReserved, nil
+		case errors.Is(err, store.ErrRenamePending):
+			return enterworld.RenameRefusedAlreadyQueued, nil
+		case errors.Is(err, store.ErrRenameCooldown):
+			return enterworld.RenameRefusedCooldown, nil
+		default:
+			return enterworld.RenameRefusedInvalidName, err
+		}
+	}
 	deps.ReconcileSceneObjects = items.ReconcileScene
 	deps.ExtraRefItemCodenames = items.GroundRefItemCodenames
 	deps.StaticRefItemCodenames = items.StaticRefItemCodenames
@@ -254,6 +290,9 @@ func newGameplayPlane(
 		return nil, err
 	}
 	water.SetClosedObjectRescue(movement.ClosedObjectRescueFromEnv())
+	water.SetCaveSeamStep(movement.CaveSeamStepFromEnv())
+	water.SetCaveModernChase(movement.CaveModernChaseFromEnv())
+	water.SetCaveObstacleEscape(movement.CaveObstacleEscapeFromEnv())
 	water.SetDeepWaterRefusal(movement.DeepWaterRefusalFromEnv())
 	// Native dungeon interest is the 3x3 message-block neighbourhood of each
 	// dungeon's DOF grid (worldgeom dungeon_grid.go). Installed before the
@@ -716,7 +755,11 @@ func (game *gameplayPlane) register(hub *transport.Hub, loadQuests questDefiniti
 	if err = applyLevelCap(stats); err != nil {
 		return err
 	}
-	game.deps.LevelCap = stats.ShardLevelCap
+	// The configured cap reaches the party-matching bound directly and
+	// the client through the world-entry blob (publishedLevelCap keeps
+	// the native blob byte-identical with the expansion off).
+	game.matches.LevelLimit = stats.LevelLimit
+	game.deps.LevelCap = publishedLevelCap(stats.LevelLimit)
 	stats.MasteryTotalOverride = masteryOverride
 	if masteryOverride != 0 {
 		log.Infof("progression: beta total mastery allowance %d for both races (%s)", masteryOverride, progression.EnvBetaMastery)

@@ -52,6 +52,9 @@ func (game *gameplayPlane) newMissionTicker(peerReferences *action.PeerReference
 	game.items.Steps.Slow = func(name string, elapsed time.Duration) {
 		game.hub.RecordSlowStep("action.TickHook/"+name, elapsed)
 	}
+	// A slow publication-gate hold names its holder there too
+	// (publication_holds), so a waiting step is not mistaken for the stall.
+	game.items.PublicationHold = game.hub.RecordPublicationHold
 	hooks := []simulation.TickHook{
 		game.movement.GroundTickHook(),
 		game.items.TickHook(),
@@ -130,7 +133,7 @@ func (game *gameplayPlane) newMissionTicker(peerReferences *action.PeerReference
 			},
 			PlanPath:     game.water.PlanMonsterPath,
 			PlanPathFrom: game.water.PlanMonsterPathFrom,
-			PlanRoute: func(from, goal monster.Pose) *monster.NavigationRoute {
+			PlanRoute: func(from monster.Pose, fromOwner simulation.NavOwner, goal monster.Pose) *monster.NavigationRoute {
 				plane, ok := planes.Between(from.RegionID, goal.RegionID)
 				if !ok {
 					// No plane owns a route across the outdoor/cave
@@ -138,8 +141,17 @@ func (game *gameplayPlane) newMissionTicker(peerReferences *action.PeerReference
 					// does for any unresolved route.
 					return monster.UnresolvedNavigationRoute(goal, monster.NavigationRouteBlocked)
 				}
-				return plane.NextWaypoint(from, goal)
+				return plane.NextWaypoint(from, fromOwner, goal)
 			},
+			// The failed-route memo may answer a retry only where the
+			// plane's routes are pure (#1820 part B).
+			RouteMemo: func(from, goal monster.Pose) bool {
+				plane, ok := planes.Between(from.RegionID, goal.RegionID)
+				return ok && plane.PureRoutes()
+			},
+			// Slow-leg attribution diffs this per leg; a nonzero delta
+			// is a first-use load the boot preload missed (#1820 C).
+			NavCacheMisses: game.water.NavCacheMisses,
 			MessageBlockAt: game.water.MessageBlockAt,
 			Rand:           rand.Float64,
 			AttackPlan:     game.items.MonsterAttackPlan,

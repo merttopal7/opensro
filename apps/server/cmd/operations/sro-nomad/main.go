@@ -237,9 +237,13 @@ type commandOptions struct {
 	GMCharacters    string
 	TransportCert   string
 	TransportKey    string
-	IdentityIssuer  string
-	IdentityJWKSURL string
-	AgentURL        string
+	TransportWTAddr string
+	// TransportWTPublicPort is the public UDP port the host redirects to
+	// the WebTransport bind; 0 when clients dial the bind port itself.
+	TransportWTPublicPort int
+	IdentityIssuer        string
+	IdentityJWKSURL       string
+	AgentURL              string
 	// DevStack is the local development stack (devstack.go,
 	// SRO_DEV_PORT_OFFSET): the default Nomad address and the Agent and
 	// public API ports a loopback deployment uses.
@@ -328,6 +332,18 @@ func parseOptions(name string, arguments []string) (commandOptions, error) {
 		"transport-key-file",
 		"",
 		"production WebTransport TLS private key readable on every GameWorld node",
+	)
+	flags.StringVar(
+		&options.TransportWTAddr,
+		"transport-wt-addr",
+		"",
+		"public UDP host:port the GameWorld binds for WebTransport (required with SRO_WEBTRANSPORT_PUBLIC)",
+	)
+	flags.IntVar(
+		&options.TransportWTPublicPort,
+		"transport-wt-public-port",
+		0,
+		"public UDP port the host redirects to -transport-wt-addr (0: clients dial the bind port)",
 	)
 	flags.IntVar(&options.AgentPort, "agent-port", stack.agentPort(), "Agent HTTP port")
 	flags.IntVar(

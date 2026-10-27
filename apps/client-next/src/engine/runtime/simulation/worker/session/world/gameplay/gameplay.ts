@@ -98,6 +98,7 @@ import { itemCooldown } from "@/engine/foundation/gameplay/item-cooldowns";
 import { skillCooldown } from "@/engine/foundation/gameplay/skill-cooldowns";
 import { uniqueNotice, uniqueReferences } from "@/engine/foundation/gameplay/unique-notices";
 import { inventoryNotice } from "@/engine/foundation/gameplay/inventory-notices";
+import { nameChangeFailureText } from "@/engine/foundation/gameplay/name-change";
 import { alchemyNotice } from "@/engine/foundation/gameplay/alchemy-notices";
 import {
 	emptyPartyMatching,
@@ -106,6 +107,7 @@ import {
 	partyActiveJob,
 	partyPurposeAllowed
 } from "@/engine/foundation/gameplay/party-matching";
+import { NATIVE_LEVEL_CAP, publishedLevelCap } from "@/engine/foundation/gameplay/level-cap";
 import {
 	gmCatalog as decodeGmCatalog,
 	gmRequest,
@@ -439,6 +441,9 @@ export function createGameplay(
 		Pick<import("@/engine/contracts/gameplay").VitalState, "hp" | "mp" | "maxHp" | "maxMp" | "abnormal">
 	> = {};
 	let partyMatching = emptyPartyMatching();
+	// The shard's configured level cap, published at world entry (#1749);
+	// the native cap until a bootstrap says otherwise.
+	let levelCap = NATIVE_LEVEL_CAP;
 	let gmItems = gmItemReferences( {} );
 	// Port-only: the compact catalogues a GM's console helper filters. Built
 	// only for a GM entry; ordinary characters never pay for the list. The
@@ -1077,6 +1082,12 @@ attack can arrive in the same batch as the previous close and starve the walk.
 	// timer's end on the world clock, the flag carrier, and whether the
 	// last 0x7753 toggle was a sign-up (the join answer's text reads it).
 	let flagWarTimerEndsAt = 0, flagWarCarrierGid = 0, flagWarJoinExpected = false;
+	// Port-only (#1689): a name-change scroll use stays in flight until
+	// its 0xB5BD answer arrives; that answer's refusal bytes then read as
+	// the scroll's own lines. The native error mapper keeps no text at
+	// those codes and must stay exact for every other use, so the
+	// translation lives here, keyed on the flight, not in the mapper.
+	let renameUseInFlight = false;
 	let flagWarTeam: number | null = null;
 	let progression: Progression = { masteries: [] };
 	const skillGroups = new Map<number, { group: number; level: number; }>();
@@ -1167,6 +1178,8 @@ fails; retry persistence without restoring stale slot occupancy.
 	let dropPlusNotices = true;
 	// The Experimental "Plus +7 notices" row, on the same terms.
 	let plusSevenNotices = true;
+	// The Experimental "Item break notices" row, on the same terms.
+	let breakNotices = true;
 	// The Experimental "Homing projectiles" row: off by default so projectiles
 	// fly to their launch-captured endpoint as natively.
 	let homingProjectiles = false;
@@ -1449,6 +1462,7 @@ selected entities, cooldowns or world-entry state.
 		uniqueRank.clear();
 		petTraining.clear();
 		partyMatching = emptyPartyMatching();
+		levelCap = NATIVE_LEVEL_CAP;
 		entryVitals = {};
 		warnings = [ false, false ];
 		eligibility = { gm: false, pcRoomEvent: false };
@@ -1587,6 +1601,7 @@ The Experimental window's gameplay rows (experimentalGameplay).
 			jobKillNotices = value.jobKillNotices !== false;
 			dropPlusNotices = value.dropPlusNotices !== false;
 			plusSevenNotices = value.plusSevenNotices !== false;
+			breakNotices = value.breakNotices !== false;
 			homingProjectiles = value.homingProjectiles === true;
 			smartPetPickup = value.smartPetPickup !== false;
 			if ( !smartPetPickup ) cosPickup.spaceChanged();
@@ -1620,6 +1635,7 @@ resends nothing. Wiping them here made the next 0x3E58 type-6 row throw
 			returnScroll = undefined;
 			teleportMode = 0;
 			partyMatching = emptyPartyMatching();
+			levelCap = publishedLevelCap( (value as { levelCap?: unknown; } | null)?.levelCap );
 			bindingRepairs.clear();
 			inventory.takeBindingMoves();
 			gmItems = gmItemReferences( value );
@@ -2442,7 +2458,7 @@ state here before a command can claim a native wire conversation.
 					(!partyMatching.request || partyMatching.request.a !== command.a ||
 						partyMatching.request.b !== command.b)
 				) return null;
-				const next = partyMatchRequest( partyMatching, command, now );
+				const next = partyMatchRequest( partyMatching, command, now, levelCap );
 				if ( next.frame ) send( next.frame );
 				partyMatching = next.state;
 				return next.frame;
@@ -2863,7 +2879,7 @@ state here before a command can claim a native wire conversation.
 						bindings.skills,
 						catalog,
 						progression,
-						training.state().levelCap
+						levelCap
 					);
 					if ( reason ) throw Error( reason );
 				} else if ( !progression.masteries.some( r => r.id === id ) ) throw Error( "Mastery is not available" );
@@ -3209,14 +3225,19 @@ state here before a command can claim a native wire conversation.
 					skin: command.skin,
 					targetSlot: command.targetSlot,
 					reverseChoice: command.reverseChoice,
-					reverseMapPoint: command.reverseMapPoint
+					reverseMapPoint: command.reverseMapPoint,
+					renameName: command.renameName
 				};
 				const refusal = inventory.useNotice( command.slot, context );
 				if ( refusal ) {
 					api.notice( refusal );
 					return null;
 				}
-				return inventory.use( command.slot, now, context, command.message );
+				const sent = inventory.use( command.slot, now, context, command.message );
+				// Port-only (#1689): the scroll's use went out; its answer
+				// is the one 0xB5BD the refusal chain reads as its lines.
+				if ( sent && command.renameName !== undefined ) renameUseInFlight = true;
+				return sent;
 			}
 			if ( command.kind === "premium-command" || command.kind === "count-job-use" ) {
 				// The chat command (6AD990) finds its row by item type; the
@@ -3672,10 +3693,15 @@ Packet handling must not depend on which HUD panel is currently open.
 					}
 					if ( frame.opcode === 0xb5bf && !matched.pending && matched.auto.length ) {
 						const [id, ...auto] = matched.auto;
-						const continuation = partyMatchRequest( { ...matched, auto }, {
-							kind: "party-match-join",
-							id: id!
-						}, now );
+						const continuation = partyMatchRequest(
+							{ ...matched, auto },
+							{
+								kind: "party-match-join",
+								id: id!
+							},
+							now,
+							levelCap
+						);
 						if ( continuation.frame ) sendWhenLive( continuation.frame );
 						partyMatching = continuation.state;
 					} else partyMatching = matched;
@@ -3827,6 +3853,7 @@ Packet handling must not depend on which HUD panel is currently open.
 				if ( notice?.jobKill && !jobKillNotices ) return false;
 				if ( notice?.dropPlus && !dropPlusNotices ) return false;
 				if ( notice?.plusSeven && !plusSevenNotices ) return false;
+				if ( notice?.itemBreak && !breakNotices ) return false;
 				if ( notice ) {
 					notices = [ ...notices.slice( -99 ), { ...notice, sequence: ++noticeSequence } ];
 					if ( frame.opcode === 0x3667 && isServerNoticeChannel( frame.payload[0] ) ) {
@@ -4757,7 +4784,19 @@ Packet handling must not depend on which HUD panel is currently open.
 					}
 					return true;
 				}
-				const refusal = recallAppointmentNotice( frame.opcode, frame.payload ) ??
+				// Port-only (#1689): while the scroll's use is in flight its
+				// refusal bytes read as the scroll's own lines; any 0xB5BD
+				// answer retires the flight. All other refusals stay on
+				// the native mapper, byte-exact.
+				const renameLine = renameUseInFlight && frame.opcode === 0xb5bd && frame.payload[0] === 2 &&
+						frame.payload[1] !== undefined ?
+					nameChangeFailureText( frame.payload[1]! ) :
+					undefined;
+				if ( frame.opcode === 0xb5bd ) renameUseInFlight = false;
+				const refusal = (renameLine ?
+					{ key: "", value: 0, text: renameLine, nativeType: 5 as const } :
+					undefined) ??
+					recallAppointmentNotice( frame.opcode, frame.payload ) ??
 					targetNotice( frame.opcode, frame.payload ) ?? portalNotice( frame.opcode, frame.payload ) ??
 					repairNotice( frame.opcode, frame.payload ) ??
 					inventoryNotice( frame.opcode, frame.payload, localCountry, mallRequest ) ??
@@ -4994,7 +5033,12 @@ before take assembles the presentation snapshot.
 			}
 			if ( partyMatching.request && now >= partyMatching.request.expires ) {
 				const { a, b } = partyMatching.request,
-					next = partyMatchRequest( partyMatching, { kind: "party-match-answer", a, b, answer: 2 } );
+					next = partyMatchRequest(
+						partyMatching,
+						{ kind: "party-match-answer", a, b, answer: 2 },
+						0,
+						levelCap
+					);
 				if ( next.frame ) send( next.frame );
 				partyMatching = next.state;
 				dirty = true;
@@ -5197,6 +5241,7 @@ The published plane when something changed since the last take, else null.
 				selectionDecal,
 				notices,
 				partyMatching,
+				levelCap,
 				academy,
 				pkStatus,
 				guide,
