@@ -45,9 +45,11 @@ export function createUiBridge(
 		message = document.createElement( "p" );
 	root.setAttribute( "aria-label", "Game interface" );
 	root.dataset.gpuUi = "semantics";
-	root.style.cssText = "position:fixed;inset:0;pointer-events:none;overflow:hidden";
+	root.style.cssText =
+		"position:fixed;inset:0;pointer-events:none;overflow:hidden;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none;-webkit-tap-highlight-color:transparent";
 	message.setAttribute( "role", "status" );
-	message.style.cssText = "position:absolute;width:1px;height:1px;clip-path:inset(50%);overflow:hidden";
+	message.style.cssText =
+		"position:absolute;width:1px;height:1px;clip-path:inset(50%);overflow:hidden;user-select:none;-webkit-user-select:none";
 	root.append( message );
 	document.body.append( root );
 	const dragShield = createDragShield( lifetime.signal ); // GH #1242 drag-lifetime gesture shield
@@ -315,6 +317,11 @@ export function createUiBridge(
 	// Dragging selected transparent text otherwise steals pointer delivery and
 	// replaces the game cursor with the browser/OS drag image.
 	root.addEventListener( "dragstart", event => event.preventDefault(), { signal: lifetime.signal } );
+	root.addEventListener( "selectstart", event => {
+		if ( !(event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) ) {
+			event.preventDefault();
+		}
+	}, { signal: lifetime.signal, capture: true } );
 	// The semantic controls overlay the canvas, so canvas context-menu handling
 	// cannot see their RMB gestures. Cover editors, disabled controls, regions
 	// and future controls here without consuming the game's pointer events.
@@ -717,6 +724,11 @@ export function createUiBridge(
 			drag = { id: slot.value.id, pointer: event.pointerId, x, y };
 			dragShield.set( drag !== null && touchHold.pointers.has( drag.pointer ) );
 		}
+		if ( event.pointerType === "touch" && (slot.value.kind === "button" || slot.value.kind === "region") ) {
+			// Suppress browser long-press text selection, magnifying loupe, callout
+			// menus and compatibility clicks on non-editable UI controls.
+			event.preventDefault();
+		}
 		if ( event.pointerType === "touch" && touchHold.pointers.size === 1 && slot.value.kind === "button" ) {
 			cancelTouchHold();
 			touchHold.press = { element: slot.element, event, secondary: !!slot.value.rightActivate };
@@ -815,7 +827,7 @@ export function createUiBridge(
 					// Forced-colors users receive visible native controls; GPU focus remains the normal visual.
 					element.className = "gpu-ui-control";
 					element.style.cssText =
-						"position:absolute;pointer-events:auto;box-sizing:border-box;overflow:hidden;white-space:nowrap;min-width:0;min-height:0;margin:0;padding:0;border:0;opacity:0;color:transparent;background:transparent;font:12px Arial;text-align:center;cursor:inherit;";
+						"position:absolute;pointer-events:auto;box-sizing:border-box;overflow:hidden;white-space:nowrap;min-width:0;min-height:0;margin:0;padding:0;border:0;opacity:0;color:transparent;background:transparent;font:12px Arial;text-align:center;cursor:inherit;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none;-webkit-tap-highlight-color:transparent;-webkit-user-drag:none;";
 					if ( element instanceof HTMLInputElement ) {
 						element.type = control.kind === "password" ?
 							"password" :

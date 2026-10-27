@@ -624,9 +624,23 @@ export function createPlatform(
 		} );
 	};
 	// The game owns pointer gestures on its drawing surface, including RMB
-	// camera drag. Browser image menus must not interrupt that gesture.
+	// camera drag. Browser image menus, long-press text selection, callouts
+	// and native pinch/zoom gestures must not interrupt gameplay.
 	canvas.addEventListener( "contextmenu", event => event.preventDefault(), { signal: lifetime.signal } );
 	canvas.addEventListener( "dragstart", event => event.preventDefault(), { signal: lifetime.signal } );
+	window.addEventListener( "contextmenu", event => event.preventDefault(), { signal: lifetime.signal } );
+	window.addEventListener( "dragstart", event => event.preventDefault(), { signal: lifetime.signal } );
+	window.addEventListener( "selectstart", event => {
+		if ( !(event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) ) {
+			event.preventDefault();
+		}
+	}, { capture: true, signal: lifetime.signal } );
+	for ( const gesture of [ "gesturestart", "gesturechange", "gestureend" ] as const ) {
+		window.addEventListener( gesture, event => event.preventDefault(), {
+			passive: false,
+			signal: lifetime.signal
+		} );
+	}
 	canvas.addEventListener( "pointerdown", event => {
 		onGesture();
 		if ( event.pointerType === "touch" ) {
