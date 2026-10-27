@@ -182,7 +182,7 @@ func appendNests(template Template, data []byte, label string, admit func(Monste
 	if err := decoder.Decode(new(any)); err != io.EOF {
 		return Template{}, fmt.Errorf("%s has trailing data", label)
 	}
-	if source.Version != cap110PopulationVersion || len(source.Rows) == 0 {
+	if (source.Version != 1 && source.Version != cap110PopulationVersion) || len(source.Rows) == 0 {
 		return Template{}, fmt.Errorf("%s has invalid version or no nests", label)
 	}
 	refs := make(map[string]MonsterRef, len(template.Refs))
@@ -217,16 +217,18 @@ func appendNests(template Template, data []byte, label string, admit func(Monste
 			continue
 		}
 		worldCode := "INS_DEFAULT"
-		if worldOf == nil {
-			if row.WorldID != cap110FieldWorldID {
-				return Template{}, fmt.Errorf("%s has nest %d in another world %d", label, row.NestID, row.WorldID)
+		if source.Version != 1 {
+			if worldOf == nil {
+				if row.WorldID != cap110FieldWorldID {
+					return Template{}, fmt.Errorf("%s has nest %d in another world %d", label, row.NestID, row.WorldID)
+				}
+			} else {
+				code, err := worldOf(row)
+				if err != nil {
+					return Template{}, err
+				}
+				worldCode = code
 			}
-		} else {
-			code, err := worldOf(row)
-			if err != nil {
-				return Template{}, err
-			}
-			worldCode = code
 		}
 		nest := NestRow{
 			WorldCode: worldCode, PolicyPinned: true,
