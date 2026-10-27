@@ -657,7 +657,7 @@ test("M4: mobileMenuGridLayout and mobileDrawerBounds compute touch-sized 4x2 me
 	assert.deepEqual( layout.panelDrawer, [ 59, 0, 430, 368 ] );
 
 	const grid = mobileMenuGridLayout( layout );
-	assert.equal( grid.cells.length, 8 );
+	assert.equal( grid.cells.length, 12 );
 	assert.deepEqual( grid.close.slice( 2 ), [ 40, 40 ] );
 	for ( const cell of grid.cells ) {
 		assert.ok( cell.rect[2] >= 72 && cell.rect[3] >= 60, `menu cell ${cell.id} meets touch target size` );
@@ -794,8 +794,27 @@ test("M4: hud-menu opens 4x2 touch grid, docks panel drawers on the left, keeps 
 		{ kind: "gameplay", command: { kind: "quickslot-set", binding: { slot: 1, kind: 0x49, payload: skillId } } }
 	] );
 
-	// 5. Closing Skills restores the left-side HUD (player mini info, chat preview, menu button).
+	// 5. Opening Auto Potion from the mobile menu opens the Auto Potion window in the left drawer.
 	fixture.ui.event( { kind: "activate", id: "close-window:Skills" } );
+	output = draw();
+	fixture.ui.event( { kind: "activate", id: "hud-menu" } );
+	output = draw();
+	fixture.ui.event( { kind: "activate", id: "mobile-menu:Auto Potion" } );
+	for ( let i = 0; i < 6; i++ ) output = draw();
+	assert.ok( output.controls.some( c => c.id === "potion-save" ), "Auto Potion window opens from mobile menu" );
+	fixture.ui.event( { kind: "activate", id: "potion-cancel" } );
+	output = draw();
+
+	// 6. Opening Actions and tapping an action twice executes it (e.g., action:1012 opens Auto Potion).
+	fixture.ui.event( { kind: "activate", id: "hud-menu" } );
+	output = draw();
+	fixture.ui.event( { kind: "activate", id: "mobile-menu:Actions" } );
+	for ( let i = 0; i < 6; i++ ) output = draw();
+	fixture.ui.event( { kind: "activate", id: "action:1012" } );
+	fixture.ui.event( { kind: "activate", id: "action:1012" } );
+	for ( let i = 0; i < 6; i++ ) output = draw();
+	assert.ok( output.controls.some( c => c.id === "potion-save" ), "Double-tapping action:1012 opens Auto Potion" );
+	fixture.ui.event( { kind: "activate", id: "potion-cancel" } );
 	output = draw();
 	assert.ok( output.controls.some( c => c.id === "self-target" ), "player mini info restored after drawer closes" );
 	assert.ok( output.controls.some( c => c.id === "compact-chat" ), "chat preview restored after drawer closes" );

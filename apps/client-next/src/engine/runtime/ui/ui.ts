@@ -3295,10 +3295,15 @@ export function createUi(
 			dirty = true;
 			return;
 		}
+		const isMobile = !!view && !!compactHud.layout( view.width, view.height, {
+			mobileHud: experimental.state().saved.mobileHud,
+			touch: view.touch,
+			safeArea: view.safeArea
+		} )?.mobile;
 		// CIFCOSStatus maps no left-click message (6A9BC0: only 0x8074 and
 		// 0xD7), so the portrait's own 0x27 does nothing natively; selection is
 		// the right-button release (6A9E40), a touch hold on touch screens.
-		if ( id.startsWith( "cos-status:" ) && !experimental.state().saved.petClickOpensWindow ) return;
+		if ( id.startsWith( "cos-status:" ) && !experimental.state().saved.petClickOpensWindow && !isMobile ) return;
 		if ( id === "cos-command-toggle" ) {
 			cosHud.toggle();
 			dirty = true;
@@ -4261,6 +4266,25 @@ export function createUi(
 			const stall = view.gameplay?.stall, slot = Number( id.slice( 11 ) );
 			if ( stall?.phase === "visitor" && stall.open && stall.offers.some( row => row.slot === slot ) ) {
 				openStallPrompt( { kind: "buy", slot } );
+			} else if (
+				stall?.phase === "owner" &&
+				!stall.open &&
+				!stall.offers.some( row => row.slot === slot ) &&
+				inventorySlot >= (view.gameplay?.equipmentSlotCount ?? 13)
+			) {
+				const item = view.gameplay?.inventory.find( row => row.slot === inventorySlot );
+				inventorySlot = -1;
+				if ( item ) {
+					openStallPrompt( {
+						kind: "price",
+						slot,
+						bagSlot: item.slot,
+						carried: item.quantity,
+						quantity: String( item.quantity ),
+						price: "",
+						modify: false
+					} );
+				}
 			}
 		} else if ( id.startsWith( "stall-modify:" ) ) {
 			const stall = view.gameplay?.stall,
@@ -4530,8 +4554,14 @@ export function createUi(
 					answer: Number( id.slice( 13 ) ) as 0 | 1 | 2
 				} );
 			}
-		} else if ( id.startsWith( "action:" ) ) selectedAction = Number( id.slice( 7 ) );
-		else if ( id === "skills-mode" ) {
+		} else if ( id.startsWith( "action:" ) ) {
+			const actionId = Number( id.slice( 7 ) );
+			if ( isMobile && selectedAction === actionId ) {
+				executeAction( actionId );
+			} else {
+				selectedAction = actionId;
+			}
+		} else if ( id === "skills-mode" ) {
 			trainingMode = !trainingMode;
 			skillPage = 0;
 			selectedSkill = 0;
@@ -4684,6 +4714,11 @@ export function createUi(
 			if ( targetPanel === "Mall" ) {
 				if ( panel ) setPanel( "" );
 				activate( "item-mall" );
+			} else if ( targetPanel === "Pets" ) {
+				if ( panel ) setPanel( "" );
+				if ( itemMall.read().visible ) itemMall.close();
+				compactHud.toggle( "pets" );
+				focus = null;
 			} else {
 				if ( itemMall.read().visible ) itemMall.close();
 				setPanel( panelNamed( targetPanel ), "toggle" );
@@ -4802,6 +4837,17 @@ export function createUi(
 				for ( const binding of quickSlotDrop( "action:" + selectedAction, slot, game ) ) {
 					sendGameplay( { kind: "quickslot-set", binding } );
 				}
+			} else if (
+				isMobile &&
+				panel === "Inventory" &&
+				inventorySlot >= (game?.equipmentSlotCount ?? 13) &&
+				controls.some( c => c.id === "slot:" + inventorySlot && c.draggable && !c.disabled ) &&
+				game
+			) {
+				for ( const binding of quickSlotDrop( "slot:" + inventorySlot, slot, game ) ) {
+					sendGameplay( { kind: "quickslot-set", binding } );
+				}
+				inventorySlot = -1;
 			} else {
 				const binding = game?.quickSlots?.find( row => row.slot === slot );
 				if ( binding?.kind === 0x4e ) {
@@ -5051,16 +5097,20 @@ export function createUi(
 		else if ( id === "cos-bag" ) setPanel( "COS inventory" );
 		else if (
 			(id === "pet-mini-open" || id.startsWith( "cos-status:" )) &&
-			experimental.state().saved.petClickOpensWindow
+			(experimental.state().saved.petClickOpensWindow || isMobile)
 		) {
 			const gid = id === "pet-mini-open" ?
 					petMiniInfo( view.gameplay?.cosRecords, hud.data()?.cosReferences )?.gid :
 					Number( id.slice( 11 ) ),
 				record = gid ? view.gameplay?.cosRecords?.find( r => r.gid === gid ) : undefined;
 			if ( record && !record.dead && record.hp > 0 && cosClass( record.band ) !== COS_CLASS_GUILD ) {
+				const alreadySelected = cosHud.selected() === record.gid;
 				cosHud.select( record.gid );
+				bindCosWindow();
 				sendGameplay( { kind: "cos-select", gid: record.gid } );
-				if ( panel === "COS inventory" && cosGid === record.gid ) {
+				if ( isMobile && id.startsWith( "cos-status:" ) && !alreadySelected ) {
+					sendGameplay( { kind: "select", gid: record.gid } );
+				} else if ( panel === "COS inventory" && cosGid === record.gid ) {
 					setPanel( "" );
 				} else {
 					cosGid = record.gid;
@@ -5081,8 +5131,22 @@ export function createUi(
 			cosSlot = -1;
 			cosPage = 0;
 			bindCosDraft( next );
-		} else if ( id.startsWith( "cos-slot:" ) ) cosSlot = Number( id.slice( 9 ) );
-		else if ( id.startsWith( "cos-player:" ) ) inventorySlot = Number( id.slice( 11 ) );
+		} else if ( id.startsWith( "cos-slot:" ) ) {
+			const slot = Number( id.slice( 9 ) );
+			if ( isMobile && cosSlot === slot && view.gameplay && !view.gameplay.inventoryPending ) {
+				if ( panel === "Shop" && view.gameplay.shop?.cosGid === cosGid ) {
+					const item = merchantRows( view.gameplay ).find( r => r.slot === slot );
+					if ( item ) openShopSale( item );
+					cosSlot = -1;
+				} else if ( panel === "COS inventory" ) {
+					inventorySlot = -1;
+					activate( "from-cos" );
+					cosSlot = -1;
+				}
+			} else {
+				cosSlot = slot;
+			}
+		} else if ( id.startsWith( "cos-player:" ) ) inventorySlot = Number( id.slice( 11 ) );
 		else if ( (id === "cos-drop" || id === "cos-pickup") && view.gameplay ) {
 			const game = view.gameplay, record = game.cosRecords?.find( r => r.gid === cosGid );
 			if ( record && !record.dead && record.hp > 0 && !game.inventoryPending ) {
@@ -5361,7 +5425,82 @@ export function createUi(
 					} );
 				}
 				inventorySlot = -1;
-			} else inventorySlot = -1;
+			} else {
+				const game = view.gameplay,
+					item = game?.inventory.find( i => i.slot === slot );
+				inventorySlot = -1;
+				if ( isMobile && game && !game.inventoryPending && item ) {
+					const equipmentEnd = game.equipmentSlotCount ?? 13;
+					if ( game.exchange?.open && slot >= equipmentEnd ) {
+						stageExchangeItem( item );
+					} else if ( panel === "Shop" && !game.shop?.cosGid ) {
+						openShopSale( item );
+					} else if ( panel === "Alchemy" ) {
+						activate( "alchemy-slot:" + slot );
+					} else if ( panel === GRANT_PANEL ) {
+						sendGameplay( { kind: "magic-option-take", slot } );
+					} else if ( panel === "COS inventory" ) {
+						inventorySlot = slot;
+						cosSlot = -1;
+						activate( "to-cos" );
+						inventorySlot = -1;
+					} else if ( panel === "Storage" ) {
+						const move = storageQuickMove( "slot:" + slot, game, {
+							page: storagePanel.page( game.storage?.capacity ?? 0 ),
+							autoStack: game.storageAutoStack === true
+						} );
+						if ( move ) {
+							sendGameplay( { kind: "storage-move", move } );
+							followStorageMove( move, game );
+						}
+					} else if ( panel === "Inventory" ) {
+						if ( (item.typeFlags & 0x7fe) === 0x6ac ) moveAvatar( true, slot );
+						else useInventorySlot( slot );
+					}
+				}
+			}
+		} else if (
+			id.startsWith( "alchemy-empty:" ) &&
+			panel === "Alchemy" &&
+			inventorySlot >= (view.gameplay?.equipmentSlotCount ?? 13)
+		) {
+			const slot = inventorySlot;
+			inventorySlot = -1;
+			activate( "alchemy-slot:" + slot );
+		} else if (
+			id === "equipment-drop-zone" &&
+			inventorySlot >= (view.gameplay?.equipmentSlotCount ?? 13) &&
+			view.gameplay &&
+			!view.gameplay.inventoryPending
+		) {
+			const item = view.gameplay.inventory.find( i => i.slot === inventorySlot );
+			if ( item ) {
+				const destination = equipmentDropSlot( item.typeFlags, view.gameplay.inventory );
+				if ( destination !== undefined ) {
+					sendGameplay( {
+						kind: "inventory-move",
+						source: item.slot,
+						destination,
+						quantity: item.quantity
+					} );
+				}
+			}
+			inventorySlot = -1;
+		} else if (
+			isMobile &&
+			panel === "Storage" &&
+			id.startsWith( "storage-slot:" ) &&
+			view.gameplay &&
+			!view.gameplay.inventoryPending
+		) {
+			const move = storageQuickMove( id, view.gameplay, {
+				page: storagePanel.page( view.gameplay.storage?.capacity ?? 0 ),
+				autoStack: view.gameplay.storageAutoStack === true
+			} );
+			if ( move ) {
+				sendGameplay( { kind: "storage-move", move } );
+				followStorageMove( move, view.gameplay );
+			}
 		} else if ( id === "use" && inventorySlot >= 0 && view.gameplay ) useInventorySlot( inventorySlot );
 		else if ( id === "drop-item" && view.gameplay ) {
 			const item = view.gameplay.inventory.find( row => row.slot === inventorySlot );
@@ -9995,12 +10134,13 @@ export function createUi(
 				data: NonNullable<ReturnType<typeof hud.data>>,
 				records: readonly import("@/engine/contracts/gameplay").CosRecord[],
 				barX: number,
-				barY: number
+				barY: number,
+				cosTop = targetBottom
 			) {
 				const shown = records.filter( r => cosClass( r.band ) !== null );
 				const compactMargin = 15, compactPitch = 60, compactRowHeight = 90;
 				const compactColumns = Math.max( 1, Math.floor( (w - compactMargin * 2) / compactPitch ) );
-				let statusBottom = targetBottom;
+				let statusBottom = cosTop;
 				shown.forEach( ( record, i ) => {
 					const cls = cosClass( record.band )!, chrome = cosStatusChrome( cls );
 					// The server's pool, whatever the display row (#1548): it publishes
@@ -10016,7 +10156,7 @@ export function createUi(
 					const r: UiRect = compact ?
 						[
 							compactMargin + i % compactColumns * compactPitch,
-							targetBottom + compactMargin + Math.floor( i / compactColumns ) * compactRowHeight,
+							cosTop + compactMargin + Math.floor( i / compactColumns ) * compactRowHeight,
 							nativeRect[2],
 							nativeRect[3]
 						] :
@@ -11609,7 +11749,7 @@ export function createUi(
 						const petBounds = authoredRect( petPanel, px, py );
 						targetBottom = Math.max( targetBottom, petBounds[1] + petBounds[3] + 4 );
 					}
-					if ( experimental.state().saved.petClickOpensWindow ) {
+					if ( experimental.state().saved.petClickOpensWindow || mobile ) {
 						controls.push( {
 							id: "pet-mini-open",
 							label: pet.name?.length ? pet.name : hudCopy( "UIIT_STT_COSNEWUI_TITLE" ),
@@ -12508,22 +12648,32 @@ export function createUi(
 						}
 					} );
 				}
+				const cosTop = mobile ? Math.max( targetBottom, leftColumnBottom ) : targetBottom;
 				if (
 					hudData && game?.cosRecords?.length &&
-					(!compact || compact.overlay === "pets" && compact.top > targetBottom)
+					(!compact ||
+						(compact.overlay === "pets" ||
+								(mobile && !mobileDrawerOpen && !mobileMenuOpen &&
+									game.cosRecords.some( r => r.band === 1 || r.band === 2 ))) &&
+							compact.top > cosTop)
 				) {
 					const shown = (game.cosStatusRecords ?? game.cosRecords).map( record =>
 						game.cosRecords?.find( current => current.gid === record.gid ) ?? record
 					);
 					const mark = beginWindow();
-					drawCosHud( hudData, shown, barX, barY );
+					drawCosHud( hudData, shown, barX, barY, cosTop );
 					if ( compact ) {
 						fitUiGroup(
 							quads,
 							controls,
 							mark[0],
 							mark[1],
-							[ 0, targetBottom, w, compact.top - targetBottom ],
+							[
+								mobile ? mobile.playerOffset[0] : 0,
+								cosTop,
+								mobile ? mobile.panelDrawer[2] : w,
+								Math.max( 1, compact.top - cosTop )
+							],
 							full,
 							{
 								blocks,
@@ -21238,23 +21388,31 @@ export function createUi(
 						rect( [ r[0], r[1] + r[3] - 1, r[2], 1 ], border );
 						rect( [ r[0], r[1], 1, r[3] ], border );
 						rect( [ r[0] + r[2] - 1, r[1], 1, r[3] ], border );
-						const iconNode = cell.key === "Inventory" ?
-							mainBtns?.GDR_BTN_INV :
+						const iconTexture = cell.key === "Inventory" ?
+							mainBtns?.GDR_BTN_INV?.texture :
 							cell.key === "Character" ?
-							mainBtns?.GDR_BTN_CHAR :
+							mainBtns?.GDR_BTN_CHAR?.texture :
 							cell.key === "Skills" ?
-							mainBtns?.GDR_BTN_SKILL :
+							mainBtns?.GDR_BTN_SKILL?.texture :
 							cell.key === "Quests" ?
-							mainBtns?.GDR_BTN_QUEST :
+							mainBtns?.GDR_BTN_QUEST?.texture :
+							cell.key === "Actions" ?
+							mainBtns?.GDR_BTN_ACT?.texture :
+							cell.key === "Auto Potion" ?
+							iconPath( hudData.actions.find( a => a.id === 1012 )?.icon ) :
+							cell.key === "Alchemy" ?
+							iconPath( hudData.actions.find( a => a.id === 1010 )?.icon ) :
+							cell.key === "Pets" ?
+							ROOT + "interface/animal/am_ctrl_open.png" :
 							cell.key === "Party" ?
-							mainBtns?.GDR_BTN_PARTY :
+							mainBtns?.GDR_BTN_PARTY?.texture :
 							cell.key === "Guild" ?
-							barBtns.GDR_BTN_COMMUNITY :
+							barBtns.GDR_BTN_COMMUNITY?.texture :
 							cell.key === "Mall" ?
-							barBtns.GDR_BTN_ITEM_MALL :
-							barBtns.GDR_BTN_OPTION;
-						if ( iconNode?.texture ) {
-							image( cell.iconRect, iconNode.texture );
+							barBtns.GDR_BTN_ITEM_MALL?.texture :
+							barBtns.GDR_BTN_OPTION?.texture;
+						if ( iconTexture ) {
+							image( cell.iconRect, iconTexture );
 						}
 						quads.push(
 							...text.quads( cell.label, cell.labelRect, r, [ 0.98, 0.95, 0.84, 1 ], {

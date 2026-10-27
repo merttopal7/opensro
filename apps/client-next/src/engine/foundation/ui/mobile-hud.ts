@@ -68,9 +68,9 @@ const AUX_BUTTON_SIZE = 38;
 const PANEL_DRAWER_MAX_WIDTH = 430;
 const PANEL_DRAWER_LEFT_MARGIN = 48;
 const MENU_GRID_COLUMNS = 4;
-const MENU_GRID_ROWS = 2;
+const MENU_GRID_ROWS = 3;
 const MENU_GRID_MAX_WIDTH = 396;
-const MENU_GRID_MAX_HEIGHT = 212;
+const MENU_GRID_MAX_HEIGHT = 264;
 const MENU_GRID_HEADER_HEIGHT = 40;
 const MENU_GRID_PADDING = 12;
 const MENU_GRID_GAP = 8;
@@ -815,7 +815,19 @@ MobileMenuItem
 ================
 */
 export interface MobileMenuItem {
-	readonly key: "Inventory" | "Character" | "Skills" | "Quests" | "Party" | "Guild" | "Mall" | "System";
+	readonly key:
+		| "Inventory"
+		| "Character"
+		| "Skills"
+		| "Quests"
+		| "Actions"
+		| "Auto Potion"
+		| "Alchemy"
+		| "Pets"
+		| "Party"
+		| "Guild"
+		| "Mall"
+		| "System";
 	readonly id: string;
 	readonly label: string;
 	readonly short: string;
@@ -832,6 +844,10 @@ export function mobileMenuItems(): readonly MobileMenuItem[] {
 		{ key: "Character", id: "mobile-menu:Character", label: "Character", short: "CHR" },
 		{ key: "Skills", id: "mobile-menu:Skills", label: "Skills", short: "SKL" },
 		{ key: "Quests", id: "mobile-menu:Quests", label: "Quests", short: "QST" },
+		{ key: "Actions", id: "mobile-menu:Actions", label: "Actions", short: "ACT" },
+		{ key: "Auto Potion", id: "mobile-menu:Auto Potion", label: "AutoPot", short: "POT" },
+		{ key: "Alchemy", id: "mobile-menu:Alchemy", label: "Alchemy", short: "ALC" },
+		{ key: "Pets", id: "mobile-menu:Pets", label: "Pets", short: "PET" },
 		{ key: "Party", id: "mobile-menu:Party", label: "Party", short: "PTY" },
 		{ key: "Guild", id: "mobile-menu:Guild", label: "Guild", short: "GLD" },
 		{ key: "Mall", id: "mobile-menu:Mall", label: "Mall", short: "MAL" },
