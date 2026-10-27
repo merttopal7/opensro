@@ -12067,7 +12067,6 @@ export function createUi(
 					controls.push( ...output.controls );
 					blocks.push( ...output.blocks );
 				}
-				let mobileStatusLines: readonly { value: string; colorArgb: number; }[] = [];
 				if ( hudData ) {
 					if ( !compact ) drawTransientBanners();
 					const regionArt = hudData.root.GDR_REGION_INFO_VIEW;
@@ -12096,9 +12095,9 @@ export function createUi(
 						options.guide,
 						statusFilters
 					);
-					mobileStatusLines = lines;
 					if ( !compact || compact.overlay === "status" ) {
 						const statusHeight = mobile ? mobile.chatPreview[1] + 86 : compact ? compact.top + 90 : h;
+						const statusX = mobile ? mobile.chatPreview[0] : undefined;
 						const output = statusLayoutCache.read(
 							[
 								hudData,
@@ -12106,6 +12105,7 @@ export function createUi(
 								w,
 								h,
 								statusHeight,
+								statusX,
 								statusRows,
 								hover,
 								pressed,
@@ -12133,7 +12133,7 @@ export function createUi(
 									statusScroll.offset(),
 									value => text.run( value ).width,
 									!!compact || statusFilterOpen || !options.hideSystemMessages,
-									compact ? { width: Math.min( 353, w - 8 ) } : {}
+									compact ? { width: Math.min( 353, w - 8 ), x: statusX } : {}
 								)
 						);
 						statusScroll.geometry( output.scrolling );
@@ -12525,7 +12525,7 @@ export function createUi(
 					} );
 				}
 				if ( hudData && statusFilterOpen && (!compact || compact.overlay === "status") ) {
-					const sx = w - 357,
+					const sx = mobile ? mobile.chatPreview[0] : w - 357,
 						sy = mobile ?
 							Math.max( mobile.safe.top + 4, mobile.chatPreview[1] - 204 ) :
 							compact ?
@@ -12719,14 +12719,14 @@ export function createUi(
 					);
 					controls[controls.length - 1] = { ...controls[controls.length - 1]!, rect: menuRect };
 
-					// 2. Bottom-left 2-line chat & system preview strip + unread badge + system log toggle.
+					// 2. Bottom-left 2-line chat preview strip + unread badge + left-side Log switcher.
 					const chatRect = mobile.chatPreview;
 					const chatLines = game?.chat?.lines ?? [];
 					const chatOpen = !windowWarm.active() && (compact?.overlay === "chat" || panel === "Chat");
 					const unreadState = mobileUnreadCount( chatLines.length, mobileSeenChatCount, chatOpen );
 					mobileSeenChatCount = unreadState.nextSeen;
-					const previewRows = mobileChatPreviewLines( chatLines, mobileStatusLines );
-					rect( chatRect, [ 0.05, 0.06, 0.08, 0.76 ] );
+					const previewRows = mobileChatPreviewLines( chatLines );
+					rect( chatRect, chatOpen ? [ 0.18, 0.16, 0.1, 0.88 ] : [ 0.05, 0.06, 0.08, 0.76 ] );
 					rect( [ chatRect[0], chatRect[1], chatRect[2], 1 ], [ 0.75, 0.65, 0.38, 0.55 ] );
 					rect( [ chatRect[0], chatRect[1] + chatRect[3] - 1, chatRect[2], 1 ], [ 0.75, 0.65, 0.38, 0.55 ] );
 					if ( chatOpen ) {
@@ -12735,7 +12735,7 @@ export function createUi(
 								"Close Chat",
 								[ chatRect[0] + 8, chatRect[1] + 4, chatRect[2] - 16, chatRect[3] - 8 ],
 								chatRect,
-								[ 0.96, 0.94, 0.86, 1 ],
+								[ 1, 0.92, 0.64, 1 ],
 								{ hAlign: 0, vAlign: 1, overflow: "ellipsis" }
 							)
 						);
@@ -12838,8 +12838,7 @@ export function createUi(
 					);
 
 					// 4. Bottom-right 6 skill slots (slots 1..6 on the active quickslot page).
-					const mobileDrawerOpen = !windowWarm.active() &&
-						(panel !== "" || itemMall.read().visible || compact?.overlay === "status");
+					const mobileDrawerOpen = !windowWarm.active() && (panel !== "" || itemMall.read().visible);
 					if ( (!mobileDrawerOpen && !mobileMenuOpen) || carriedShortcut !== null ) {
 						for ( let i = 0; i < mobile.actionCluster.skills.length; i++ ) {
 							const n = i + 1;

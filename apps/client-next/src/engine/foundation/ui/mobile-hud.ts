@@ -936,39 +936,12 @@ export interface MobileChatLineInput {
 
 /*
 ================
-MobileStatusLineInput
-================
-*/
-export interface MobileStatusLineInput {
-	readonly value: string;
-	readonly colorArgb?: number;
-}
-
-/*
-================
 MobileChatPreviewLine
 ================
 */
 export interface MobileChatPreviewLine {
 	readonly text: string;
 	readonly color: readonly [number, number, number, number];
-}
-
-/*
-================
-argbToRgba
-================
-*/
-function argbToRgba( argb?: number ): readonly [number, number, number, number] {
-	if ( typeof argb !== "number" || !Number.isFinite( argb ) ) {
-		return [ 0.92, 0.84, 0.58, 1 ];
-	}
-	const u = argb >>> 0;
-	const a = ((u >>> 24) & 0xff) / 255;
-	const r = ((u >>> 16) & 0xff) / 255;
-	const g = ((u >>> 8) & 0xff) / 255;
-	const b = (u & 0xff) / 255;
-	return [ r, g, b, a > 0 ? a : 1 ];
 }
 
 /*
@@ -1027,23 +1000,15 @@ function formatMobileChatLine( line: MobileChatLineInput ): MobileChatPreviewLin
 mobileChatPreviewLines
 
 Composes up to 2 preview lines for the bottom-left mobile chat box,
-formatting chat channels with their native tint and filling any open slot
-with the newest system log message so combat/loot/EXP notices stay visible.
+formatting chat channels with their native tint. System log messages never
+appear in the chat preview; they are visible only when the Log panel opens.
 ================
 */
 export function mobileChatPreviewLines(
-	chatLines: readonly MobileChatLineInput[],
-	statusLines: readonly MobileStatusLineInput[] = []
+	chatLines: readonly MobileChatLineInput[]
 ): readonly MobileChatPreviewLine[] {
 	const formattedChat = chatLines.slice( -2 ).map( formatMobileChatLine );
-	if ( formattedChat.length >= 2 ) return formattedChat;
-	const needed = 2 - formattedChat.length;
-	const formattedStatus: MobileChatPreviewLine[] = statusLines.slice( -needed ).map( row => ({
-		text: row.value,
-		color: argbToRgba( row.colorArgb )
-	}) );
-	const combined = [ ...formattedChat, ...formattedStatus ];
-	if ( combined.length > 0 ) return combined;
+	if ( formattedChat.length > 0 ) return formattedChat;
 	return [ { text: "Chat", color: [ 0.78, 0.76, 0.68, 0.85 ] } ];
 }
 

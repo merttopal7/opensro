@@ -41,7 +41,7 @@ export function systemMessageLayout(
 	offset = 0,
 	measure: ( value: string ) => number = value => value.length * 7,
 	keepChrome = false,
-	options: { readonly width?: number; } = {}
+	options: { readonly width?: number; readonly x?: number; } = {}
 ) {
 	const panelWidth = options.width === undefined ?
 			NATIVE_PANEL_WIDTH :
@@ -64,7 +64,7 @@ export function systemMessageLayout(
 	const quads: UiQuad[] = [],
 		controls: UiControl[] = [],
 		paths: string[] = [],
-		x = width - panelWidth - PANEL_MARGIN,
+		x = options.x ?? width - panelWidth - PANEL_MARGIN,
 		y = height - 90 - (rows * 42 + 33),
 		full: UiRect = [ 0, 0, width, height ],
 		white = [ 1, 1, 1, 1 ] as const;
