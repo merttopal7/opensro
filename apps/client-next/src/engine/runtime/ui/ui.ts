@@ -111,12 +111,15 @@ import {
 	JOYSTICK_BASE_RADIUS,
 	JOYSTICK_KNOB_RADIUS,
 	mobileAttackTarget,
+	mobileBannerBand,
 	mobileBuffLayout,
+	mobileChatPreviewLines,
 	mobileCycleTarget,
 	mobileDrawerBounds,
 	mobileMenuGridLayout,
 	mobilePartyLayout,
-	mobileTargetOrigin
+	mobileTargetOrigin,
+	mobileUnreadCount
 } from "@/engine/foundation/ui/mobile-hud";
 import { minimapZoomTarget, advanceMinimapZoom } from "@/engine/foundation/ui/minimap-zoom";
 import { minimapTiles } from "@/engine/foundation/ui/minimap-tiles";
@@ -1175,6 +1178,7 @@ export function createUi(
 		knob: readonly [number, number];
 	} = { active: false, origin: [ 0, 0 ], knob: [ 0, 0 ] };
 	let mobileMenuOpen = false;
+	let mobileSeenChatCount = 0;
 	// CIFBuffViewer owners keep their one-second diff state: the target window
 	// (581330), each quick-party slot (5BA840), the attack pet mini window
 	// (6B3920) and the local board's suppression refresh (6E12D0 timer 0xA ->
@@ -2228,6 +2232,7 @@ export function createUi(
 		compactHud.reset();
 		mobileJoystick = { active: false, origin: [ 0, 0 ], knob: [ 0, 0 ] };
 		mobileMenuOpen = false;
+		mobileSeenChatCount = 0;
 		closeGuide();
 		withdrawal.close();
 		blockDialog = null;
@@ -10286,7 +10291,10 @@ export function createUi(
 			wraps native-size text below the occupied combat header, warning first.
 			================
 			*/
-			function drawTransientBanners( top?: number ) {
+			function drawTransientBanners(
+				top?: number,
+				band?: { readonly x: number; readonly y: number; readonly width: number; }
+			) {
 				const rows = [
 					{
 						value: uniqueBanner.value( hudCopy ),
@@ -10313,30 +10321,39 @@ export function createUi(
 				];
 				if ( top !== undefined ) rows.sort( ( a, b ) => a.y - b.y );
 				let bottom = top ?? 0;
+				const wrapLimit = band ? Math.max( 1, band.width - 16 ) : Math.max( 1, w - 80 );
 				for ( const row of rows ) {
 					paths.push( ...row.paths );
 					if ( row.alpha <= 0 ) continue;
 					const lines = top === undefined ?
 						[ row.value ] :
-						textLines( row.value, Math.max( 1, w - 80 ), value => text.run( value, 2 ).width );
+						textLines( row.value, wrapLimit, value => text.run( value, 2 ).width );
 					const lineHeight = text.extentHeight( 0, 2 ),
 						width = Math.ceil( Math.max( 0, ...lines.map( value => text.run( value, 2 ).width ) ) ),
 						height = lineHeight * lines.length,
 						y = top === undefined ? row.y : bottom,
-						x = (w >> 1) - (width >> 1);
+						defaultX = (w >> 1) - (width >> 1),
+						x = band ? band.x + (band.width >> 1) - (width >> 1) : defaultX,
+						dx = x - defaultX;
+					const bannerQuads = uniqueBannerQuads(
+						row.value,
+						row.alpha,
+						w,
+						h,
+						width,
+						height,
+						row.paths,
+						resources.size,
+						y,
+						row.color
+					);
 					quads.push(
-						...uniqueBannerQuads(
-							row.value,
-							row.alpha,
-							w,
-							h,
-							width,
-							height,
-							row.paths,
-							resources.size,
-							y,
-							row.color
-						)
+						...(dx === 0 ?
+							bannerQuads :
+							bannerQuads.map( q => ({
+								...q,
+								rect: [ q.rect[0] + dx, q.rect[1], q.rect[2], q.rect[3] ] as UiRect
+							}) ))
 					);
 					const textRgb = "textRgb" in row && row.textRgb ? row.textRgb : ([ 1, 1, 1 ] as const);
 					lines.forEach( ( value, index ) =>
@@ -12050,6 +12067,7 @@ export function createUi(
 					controls.push( ...output.controls );
 					blocks.push( ...output.blocks );
 				}
+				let mobileStatusLines: readonly { value: string; colorArgb: number; }[] = [];
 				if ( hudData ) {
 					if ( !compact ) drawTransientBanners();
 					const regionArt = hudData.root.GDR_REGION_INFO_VIEW;
@@ -12078,14 +12096,16 @@ export function createUi(
 						options.guide,
 						statusFilters
 					);
+					mobileStatusLines = lines;
 					if ( !compact || compact.overlay === "status" ) {
+						const statusHeight = mobile ? mobile.chatPreview[1] + 86 : compact ? compact.top + 90 : h;
 						const output = statusLayoutCache.read(
 							[
 								hudData,
 								layoutResourcesRevision,
 								w,
 								h,
-								compact?.top,
+								statusHeight,
 								statusRows,
 								hover,
 								pressed,
@@ -12097,7 +12117,7 @@ export function createUi(
 								systemMessageLayout(
 									hudData.status,
 									w,
-									compact ? compact.top + 90 : h,
+									statusHeight,
 									compact ? Math.min( statusRows, 1 ) : statusRows,
 									lines,
 									resources.size,
@@ -12270,7 +12290,12 @@ export function createUi(
 				if ( compact && hudData ) {
 					// Banners own a separate strip below player, pet, target buffs and telemetry.
 					compactTelemetryTop = Math.max( targetBottom, compactTelemetryTop );
-					targetBottom = drawTransientBanners( compactTelemetryTop + HUD_TOOLS_HEIGHT + 12 );
+					if ( mobile ) {
+						const band = mobileBannerBand( mobile, targetBottom );
+						targetBottom = drawTransientBanners( band.y, band );
+					} else {
+						targetBottom = drawTransientBanners( compactTelemetryTop + HUD_TOOLS_HEIGHT + 12 );
+					}
 				}
 				const barX = compact ? 0 : Math.trunc( (w - 800) / 2 ), barY = compact ? compact.top : h - 52;
 				if ( hudData && !compact ) {
@@ -12501,7 +12526,11 @@ export function createUi(
 				}
 				if ( hudData && statusFilterOpen && (!compact || compact.overlay === "status") ) {
 					const sx = w - 357,
-						sy = compact ? Math.max( 80, compact.top - 200 ) : h - 90 - (statusRows * 42 + 33),
+						sy = mobile ?
+							Math.max( mobile.safe.top + 4, mobile.chatPreview[1] - 204 ) :
+							compact ?
+							Math.max( 80, compact.top - 200 ) :
+							h - 90 - (statusRows * 42 + 33),
 						node = hudData.status.GDR_SYETEM_MESSAGE_OPTBOARD!,
 						r = authoredRect( node, sx, sy );
 					authoredImage( node, sx, sy );
@@ -12690,34 +12719,92 @@ export function createUi(
 					);
 					controls[controls.length - 1] = { ...controls[controls.length - 1]!, rect: menuRect };
 
-					// 2. Bottom-left chat preview strip (toggles the chat overlay).
+					// 2. Bottom-left 2-line chat & system preview strip + unread badge + system log toggle.
 					const chatRect = mobile.chatPreview;
-					const lastChat = game?.chat?.lines.at( -1 );
-					const chatCaption = compact?.overlay === "chat" ?
-						"Close Chat" :
-						lastChat ?
-						(lastChat.name ? lastChat.name + ": " + lastChat.text : lastChat.text) :
-						"Chat";
-					rect( chatRect, [ 0.05, 0.06, 0.08, 0.72 ] );
+					const chatLines = game?.chat?.lines ?? [];
+					const chatOpen = !windowWarm.active() && (compact?.overlay === "chat" || panel === "Chat");
+					const unreadState = mobileUnreadCount( chatLines.length, mobileSeenChatCount, chatOpen );
+					mobileSeenChatCount = unreadState.nextSeen;
+					const previewRows = mobileChatPreviewLines( chatLines, mobileStatusLines );
+					rect( chatRect, [ 0.05, 0.06, 0.08, 0.76 ] );
 					rect( [ chatRect[0], chatRect[1], chatRect[2], 1 ], [ 0.75, 0.65, 0.38, 0.55 ] );
 					rect( [ chatRect[0], chatRect[1] + chatRect[3] - 1, chatRect[2], 1 ], [ 0.75, 0.65, 0.38, 0.55 ] );
-					quads.push(
-						...text.quads(
-							chatCaption,
-							[ chatRect[0] + 8, chatRect[1] + 4, chatRect[2] - 16, chatRect[3] - 8 ],
-							chatRect,
-							[ 0.96, 0.94, 0.86, 1 ],
-							{ hAlign: 0, vAlign: 1, overflow: "ellipsis" }
-						)
-					);
+					if ( chatOpen ) {
+						quads.push(
+							...text.quads(
+								"Close Chat",
+								[ chatRect[0] + 8, chatRect[1] + 4, chatRect[2] - 16, chatRect[3] - 8 ],
+								chatRect,
+								[ 0.96, 0.94, 0.86, 1 ],
+								{ hAlign: 0, vAlign: 1, overflow: "ellipsis" }
+							)
+						);
+					} else {
+						const badgeWidth = unreadState.unread > 0 ? 28 : 0;
+						const textWidth = Math.max( 16, chatRect[2] - 16 - badgeWidth );
+						previewRows.forEach( ( row, rowIndex ) => {
+							const rowBox: UiRect = previewRows.length === 1 ?
+								[ chatRect[0] + 8, chatRect[1] + 4, textWidth, chatRect[3] - 8 ] :
+								[ chatRect[0] + 8, chatRect[1] + 4 + rowIndex * 16, textWidth, 16 ];
+							quads.push(
+								...text.quads( row.text, rowBox, chatRect, row.color, {
+									hAlign: 0,
+									vAlign: 1,
+									overflow: "ellipsis"
+								} )
+							);
+						} );
+						if ( unreadState.unread > 0 ) {
+							const badgeLabel = unreadState.unread > 99 ? "99+" : "+" + unreadState.unread;
+							const badgeRect: UiRect = [
+								chatRect[0] + chatRect[2] - 30,
+								chatRect[1] + 4,
+								26,
+								16
+							];
+							rect( badgeRect, [ 0.72, 0.18, 0.14, 0.92 ] );
+							quads.push(
+								...text.quads( badgeLabel, badgeRect, badgeRect, [ 1, 0.96, 0.88, 1 ], {
+									hAlign: 1,
+									vAlign: 1
+								} )
+							);
+						}
+					}
 					controls.push( {
 						id: "compact-chat",
-						label: "Chat",
+						label: unreadState.unread > 0 ? `Chat (${unreadState.unread} unread)` : "Chat",
 						kind: "button",
 						rect: chatRect,
 						selected: compact?.overlay === "chat"
 					} );
 					blocks.push( chatRect );
+
+					const statusRect = mobile.statusButton;
+					const statusOpen = compact?.overlay === "status";
+					rect( statusRect, statusOpen ? [ 0.18, 0.16, 0.1, 0.88 ] : [ 0.05, 0.06, 0.08, 0.76 ] );
+					rect( [ statusRect[0], statusRect[1], statusRect[2], 1 ], [ 0.75, 0.65, 0.38, 0.55 ] );
+					rect(
+						[ statusRect[0], statusRect[1] + statusRect[3] - 1, statusRect[2], 1 ],
+						[ 0.75, 0.65, 0.38, 0.55 ]
+					);
+					quads.push(
+						...text.quads(
+							"Log",
+							[ statusRect[0] + 4, statusRect[1] + 4, statusRect[2] - 8, statusRect[3] - 8 ],
+							statusRect,
+							statusOpen ? [ 1, 0.92, 0.64, 1 ] : [ 0.92, 0.88, 0.76, 1 ],
+							{ hAlign: 1, vAlign: 1 }
+						)
+					);
+					controls.push( {
+						id: "compact-status",
+						label: "Log",
+						kind: "button",
+						rect: statusRect,
+						selected: statusOpen
+					} );
+					blocks.push( statusRect );
 
 					// 3. Bottom-left floating virtual joystick (does not push to blocks so world taps pass through).
 					const joyOrigin = mobileJoystick.active ?
@@ -12751,7 +12838,8 @@ export function createUi(
 					);
 
 					// 4. Bottom-right 6 skill slots (slots 1..6 on the active quickslot page).
-					const mobileDrawerOpen = !windowWarm.active() && (panel !== "" || itemMall.read().visible);
+					const mobileDrawerOpen = !windowWarm.active() &&
+						(panel !== "" || itemMall.read().visible || compact?.overlay === "status");
 					if ( (!mobileDrawerOpen && !mobileMenuOpen) || carriedShortcut !== null ) {
 						for ( let i = 0; i < mobile.actionCluster.skills.length; i++ ) {
 							const n = i + 1;

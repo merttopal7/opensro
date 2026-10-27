@@ -219,6 +219,11 @@ export interface ExperimentalOptions {
 	// the top seal reads differently the moment it lands. Other players'
 	// drops are never marked. Off unless turned on.
 	readonly sunDropMarker: boolean;
+	// Port-only, not native (docs/MOBILE-HUD.md): on landscape touch phones,
+	// keep the minimap open in the top-right corner and group player, buff
+	// and party status in the top-left safe area. On by default (the owner's
+	// choice, 2026-10-26); off restores the compact HUD.
+	readonly mobileHud: boolean;
 }
 
 /*
@@ -364,7 +369,8 @@ export function experimentalOptions( value: unknown = null ): ExperimentalOption
 		touchInspect: record.touchInspect !== false,
 		expandedWorldMap: record.expandedWorldMap !== false,
 		questTrackerMarkers: enabled( "questTrackerMarkers" ),
-		sunDropMarker: enabled( "sunDropMarker" )
+		sunDropMarker: enabled( "sunDropMarker" ),
+		mobileHud: record.mobileHud !== false
 	};
 }
 

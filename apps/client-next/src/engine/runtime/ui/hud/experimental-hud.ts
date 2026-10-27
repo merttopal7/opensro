@@ -291,6 +291,11 @@ export const EXPERIMENTAL_TABS: readonly {
 			id: "experimental-confirm-guild-ban",
 			label: "Confirm guild ban",
 			description: "Ask before Withdraw bans a guild member."
+		}, {
+			key: "mobileHud",
+			id: "experimental-mobile-hud",
+			label: "Mobile HUD",
+			description: "On phones, keep the minimap open and free the view."
 		} ]
 	},
 	{

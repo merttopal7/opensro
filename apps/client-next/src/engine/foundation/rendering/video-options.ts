@@ -136,9 +136,9 @@ visualViewport, and pinning the canvas to the visualViewport box prevents
 a stale top band or clipped bottom edge. At every other time the layout
 viewport (innerWidth / innerHeight) rules: an on-screen keyboard or a
 pinch zoom also shrinks visualViewport, and neither may refit the canvas
-or resize the game under the player's fingers. We keep the default
-non-cover viewport (no viewport-fit=cover), so iOS reserves the status-bar
-and home-indicator safe areas outside visualViewport.
+or resize the game under the player's fingers. With viewport-fit=cover
+enabled, the canvas spans edge to edge and the HUD insets interactive
+clusters by the CSS safe-area-inset-* variables.
 ================
 */
 export function fitCanvasViewport(

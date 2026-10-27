@@ -164,6 +164,7 @@ for ( const deviceScaleFactor of [ 1, 2 ] ) {
 					const { createRenderer } = await import( "/src/engine/runtime/renderer/renderer.ts" );
 					const { createPlatform } = await import( "/src/engine/runtime/platform/platform.ts" );
 					const { emptySocial } = await import( "/src/engine/foundation/gameplay/social.ts" );
+					const { experimentalOptions } = await import( "/src/engine/foundation/ui/experimental-options.ts" );
 					const canvas = document.querySelector( "canvas" );
 					if ( !canvas ) throw Error( "Missing fixture canvas" );
 					const style = document.createElement( "style" );
@@ -329,6 +330,17 @@ for ( const deviceScaleFactor of [ 1, 2 ] ) {
 							state.gameplay = { ...state.gameplay, quickSlots: empty ? [] : bindings };
 						},
 						/*
+						================
+						setMobileHud
+						================
+						*/
+						setMobileHud( enabled ) {
+							ui.event( {
+								kind: "experimental-preferences",
+								value: experimentalOptions( { mobileHud: enabled } )
+							} );
+						},
+						/*
 				================
 				draw
 				================
@@ -427,6 +439,27 @@ for ( const deviceScaleFactor of [ 1, 2 ] ) {
 							await admit( page, fixture, HOTBAR_IDS );
 						}
 					}
+					await page.setViewportSize( { width: 667, height: 375 } );
+					const mobileReport = await admit( page, fixture, [
+						"hud-menu",
+						"compact-chat",
+						"mobile-attack",
+						"mobile-target-cycle",
+						"mobile-pickup",
+						"hotbar-next",
+						"hotbar:1",
+						"hotbar:2",
+						"hotbar:3",
+						"hotbar:4",
+						"hotbar:5",
+						"hotbar:6",
+						"minimap-in",
+						"minimap-out",
+						"toggle-window:Map"
+					] );
+					contained( mobileReport.controls, { width: 667, height: 375 } );
+					reports["landscape-mobile"] = mobileReport;
+					await fixture.evaluate( owner => owner.setMobileHud( false ) );
 					for ( const viewport of [ { width: 375, height: 667 }, { width: 667, height: 375 } ] ) {
 						const name = viewport.width === 375 ? "portrait" : "landscape";
 						await page.setViewportSize( viewport );
@@ -437,7 +470,7 @@ for ( const deviceScaleFactor of [ 1, 2 ] ) {
 						slotBackgrounds( report );
 						assert.ok(
 							!report.controls.some( row =>
-								[ "chat-text", "ext-drag", "minimap-in", "cos-status:9" ].includes( row.id )
+								[ "chat-text", "ext-drag", "cos-status:9", "minimap-in" ].includes( row.id )
 							)
 						);
 						assert.deepEqual( report.bindings, desktop.bindings );

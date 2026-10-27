@@ -109,8 +109,17 @@ const OFF = Object.freeze( {
 	// Off by default (#840): the maps mark the tracked quest's targets only.
 	questTrackerMarkers: false,
 	// Off by default (#1640): only the native plate and no ground ring.
-	sunDropMarker: false
+	sunDropMarker: false,
+	// On by default (owner 2026-10-26): landscape touch phones use the mobile HUD.
+	mobileHud: true
 } );
+
+test("mobile HUD defaults on and only an explicit false turns it off", () => {
+	for ( const value of [ undefined, null, {}, { mobileHud: true }, { mobileHud: "false" }, { mobileHud: 0 } ] ) {
+		assert.equal( experimentalOptions( value ).mobileHud, true, JSON.stringify( value ) );
+	}
+	assert.equal( experimentalOptions( { mobileHud: false } ).mobileHud, false );
+});
 
 test("touch inspection defaults on and only an explicit false turns it off", () => {
 	for (

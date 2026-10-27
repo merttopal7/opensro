@@ -36,7 +36,10 @@ const {
 	mobileAttackTarget,
 	mobileMenuItems,
 	mobileMenuGridLayout,
-	mobileDrawerBounds
+	mobileDrawerBounds,
+	mobileChatPreviewLines,
+	mobileUnreadCount,
+	mobileBannerBand
 } = await import( "../../src/engine/foundation/ui/mobile-hud.ts" );
 
 test("normalizeSafeArea clamps negative and non-finite insets to nonnegative integers", () => {
@@ -732,6 +735,126 @@ test("M4: hud-menu opens 4x2 touch grid and opens right-hand panel drawers witho
 	output = draw();
 	assert.ok( output.controls.some( c => c.id === "minimap-in" ), "minimap restored after drawer closes" );
 	assert.ok( output.controls.some( c => c.id === "mobile-attack" ), "action cluster restored after drawer closes" );
+
+	fixture.dispose();
+});
+
+test("M5: mobileChatPreviewLines, mobileUnreadCount and mobileBannerBand format 2-line preview, unread badge and centered banner band", () => {
+	const layout = mobileHudLayout( 852, 393, {
+		safeArea: { top: 0, right: 59, bottom: 21, left: 59 }
+	} );
+	assert.deepEqual( layout.chatPreview, [ 67, 324, 248, 40 ] );
+	assert.deepEqual( layout.statusButton, [ 319, 324, 44, 40 ] );
+
+	// 1. mobileChatPreviewLines picks up to 2 lines from chat, falling back to system status lines.
+	assert.deepEqual( mobileChatPreviewLines( [], [] ).map( r => r.text ), [ "Chat" ] );
+	assert.deepEqual(
+		mobileChatPreviewLines( [], [ { value: "Exp +150" }, { value: "Gold +40" } ] ).map( r => r.text ),
+		[ "Exp +150", "Gold +40" ]
+	);
+	assert.deepEqual(
+		mobileChatPreviewLines(
+			[ { channel: 4, name: "Ali", text: "merhaba" } ],
+			[ { value: "Exp +150" }, { value: "Gold +40" } ]
+		).map( r => r.text ),
+		[ "[Party] Ali: merhaba", "Gold +40" ]
+	);
+	assert.deepEqual(
+		mobileChatPreviewLines(
+			[ { name: "Ali", text: "selam" }, { name: "Veli", text: "naber" } ],
+			[ { value: "Gold +40" } ]
+		).map( r => r.text ),
+		[ "Ali: selam", "Veli: naber" ]
+	);
+
+	// 2. mobileUnreadCount tracks unread arrivals while collapsed and clears when chat opens.
+	assert.deepEqual( mobileUnreadCount( 2, 0, false ), { unread: 2, nextSeen: 0 } );
+	assert.deepEqual( mobileUnreadCount( 2, 0, true ), { unread: 0, nextSeen: 2 } );
+	assert.deepEqual( mobileUnreadCount( 5, 2, false ), { unread: 3, nextSeen: 2 } );
+	assert.deepEqual( mobileUnreadCount( 5, 2, true ), { unread: 0, nextSeen: 5 } );
+
+	// 3. mobileBannerBand stays inside targetBand horizontally and stacks below targetBottom.
+	assert.deepEqual( mobileBannerBand( layout, 0 ), { x: 279, y: 7, width: 381 } );
+	assert.deepEqual( mobileBannerBand( layout, 75 ), { x: 279, y: 81, width: 381 } );
+});
+
+test("M5: UI renders 2-line chat preview with unread badge and toggles system log via compact-status", () => {
+	const sent = [];
+	const fixture = uiFixture( command => sent.push( command ) );
+	let time = 0, published;
+	/*
+	================
+	draw
+	================
+	*/
+	function draw() {
+		published = fixture.ui.step( fixture.state, ++time * 100 ) ?? published;
+		assert.equal( fixture.ui.stats().error, null );
+		return defined( published );
+	}
+
+	Object.assign( fixture.state, {
+		width: 852,
+		height: 393,
+		touch: true,
+		safeArea: { top: 0, right: 59, bottom: 21, left: 59 },
+		gameplay: {
+			...fixture.state.gameplay,
+			chat: {
+				lines: [
+					{ channel: 1, name: "Ali", text: "birinci mesaj" },
+					{ channel: 1, name: "Veli", text: "ikinci mesaj" }
+				],
+				feedback: []
+			}
+		}
+	} );
+
+	let output;
+	for ( let i = 0; i < 6; i++ ) output = draw();
+
+	// 1. Both compact-chat (40px tall 2-line box) and compact-status (44x40 Log button) are present, with unread count in label.
+	const chatBtn = defined( output.controls.find( c => c.id === "compact-chat" ) );
+	const logBtn = defined( output.controls.find( c => c.id === "compact-status" ) );
+	assert.deepEqual( chatBtn.rect, [ 67, 324, 248, 40 ] );
+	assert.deepEqual( logBtn.rect, [ 319, 324, 44, 40 ] );
+	assert.equal( chatBtn.label, "Chat (2 unread)" );
+
+	// 2. Opening compact-chat clears the unread count; closing it keeps seenCount at 2 until a 3rd message arrives.
+	fixture.ui.event( { kind: "activate", id: "compact-chat" } );
+	output = draw();
+	assert.equal( defined( output.controls.find( c => c.id === "compact-chat" ) ).label, "Chat" );
+	fixture.ui.event( { kind: "activate", id: "compact-chat" } );
+	output = draw();
+	assert.equal( defined( output.controls.find( c => c.id === "compact-chat" ) ).label, "Chat" );
+
+	fixture.state.gameplay = {
+		...fixture.state.gameplay,
+		chat: {
+			lines: [
+				...fixture.state.gameplay.chat.lines,
+				{ channel: 1, name: "Ayse", text: "ucuncu mesaj" }
+			],
+			feedback: []
+		}
+	};
+	output = draw();
+	assert.equal( defined( output.controls.find( c => c.id === "compact-chat" ) ).label, "Chat (1 unread)" );
+
+	// 3. Tapping compact-status opens the system message log and hides the bottom-right action cluster so controls do not collide.
+	fixture.ui.event( { kind: "activate", id: "compact-status" } );
+	output = draw();
+	assert.ok( output.controls.some( c => c.id === "status-panel" ), "system message panel opened" );
+	assert.ok(
+		!output.controls.some( c => c.id === "mobile-attack" ),
+		"action cluster yields while status log is open"
+	);
+
+	// 4. Tapping compact-status again closes the system log and restores the action cluster.
+	fixture.ui.event( { kind: "activate", id: "compact-status" } );
+	output = draw();
+	assert.ok( !output.controls.some( c => c.id === "status-panel" ), "system message panel closed" );
+	assert.ok( output.controls.some( c => c.id === "mobile-attack" ), "action cluster restored" );
 
 	fixture.dispose();
 });

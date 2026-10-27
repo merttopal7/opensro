@@ -58,8 +58,10 @@ const MINIMAP_ZOOM_OUT_Y = 150;
 const MINIMAP_ZOOM_TOUCH_SIZE = 28;
 const TARGET_BAND_HEIGHT = 68;
 const EXP_STRIP_HEIGHT = 4;
-const CHAT_PREVIEW_WIDTH = 260;
-const CHAT_PREVIEW_HEIGHT = 28;
+const CHAT_PREVIEW_WIDTH = 248;
+const CHAT_PREVIEW_HEIGHT = 40;
+const STATUS_BUTTON_WIDTH = 44;
+const STATUS_BUTTON_HEIGHT = 40;
 const ATTACK_BUTTON_SIZE = 64;
 const SKILL_SLOT_SIZE = 44;
 const AUX_BUTTON_SIZE = 38;
@@ -137,6 +139,7 @@ export interface MobileHudLayout {
 	readonly actionCluster: MobileActionCluster;
 	readonly expBar: UiRect;
 	readonly chatPreview: UiRect;
+	readonly statusButton: UiRect;
 	readonly panelDrawer: UiRect;
 }
 
@@ -286,12 +289,18 @@ export function mobileHudLayout(
 		safeWidth,
 		EXP_STRIP_HEIGHT
 	];
-	const chatPreviewWidth = Math.min( CHAT_PREVIEW_WIDTH, Math.floor( safeWidth * 0.42 ) );
+	const chatPreviewWidth = Math.min( CHAT_PREVIEW_WIDTH, Math.floor( safeWidth * 0.36 ) );
 	const chatPreview: UiRect = [
 		safe.left + BUFF_LEFT_OFFSET,
 		expBar[1] - CHAT_PREVIEW_HEIGHT - SECTION_GAP,
 		chatPreviewWidth,
 		CHAT_PREVIEW_HEIGHT
+	];
+	const statusButton: UiRect = [
+		chatPreview[0] + chatPreview[2] + SECTION_GAP,
+		chatPreview[1],
+		STATUS_BUTTON_WIDTH,
+		STATUS_BUTTON_HEIGHT
 	];
 
 	const joystickTop = Math.floor( safe.top + safeHeight * 0.45 );
@@ -360,6 +369,7 @@ export function mobileHudLayout(
 		actionCluster,
 		expBar,
 		chatPreview,
+		statusButton,
 		panelDrawer
 	};
 }
@@ -910,4 +920,175 @@ export function mobileDrawerBounds(
 		fittedWidth,
 		drawerHeight
 	];
+}
+
+/*
+================
+MobileChatLineInput
+================
+*/
+export interface MobileChatLineInput {
+	readonly channel: number;
+	readonly name?: string;
+	readonly text: string;
+	readonly outgoing?: boolean;
+}
+
+/*
+================
+MobileStatusLineInput
+================
+*/
+export interface MobileStatusLineInput {
+	readonly value: string;
+	readonly colorArgb?: number;
+}
+
+/*
+================
+MobileChatPreviewLine
+================
+*/
+export interface MobileChatPreviewLine {
+	readonly text: string;
+	readonly color: readonly [number, number, number, number];
+}
+
+/*
+================
+argbToRgba
+================
+*/
+function argbToRgba( argb?: number ): readonly [number, number, number, number] {
+	if ( typeof argb !== "number" || !Number.isFinite( argb ) ) {
+		return [ 0.92, 0.84, 0.58, 1 ];
+	}
+	const u = argb >>> 0;
+	const a = ((u >>> 24) & 0xff) / 255;
+	const r = ((u >>> 16) & 0xff) / 255;
+	const g = ((u >>> 8) & 0xff) / 255;
+	const b = (u & 0xff) / 255;
+	return [ r, g, b, a > 0 ? a : 1 ];
+}
+
+/*
+================
+formatMobileChatLine
+================
+*/
+function formatMobileChatLine( line: MobileChatLineInput ): MobileChatPreviewLine {
+	const sender = line.name ? line.name + ": " : "";
+	switch ( line.channel ) {
+		case 2:
+			return {
+				text: "[PM] " + (line.outgoing && line.name ? "-> " + line.name + ": " : sender) + line.text,
+				color: [ 0.98, 0.62, 0.92, 1 ]
+			};
+		case 4:
+			return {
+				text: "[Party] " + sender + line.text,
+				color: [ 0.48, 0.84, 1, 1 ]
+			};
+		case 5:
+			return {
+				text: "[Guild] " + sender + line.text,
+				color: [ 0.45, 0.96, 0.55, 1 ]
+			};
+		case 6:
+			return {
+				text: "[Global] " + sender + line.text,
+				color: [ 1, 0.88, 0.32, 1 ]
+			};
+		case 7:
+			return {
+				text: "[Notice] " + line.text,
+				color: [ 1, 0.58, 0.72, 1 ]
+			};
+		case 9:
+			return {
+				text: "[Academy] " + sender + line.text,
+				color: [ 0.76, 0.68, 1, 1 ]
+			};
+		case 11:
+			return {
+				text: "[Union] " + sender + line.text,
+				color: [ 0.42, 0.95, 0.82, 1 ]
+			};
+		default:
+			return {
+				text: sender + line.text,
+				color: [ 0.96, 0.94, 0.86, 1 ]
+			};
+	}
+}
+
+/*
+================
+mobileChatPreviewLines
+
+Composes up to 2 preview lines for the bottom-left mobile chat box,
+formatting chat channels with their native tint and filling any open slot
+with the newest system log message so combat/loot/EXP notices stay visible.
+================
+*/
+export function mobileChatPreviewLines(
+	chatLines: readonly MobileChatLineInput[],
+	statusLines: readonly MobileStatusLineInput[] = []
+): readonly MobileChatPreviewLine[] {
+	const formattedChat = chatLines.slice( -2 ).map( formatMobileChatLine );
+	if ( formattedChat.length >= 2 ) return formattedChat;
+	const needed = 2 - formattedChat.length;
+	const formattedStatus: MobileChatPreviewLine[] = statusLines.slice( -needed ).map( row => ({
+		text: row.value,
+		color: argbToRgba( row.colorArgb )
+	}) );
+	const combined = [ ...formattedChat, ...formattedStatus ];
+	if ( combined.length > 0 ) return combined;
+	return [ { text: "Chat", color: [ 0.78, 0.76, 0.68, 0.85 ] } ];
+}
+
+/*
+================
+mobileUnreadCount
+
+Tracks unread chat lines while the mobile chat overlay is closed and resets
+the counter as soon as the overlay opens.
+================
+*/
+export function mobileUnreadCount(
+	totalLines: number,
+	seenLines: number,
+	chatOpen: boolean
+): { readonly unread: number; readonly nextSeen: number; } {
+	const total = Math.max( 0, Math.trunc( totalLines ) );
+	const seen = Math.max( 0, Math.min( total, Math.trunc( seenLines ) ) );
+	if ( chatOpen ) {
+		return { unread: 0, nextSeen: total };
+	}
+	return {
+		unread: Math.max( 0, total - seen ),
+		nextSeen: seen
+	};
+}
+
+/*
+================
+mobileBannerBand
+
+Computes the horizontal band and top Y coordinate for transient notifications
+(unique spawns/kills, system warnings, quest banners) inside the center region
+between the left player/buff column and the right pinned minimap.
+================
+*/
+export function mobileBannerBand(
+	layout: MobileHudLayout,
+	targetBottom: number
+): { readonly x: number; readonly y: number; readonly width: number; } {
+	const [bandX, bandY, bandWidth] = layout.targetBand;
+	const y = Math.max( bandY, Math.round( targetBottom ) + 6 );
+	return {
+		x: bandX,
+		y,
+		width: Math.max( 120, bandWidth )
+	};
 }

@@ -98,7 +98,7 @@ Principle: a two-thumb landscape mobile MMO layout. The center of the screen rem
 | **M2** | Always-visible top-right minimap + top status cluster (safe-inset player/pet panel, top-center target frame, left-column buffs and party list) | Done |
 | **M3** | Floating virtual joystick + bottom-right attack/skill/target/pickup cluster + thin bottom EXP strip + chat preview | Done |
 | **M4** | Main menu (`≡`) 4×2 touch grid + right-hand panel drawers (`>= 0.9` scale, enlarged touch tabs/controls, Inventory & Character first) | Done |
-| **M5** | Extended chat preview & mobile notifications | Planned |
+| **M5** | Extended 2-line chat/system preview, unread badge, system log toggle (`Log`), and target-band transient banners | Done |
 | **M6** | Device verification across iPhone and Android aspect ratios | Planned |
 
 ---

@@ -9,7 +9,8 @@ panels start collapsed without changing saved desktop preferences.
 
 ===========================================================================
 */
-import type { UiRect, UiControl } from "@/engine/contracts/ui";
+import type { SafeAreaInsets, UiRect, UiControl } from "@/engine/contracts/ui";
+import { mobileHudActive, mobileHudLayout, normalizeSafeArea } from "@/engine/foundation/ui/mobile-hud";
 import { closedPanel } from "@/engine/foundation/ui/panels";
 
 const DESKTOP_WIDTH = 800;
@@ -27,36 +28,48 @@ const CLOSE_TOUCH_SIZE = 40;
 compactHudLayout
 ================
 */
-export function compactHudLayout( width: number, height: number ) {
+export function compactHudLayout( width: number, height: number, safeArea?: Partial<SafeAreaInsets> | null ) {
 	if ( width >= DESKTOP_WIDTH && height >= DESKTOP_HEIGHT ) return null;
-	const capacity = Math.max( 1, Math.floor( (width - MARGIN * 2) / SLOT_PITCH ) );
+	const safe = normalizeSafeArea( width, height, safeArea );
+	const safeWidth = Math.max( 1, width - safe.left - safe.right );
+	const safeBottomEdge = Math.max( safe.top, height - safe.bottom );
+	const capacity = Math.max( 1, Math.floor( (safeWidth - MARGIN * 2) / SLOT_PITCH ) );
 	const rows = Math.ceil( SLOT_COUNT / capacity ), columns = Math.ceil( SLOT_COUNT / rows );
 	const expHeight = height >= 240 ? EXP_HEIGHT : 0;
-	const bottom = rows * SLOT_PITCH + expHeight + TOOL_HEIGHT + MARGIN * 2;
-	const left = Math.floor( (width - columns * SLOT_PITCH) / 2 ), top = Math.max( 0, height - bottom );
+	const barHeight = rows * SLOT_PITCH + expHeight + TOOL_HEIGHT + MARGIN * 2;
+	const bottom = barHeight + safe.bottom;
+	const left = safe.left + Math.floor( (safeWidth - columns * SLOT_PITCH) / 2 ),
+		top = Math.max( safe.top, safeBottomEdge - barHeight );
 	const slots: UiRect[] = Array.from( { length: SLOT_COUNT }, ( _, index ) => [
 		left + index % columns * SLOT_PITCH,
 		top + MARGIN + Math.floor( index / columns ) * SLOT_PITCH,
 		SLOT_PITCH,
 		SLOT_PITCH
 	] );
-	const expWidth = width >= 412 ? 406 : width >= 260 ? 256 : 200;
+	const expWidth = safeWidth >= 412 ? 406 : safeWidth >= 260 ? 256 : 200;
 	const exp: UiRect | null = expHeight > 0 ?
 		[
-			Math.max( 0, Math.floor( (width - expWidth) / 2 ) ),
+			safe.left + Math.max( 0, Math.floor( (safeWidth - expWidth) / 2 ) ),
 			top + MARGIN + rows * SLOT_PITCH,
-			Math.min( width, expWidth ),
+			Math.min( safeWidth, expWidth ),
 			expHeight
 		] :
 		null;
-	const toolWidth = Math.max( 0, Math.min( 48, Math.floor( (width - MARGIN * 2) / TOOL_COUNT ) ) );
+	const toolWidth = Math.max( 0, Math.min( 48, Math.floor( (safeWidth - MARGIN * 2) / TOOL_COUNT ) ) );
 	const tools: UiRect[] = Array.from( { length: TOOL_COUNT }, ( _, index ) => [
-		Math.floor( (width - toolWidth * TOOL_COUNT) / 2 ) + index * toolWidth,
-		height - TOOL_HEIGHT - MARGIN,
+		safe.left + Math.floor( (safeWidth - toolWidth * TOOL_COUNT) / 2 ) + index * toolWidth,
+		safeBottomEdge - TOOL_HEIGHT - MARGIN,
 		toolWidth,
 		TOOL_HEIGHT
 	] );
-	return { slots, exp, tools, bottom, top, bounds: [ 0, 0, width, top ] as UiRect };
+	return {
+		slots,
+		exp,
+		tools,
+		bottom,
+		top,
+		bounds: [ safe.left, safe.top, safeWidth, Math.max( 0, top - safe.top ) ] as UiRect
+	};
 }
 
 /*
@@ -68,18 +81,63 @@ retains the open overlay; returning from desktop starts collapsed again.
 ================
 */
 export function createCompactHud() {
-	let active = false, overlay = "";
+	let active = false, overlay = "", touch = false, safeArea: SafeAreaInsets | undefined;
 	return {
+		/*
+		================
+		environment
+		================
+		*/
+		environment( nextTouch: boolean, nextSafeArea?: SafeAreaInsets ) {
+			touch = nextTouch;
+			safeArea = nextSafeArea;
+		},
 		/*
 		================
 		layout
 		================
 		*/
-		layout( width: number, height: number ) {
-			const layout = compactHudLayout( width, height );
+		layout(
+			width: number,
+			height: number,
+			options?: {
+				readonly mobileHud?: boolean;
+				readonly touch?: boolean;
+				readonly safeArea?: SafeAreaInsets;
+				readonly hasPet?: boolean;
+			}
+		) {
+			const effectiveSafeArea = options?.safeArea ?? safeArea;
+			const effectiveTouch = options?.touch ?? touch;
+			const layout = compactHudLayout( width, height, effectiveSafeArea );
 			if ( !!layout !== active ) overlay = "";
 			active = !!layout;
-			return layout ? { ...layout, overlay } : null;
+			if ( !layout ) return null;
+			const mobile = mobileHudActive( width, height, {
+					enabled: options?.mobileHud,
+					touch: effectiveTouch
+				} ) ?
+				mobileHudLayout( width, height, {
+					safeArea: effectiveSafeArea,
+					hasPet: options?.hasPet
+				} ) :
+				null;
+			if ( mobile ) {
+				return {
+					...layout,
+					top: mobile.expBar[1],
+					bottom: height - mobile.expBar[1],
+					bounds: [
+						mobile.safe.bounds[0],
+						mobile.safe.bounds[1],
+						mobile.safe.bounds[2],
+						Math.max( 0, mobile.expBar[1] - mobile.safe.bounds[1] )
+					] as UiRect,
+					overlay,
+					mobile
+				};
+			}
+			return { ...layout, overlay, mobile: null };
 		},
 		/*
 		================
