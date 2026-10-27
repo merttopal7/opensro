@@ -751,6 +751,12 @@ test("M5: mobileChatPreviewLines, mobileUnreadCount and mobileBannerBand format 
 			layout.joystickZone[0] + layout.joystickZone[2]
 		})`
 	);
+	assert.ok(
+		layout.joystickZone[0] + layout.joystickZone[2] <= Math.floor( 852 * 0.4 ),
+		`joystickZone stays within the left 40% of the screen (right=${
+			layout.joystickZone[0] + layout.joystickZone[2]
+		})`
+	);
 
 	// 1. mobileChatPreviewLines picks up to 2 lines from chat only (never system status lines).
 	assert.deepEqual( mobileChatPreviewLines( [] ).map( r => r.text ), [ "Chat" ] );

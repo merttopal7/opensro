@@ -698,7 +698,7 @@ test("touch world clicks only select targets and never start an attack", async t
 		[ 51, { gid: 51, kind: "player", regionId: 0x61a8, x: 1020, y: 0, z: 1000 } ],
 		[ 52, { gid: 52, kind: "cos", regionId: 0x61a8, x: 1020, y: 0, z: 1000 } ]
 	] );
-	let picked = 50, callback;
+	let picked = 50, selectedTarget, callback;
 	const sessionCommands = [];
 	const owners = frameOwners( "characters", [], [], [] );
 	owners.ui.event = () => {};
@@ -710,7 +710,7 @@ test("touch world clicks only select targets and never start an attack", async t
 	owners.characters.error = () => null;
 	owners.characters.damageText = () => [];
 	owners.characters.takeCameraScripts = () => [];
-	owners.presentation.gameplay = () => ({ localGid: 1, targetPending: false });
+	owners.presentation.gameplay = () => ({ localGid: 1, target: selectedTarget, targetPending: false });
 	owners.presentation.read = gid => entities.get( gid );
 	owners.frontend.snapshot = () => ({ phase: "world" });
 	owners.frontend.isRace = () => false;
@@ -788,27 +788,38 @@ test("touch world clicks only select targets and never start an attack", async t
 		defined( callback )( performance.now() );
 		for ( let i = 0; i < 32; i++ ) await Promise.resolve();
 
-		// Tapping a monster twice on touch only selects it both times.
+		// 1. Tapping an unselected monster on touch only selects it without attacking.
 		picked = 50;
-		worldClick( 0.5, 0.5, { touch: true } );
+		selectedTarget = undefined;
 		worldClick( 0.5, 0.5, { touch: true } );
 		assert.deepEqual(
 			sessionCommands.map( c => c.command ),
-			[ { kind: "select", gid: 50 }, { kind: "select", gid: 50 } ]
+			[ { kind: "select", gid: 50 } ]
 		);
 
-		// Tapping another player on touch only selects and never dispatches player-interact.
+		// 2. Tapping the already-selected monster on touch starts an attack.
+		sessionCommands.length = 0;
+		selectedTarget = 50;
+		worldClick( 0.5, 0.5, { touch: true } );
+		assert.deepEqual(
+			sessionCommands.map( c => c.command ),
+			[ { kind: "select", gid: 50 }, { kind: "attack", gid: 50 } ]
+		);
+
+		// 3. Tapping another player on touch only selects and never dispatches player-interact.
 		sessionCommands.length = 0;
 		picked = 51;
+		selectedTarget = 51;
 		worldClick( 0.5, 0.5, { touch: true, alt: true } );
 		assert.deepEqual(
 			sessionCommands.map( c => c.command ),
 			[ { kind: "select", gid: 51 } ]
 		);
 
-		// Tapping a COS on touch only selects and never dispatches cos-interact.
+		// 4. Tapping a COS on touch only selects and never dispatches cos-interact.
 		sessionCommands.length = 0;
 		picked = 52;
+		selectedTarget = 52;
 		worldClick( 0.5, 0.5, { touch: true, double: true, alt: true } );
 		assert.deepEqual(
 			sessionCommands.map( c => c.command ),

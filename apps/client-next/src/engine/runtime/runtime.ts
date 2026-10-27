@@ -595,9 +595,10 @@ export function startRuntime(
 				attackable = entity?.kind === "monster" && entity.appearanceState?.[0] !== 2,
 				now = performance.now();
 			// A browser dblclick after a promoted pair would attack a second time.
-			// Touch taps only select targets; mobile attack uses its own button.
+			// Touch taps select an unselected target first, and start an attack when
+			// tapping a monster that is already selected.
 			const attack = touch ?
-				false :
+				attackable && game.target === entity!.gid :
 				doubleClick ?
 				worldDoubleClick.double( attackable ? entity!.gid : null, now ) :
 				worldDoubleClick.press( attackable ? entity!.gid : null, now );
@@ -637,7 +638,7 @@ export function startRuntime(
 						command: { kind: "cos-interact", gid: entity.gid, alt: click.alt ?? false }
 					} );
 				}
-				if ( !touch && (doubleClick || attack) ) {
+				if ( doubleClick || attack ) {
 					if ( attackable && attack ) {
 						simulation.session( {
 							kind: "gameplay",
