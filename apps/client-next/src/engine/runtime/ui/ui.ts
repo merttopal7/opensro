@@ -12811,36 +12811,44 @@ export function createUi(
 					} );
 					blocks.push( statusRect );
 
-					// 3. Bottom-left floating virtual joystick (does not push to blocks so world taps pass through).
-					const joyOrigin = mobileJoystick.active ?
-						mobileJoystick.origin :
-						mobile.joystickOrigin;
-					const joyKnob = mobileJoystick.active ? mobileJoystick.knob : joyOrigin;
-					const baseAlpha = mobileJoystick.active ? 0.45 : 0.22;
-					const ringAlpha = mobileJoystick.active ? 0.75 : 0.38;
-					const knobAlpha = mobileJoystick.active ? 0.88 : 0.42;
-					const baseBox: UiRect = [
-						Math.round( joyOrigin[0] - JOYSTICK_BASE_RADIUS ),
-						Math.round( joyOrigin[1] - JOYSTICK_BASE_RADIUS ),
-						JOYSTICK_BASE_RADIUS * 2,
-						JOYSTICK_BASE_RADIUS * 2
-					];
-					rect( baseBox, [ 0.04, 0.06, 0.09, baseAlpha ] );
-					rect( [ baseBox[0], baseBox[1], baseBox[2], 1 ], [ 0.82, 0.7, 0.36, ringAlpha ] );
-					rect( [ baseBox[0], baseBox[1] + baseBox[3] - 1, baseBox[2], 1 ], [ 0.82, 0.7, 0.36, ringAlpha ] );
-					rect( [ baseBox[0], baseBox[1], 1, baseBox[3] ], [ 0.82, 0.7, 0.36, ringAlpha ] );
-					rect( [ baseBox[0] + baseBox[2] - 1, baseBox[1], 1, baseBox[3] ], [ 0.82, 0.7, 0.36, ringAlpha ] );
-					const knobBox: UiRect = [
-						Math.round( joyKnob[0] - JOYSTICK_KNOB_RADIUS ),
-						Math.round( joyKnob[1] - JOYSTICK_KNOB_RADIUS ),
-						JOYSTICK_KNOB_RADIUS * 2,
-						JOYSTICK_KNOB_RADIUS * 2
-					];
-					rect( knobBox, [ 0.88, 0.72, 0.28, knobAlpha ] );
-					rect(
-						[ Math.round( joyKnob[0] - 6 ), Math.round( joyKnob[1] - 6 ), 12, 12 ],
-						[ 1, 0.94, 0.72, knobAlpha ]
-					);
+					// 3. Bottom-left floating virtual joystick (hidden while Chat or Log is open; does not push to blocks so world taps pass through).
+					if ( !chatOpen && !statusOpen ) {
+						const joyOrigin = mobileJoystick.active ?
+							mobileJoystick.origin :
+							mobile.joystickOrigin;
+						const joyKnob = mobileJoystick.active ? mobileJoystick.knob : joyOrigin;
+						const baseAlpha = mobileJoystick.active ? 0.45 : 0.22;
+						const ringAlpha = mobileJoystick.active ? 0.75 : 0.38;
+						const knobAlpha = mobileJoystick.active ? 0.88 : 0.42;
+						const baseBox: UiRect = [
+							Math.round( joyOrigin[0] - JOYSTICK_BASE_RADIUS ),
+							Math.round( joyOrigin[1] - JOYSTICK_BASE_RADIUS ),
+							JOYSTICK_BASE_RADIUS * 2,
+							JOYSTICK_BASE_RADIUS * 2
+						];
+						rect( baseBox, [ 0.04, 0.06, 0.09, baseAlpha ] );
+						rect( [ baseBox[0], baseBox[1], baseBox[2], 1 ], [ 0.82, 0.7, 0.36, ringAlpha ] );
+						rect(
+							[ baseBox[0], baseBox[1] + baseBox[3] - 1, baseBox[2], 1 ],
+							[ 0.82, 0.7, 0.36, ringAlpha ]
+						);
+						rect( [ baseBox[0], baseBox[1], 1, baseBox[3] ], [ 0.82, 0.7, 0.36, ringAlpha ] );
+						rect(
+							[ baseBox[0] + baseBox[2] - 1, baseBox[1], 1, baseBox[3] ],
+							[ 0.82, 0.7, 0.36, ringAlpha ]
+						);
+						const knobBox: UiRect = [
+							Math.round( joyKnob[0] - JOYSTICK_KNOB_RADIUS ),
+							Math.round( joyKnob[1] - JOYSTICK_KNOB_RADIUS ),
+							JOYSTICK_KNOB_RADIUS * 2,
+							JOYSTICK_KNOB_RADIUS * 2
+						];
+						rect( knobBox, [ 0.88, 0.72, 0.28, knobAlpha ] );
+						rect(
+							[ Math.round( joyKnob[0] - 6 ), Math.round( joyKnob[1] - 6 ), 12, 12 ],
+							[ 1, 0.94, 0.72, knobAlpha ]
+						);
+					}
 
 					// 4. Bottom-right 6 skill slots (slots 1..6 on the active quickslot page).
 					const mobileDrawerOpen = !windowWarm.active() && (panel !== "" || itemMall.read().visible);

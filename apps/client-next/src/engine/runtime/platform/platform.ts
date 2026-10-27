@@ -502,6 +502,8 @@ export function createPlatform(
 	window.addEventListener( "pointerdown", onGesture, { signal: lifetime.signal, capture: true } );
 	window.addEventListener( "pagehide", onClose, { signal: lifetime.signal } );
 	const mobileJoystick = createMobileJoystick();
+	const joystickHidden = () =>
+		lastUi?.controls.some( c => (c.id === "compact-chat" || c.id === "compact-status") && c.selected ) ?? false;
 	const publishJoystick = () => {
 		const state = mobileJoystick.state();
 		onUi( {
@@ -654,6 +656,7 @@ export function createPlatform(
 			const uiH = Math.max( 1, Math.round( size.height / scale ) );
 			if (
 				!mobileJoystick.ownsAny() &&
+				!joystickHidden() &&
 				mobileHudActive( uiW, uiH, { enabled: experimental.mobileHud, touch: true } )
 			) {
 				const layout = mobileHudLayout( uiW, uiH, {
@@ -953,6 +956,12 @@ export function createPlatform(
 		*/
 		presentUi( state ) {
 			lastUi = state;
+			if ( mobileJoystick.ownsAny() && joystickHidden() ) {
+				for ( const out of mobileJoystick.interrupt() ) {
+					onInput( { ...out, timeMs: timeMs() } );
+				}
+				publishJoystick();
+			}
 			bridge.present( state );
 			if ( titleCredit && titleCredit.hidden === !!state.titleCredit ) titleCredit.hidden = !state.titleCredit;
 			if ( fpsChip ) {

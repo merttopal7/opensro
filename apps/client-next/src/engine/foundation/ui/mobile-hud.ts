@@ -304,10 +304,14 @@ export function mobileHudLayout(
 	];
 
 	const joystickTop = Math.floor( safe.top + safeHeight * 0.45 );
+	const joystickRight = Math.max(
+		safe.left + JOYSTICK_BASE_RADIUS * 2 + 16,
+		Math.min( safe.left + Math.floor( safeWidth * 0.36 ), Math.floor( width * 0.4 ) )
+	);
 	const joystickZone: UiRect = [
 		safe.left,
 		joystickTop,
-		Math.floor( safeWidth * 0.44 ),
+		Math.max( 1, joystickRight - safe.left ),
 		Math.max( 1, expBar[1] - joystickTop - SECTION_GAP )
 	];
 	const joystickOrigin = [

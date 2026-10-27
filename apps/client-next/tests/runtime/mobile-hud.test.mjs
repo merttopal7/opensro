@@ -745,6 +745,12 @@ test("M5: mobileChatPreviewLines, mobileUnreadCount and mobileBannerBand format 
 	} );
 	assert.deepEqual( layout.chatPreview, [ 67, 324, 248, 40 ] );
 	assert.deepEqual( layout.statusButton, [ 319, 324, 44, 40 ] );
+	assert.ok(
+		layout.joystickZone[0] + layout.joystickZone[2] <= Math.floor( 852 * 0.4 ),
+		`joystickZone stays within the left 40% of the screen (right=${
+			layout.joystickZone[0] + layout.joystickZone[2]
+		})`
+	);
 
 	// 1. mobileChatPreviewLines picks up to 2 lines from chat only (never system status lines).
 	assert.deepEqual( mobileChatPreviewLines( [] ).map( r => r.text ), [ "Chat" ] );
@@ -811,22 +817,29 @@ test("M5: UI renders 2-line chat preview with unread badge and switches between 
 	assert.deepEqual( chatBtn.rect, [ 67, 324, 248, 40 ] );
 	assert.deepEqual( logBtn.rect, [ 319, 324, 44, 40 ] );
 	assert.equal( chatBtn.label, "Chat (2 unread)" );
+	const hasJoystickBase = () =>
+		defined( fixture.scenes.at( -1 ) ).quads.some(
+			q => q.rect[2] === JOYSTICK_BASE_RADIUS * 2 && q.rect[3] === JOYSTICK_BASE_RADIUS * 2
+		);
+	assert.equal( hasJoystickBase(), true, "joystick is visible while Chat and Log are closed" );
 
-	// 2. Opening compact-chat clears the unread count and opens Chat at the exact same left X as chatPreview (67).
+	// 2. Opening compact-chat clears the unread count, opens Chat at left X = 67, and hides the joystick.
 	fixture.ui.event( { kind: "activate", id: "compact-chat" } );
 	output = draw();
 	assert.equal( defined( output.controls.find( c => c.id === "compact-chat" ) ).label, "Chat" );
 	const chatSizeBtn = defined( output.controls.find( c => c.id === "chat-size" ) );
 	assert.equal( chatSizeBtn.rect[0], 67, "Chat UI starts at the same left X as chatPreview and Log" );
 	assert.ok( output.controls.some( c => c.id === "chat-text" ), "chat overlay opened on the left" );
+	assert.equal( hasJoystickBase(), false, "joystick is hidden while Chat is open" );
 
-	// 3. Switching directly from Chat to Log via compact-status closes Chat and opens Log on the left side while keeping action cluster active.
+	// 3. Switching directly from Chat to Log via compact-status closes Chat, opens Log on the left side, and keeps joystick hidden.
 	fixture.ui.event( { kind: "activate", id: "compact-status" } );
 	output = draw();
 	assert.ok( !output.controls.some( c => c.id === "chat-text" ), "chat closed when switching to Log" );
 	const statusPanel = defined( output.controls.find( c => c.id === "status-panel" ) );
 	assert.equal( statusPanel.rect[0], 67, "system message Log panel opens on the left side aligned with chatPreview" );
 	assert.ok( output.controls.some( c => c.id === "mobile-attack" ), "right-hand action cluster remains active" );
+	assert.equal( hasJoystickBase(), false, "joystick remains hidden while Log is open" );
 
 	// 4. Switching back from Log to Chat via compact-chat closes Log and opens Chat on the left side.
 	fixture.state.gameplay = {
@@ -848,11 +861,12 @@ test("M5: UI renders 2-line chat preview with unread badge and switches between 
 	assert.ok( output.controls.some( c => c.id === "chat-text" ), "Chat opened when switching from Log" );
 	assert.equal( defined( output.controls.find( c => c.id === "compact-chat" ) ).label, "Chat" );
 
-	// 5. Tapping compact-chat again closes Chat.
+	// 5. Tapping compact-chat again closes Chat and restores the joystick.
 	fixture.ui.event( { kind: "activate", id: "compact-chat" } );
 	output = draw();
 	assert.ok( !output.controls.some( c => c.id === "chat-text" ), "Chat closed" );
 	assert.ok( !output.controls.some( c => c.id === "status-panel" ), "Log remains closed" );
+	assert.equal( hasJoystickBase(), true, "joystick is restored once both Chat and Log are closed" );
 
 	fixture.dispose();
 });
